@@ -74,26 +74,51 @@ uv run ruff check . && uv run ruff format .  # 린트·포맷
 
 ## 디렉터리 구조
 
+계층(api → services → models, schemas)은 그대로 두고, 각 계층 안을 도메인 컨텍스트로 나눈다.
+
 ```
 app/
 ├── main.py
-├── core/         # 설정(pydantic-settings), DB 세션
-├── api/          # 라우터: books, inventory, curations, quotes, institutions, orders ...
-├── services/     # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용)
-├── models/       # SQLAlchemy 모델
-├── schemas/      # Pydantic 스키마
-├── agent/        # (이후 단계) tool calling 루프, tool 정의, 프롬프트
-├── matching/     # (C) 제목·작가·권차 정규화, ISBN 매칭
-└── pricing/      # (C) 견적·할인 계산
-migrations/       # Alembic
-scripts/seed.py   # 더미 데이터 (Faker)
-evals/            # (이후 단계) 에이전트 평가 시나리오
-tests/
+├── core/                 # 설정(pydantic-settings), DB 세션, Alembic 헬퍼
+├── models/
+│   ├── base.py           # Base, timestamp mixin, StrEnum 컬럼 헬퍼
+│   ├── catalog.py        # books, store_inventory
+│   ├── storefront.py     # chat_logs, owner_messages, book_requests
+│   ├── owner_ops.py      # curations, quotes(글귀)
+│   └── supply.py         # institutions, institution_orders, order_items, quote_drafts(견적서)
+├── schemas/              # common.py(Page, Isbn, Won), <context>.py
+├── services/             # errors.py, <context>/<resource>.py — REST와 에이전트 tool이 함께 사용
+├── api/                  # <context>.py 라우터 (/books, /inventory, /institutions ...)
+├── seed/                 # 컨텍스트별 시드 함수와 실행기 (scripts/seed.py가 호출)
+├── agent/                # (이후 단계) tool calling 루프, tool 정의, 프롬프트
+├── matching/             # (C) ISBN 정규화·검증, 이후 제목·작가·권차 정규화
+└── pricing/              # (C) 견적·할인 계산
+migrations/               # Alembic
+scripts/seed.py           # 더미 데이터 (Faker)
+evals/                    # (이후 단계) 에이전트 평가 시나리오
+tests/                    # 컨텍스트별: catalog/, storefront/, owner_ops/, supply/, platform/
 docs/design.md
 openspec/
-├── specs/        # 기능별 현재 스펙 (archive된 change가 여기에 반영됨)
-└── changes/      # 진행 중인 change
+├── specs/                # 기능별 현재 스펙. 컨텍스트별 폴더 (catalog/, supply/ ...)
+└── changes/              # 진행 중인 change
 ```
+
+### 도메인 컨텍스트
+
+| 컨텍스트 | 에이전트 | 테이블 |
+| --- | --- | --- |
+| catalog | 공유 | books, store_inventory |
+| storefront | A 매장 큐레이터 | chat_logs, owner_messages, book_requests |
+| owner_ops | B 사장님 운영 | curations, quotes(글귀) |
+| supply | C 기관 납품 | institutions, institution_orders, order_items, quote_drafts(견적서) |
+
+**경계 규칙** (`tests/platform/test_database_schema.py`, `tests/platform/test_boundaries.py`가 검사한다)
+
+1. catalog는 공유 커널이다. 다른 컨텍스트는 `books.isbn`을 외래 키로 참조할 수 있고, catalog는 다른 컨텍스트를 모른다 (외래 키, import 모두).
+2. storefront, owner_ops, supply 사이에는 외래 키를 두지 않는다. 다른 컨텍스트 데이터가 필요하면 그 컨텍스트의 service 함수를 호출한다.
+3. 한 컨텍스트의 테이블은 그 컨텍스트의 service만 쓴다. 다른 컨텍스트의 models는 catalog 것도 import하지 않는다.
+
+새 테이블은 반드시 한 컨텍스트에 넣고 `app/models/__init__.py`의 `CONTEXT_TABLES`에 등록한다.
 
 ## 설계 원칙 (반드시 지킬 것)
 
