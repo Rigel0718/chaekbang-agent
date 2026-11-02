@@ -1,6 +1,4 @@
 schema: spec-driven
-
-schema: spec-driven
 context: |
   작은 책방용 AI 에이전트 백엔드 (FastAPI, SQLAlchemy 2.0 async, PostgreSQL).
   코딩 규칙과 설계 원칙은 CLAUDE.md, 전체 설계는 docs/design.md를 따른다.
