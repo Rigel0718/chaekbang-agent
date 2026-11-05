@@ -1,4 +1,4 @@
-"""시드 실행: DB 연결과 마이그레이션 상태를 확인한 뒤 컨텍스트별 시드를 한 트랜잭션으로 넣는다."""
+"""시드 실행: DB 연결·마이그레이션·시드 비밀번호를 확인한 뒤 시드를 한 트랜잭션으로 넣는다."""
 
 import sys
 
@@ -8,9 +8,12 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.core import clock
+from app.core.config import get_settings
 from app.core.migrations import head_revision
 from app.seed.catalog import seed_catalog
-from app.seed.supply import seed_supply
+from app.seed.circulation import seed_loans, seed_members
+from app.seed.library import seed_libraries
 
 DEFAULT_SEED = 20261102
 CONNECT_TIMEOUT_SECONDS = 5
@@ -41,13 +44,27 @@ async def check_migrations(conn: AsyncConnection) -> None:
         )
 
 
+def seed_passwords() -> tuple[str, str]:
+    """시드 계정 비밀번호 (.env). 없거나 8자 미만이면 SeedPreconditionError."""
+    settings = get_settings()
+    admin, kiosk = settings.seed_admin_password, settings.seed_kiosk_password
+    if not admin or not kiosk or len(admin) < 8 or len(kiosk) < 8:
+        raise SeedPreconditionError(
+            "시드 계정 비밀번호가 없습니다. .env에 SEED_ADMIN_PASSWORD와 SEED_KIOSK_PASSWORD를 "
+            "8자 이상으로 설정하세요 (.env.example 참고)."
+        )
+    return admin, kiosk
+
+
 async def seed_database(conn: AsyncConnection, seed: int = DEFAULT_SEED) -> Report:
     """전제 조건을 확인한 뒤 시드를 넣는다. 커밋은 호출한 쪽이 한다."""
+    admin_password, kiosk_password = seed_passwords()
     await check_migrations(conn)
     session = AsyncSession(bind=conn, join_transaction_mode="create_savepoint")
-    report: Report = {}
-    report |= await seed_catalog(session, seed)
-    report |= await seed_supply(session)
+    library_ids, report = await seed_libraries(session, admin_password, kiosk_password)
+    report |= await seed_catalog(session, seed, library_ids)
+    report |= await seed_members(session, seed, library_ids)
+    report |= await seed_loans(session, seed, library_ids, clock.today())
     await session.flush()
     return report
 

@@ -17,8 +17,11 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.core import clock
+from app.core.config import get_settings
+from app.core.isbn import normalize_isbn
 from app.core.migrations import PROJECT_ROOT, alembic_config
-from app.matching.isbn import normalize_isbn
+from app.core.security import verify_password
 from app.seed.runner import SeedPreconditionError, seed_database
 
 SEED_DB = "chaekbang_seed_test"
@@ -34,51 +37,161 @@ async def _seed(session: AsyncSession) -> dict:
 
 # --- 생성 규칙 (테스트 트랜잭션 안에서 실행, 끝나면 롤백) ---
 
+TABLES = ("libraries", "staff_users", "books", "holdings", "members", "loans")
+
 
 async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 시드 데이터 생성 / 빈 DB에 시드 실행"""
     report = await _seed(session)
     assert report["books"] == (50, 0)
+    assert await _count(session, "libraries") == 2
+    modes = set(await session.scalars(text("SELECT loan_mode FROM libraries")))
+    assert modes == {"internal", "imported"}
+
+    staff = (
+        await session.execute(
+            text(
+                "SELECT l.loan_mode, s.role FROM staff_users s"
+                " JOIN libraries l ON l.id = s.library_id"
+            )
+        )
+    ).all()
+    assert sorted(staff) == sorted(
+        [("internal", "admin"), ("internal", "kiosk"), ("imported", "admin"), ("imported", "kiosk")]
+    )
+
     assert await _count(session, "books") == 50
-    inventory = await _count(session, "store_inventory")
-    assert 1 <= inventory < 50
-    assert await _count(session, "institutions") == 3
-    types = set(await session.scalars(text("SELECT DISTINCT type FROM institutions")))
-    assert types == {"school", "daycare", "community_center"}
-    # 재고가 없는 책과 품절(수량 0) 책이 둘 다 있다
-    assert await session.scalar(text("SELECT count(*) FROM store_inventory WHERE quantity = 0"))
+    assert await session.scalar(text("SELECT count(*) FROM books WHERE audience = 'children'"))
+    assert await session.scalar(text("SELECT count(*) FROM books WHERE isbn IS NULL"))
+
+    per_library = (
+        await session.execute(
+            text(
+                "SELECT l.loan_mode,"
+                " count(*) FILTER (WHERE h.acquisition_type = 'purchased'),"
+                " count(*) FILTER (WHERE h.acquisition_type = 'donated'),"
+                " count(DISTINCT h.book_id)"
+                " FROM holdings h JOIN libraries l ON l.id = h.library_id GROUP BY l.loan_mode"
+            )
+        )
+    ).all()
+    assert len(per_library) == 2
+    for _mode, purchased, donated, books in per_library:
+        assert purchased >= 1 and donated >= 1
+        assert books < 50  # 소장하지 않은 책이 있다
+    # 같은 책 여러 권, 분실·훼손 사본
+    assert await session.scalar(
+        text(
+            "SELECT count(*) FROM (SELECT 1 FROM holdings GROUP BY library_id, book_id"
+            " HAVING count(*) > 1) t"
+        )
+    )
+    statuses = set(await session.scalars(text("SELECT DISTINCT status FROM holdings")))
+    assert {"lost", "damaged"} <= statuses
+
+    assert await _count(session, "members") == 20
+    loans = (
+        (
+            await session.execute(
+                text(
+                    "SELECT DISTINCT l.loan_mode FROM loans"
+                    " JOIN libraries l ON l.id = loans.library_id"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert loans == ["internal"]
+    today = clock.today()
+    overdue = await session.scalar(
+        text("SELECT count(*) FROM loans WHERE returned_on IS NULL AND due_on < :t"), {"t": today}
+    )
+    active = await session.scalar(
+        text("SELECT count(*) FROM loans WHERE returned_on IS NULL AND due_on >= :t"), {"t": today}
+    )
+    returned = await session.scalar(
+        text("SELECT count(*) FROM loans WHERE returned_on IS NOT NULL")
+    )
+    assert (returned, active, overdue) == (5, 5, 3)
 
 
 async def test_seed_respects_domain_rules(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 시드 데이터 생성 / 시드 데이터가 도메인 규칙을 지킴"""
     await _seed(session)
-    rows = (await session.execute(text("SELECT isbn, list_price FROM books"))).all()
-    for isbn, price in rows:
-        assert normalize_isbn(isbn) == isbn
-        assert isinstance(price, int) and price >= 0
+    for isbn, price in (await session.execute(text("SELECT isbn, list_price FROM books"))).all():
+        if isbn is not None:
+            assert normalize_isbn(isbn) == isbn
+        assert price is None or (isinstance(price, int) and price >= 0)
+
+    holdings = (
+        await session.execute(
+            text(
+                "SELECT h.acquisition_type, h.purchase_price, b.isbn FROM holdings h"
+                " JOIN books b ON b.id = h.book_id"
+            )
+        )
+    ).all()
+    for acquisition, purchase_price, isbn in holdings:
+        assert purchase_price is None or purchase_price >= 0
+        if acquisition == "purchased":
+            assert purchase_price is not None and isbn is not None
+
+    on_loan_mismatch = await session.scalar(
+        text(
+            "SELECT count(*) FROM holdings h WHERE (h.status = 'on_loan') <>"
+            " EXISTS (SELECT 1 FROM loans l WHERE l.holding_id = h.id AND l.returned_on IS NULL)"
+        )
+    )
+    assert on_loan_mismatch == 0
+
+    # 시드 계정으로 로그인할 수 있다: 로그인 service와 같은 조건(비밀번호 검증, 사용 중)을 본다.
+    # (로그인 service는 커밋하므로 시드를 넣은 같은 트랜잭션 안에서는 부르지 않는다)
+    settings = get_settings()
+    accounts = dict(
+        (
+            await session.execute(
+                text("SELECT login_id, password_hash FROM staff_users WHERE is_active")
+            )
+        ).all()
+    )
+    for login_id, password in (
+        ("sunny-admin", settings.seed_admin_password),
+        ("sunny-kiosk", settings.seed_kiosk_password),
+        ("forest-admin", settings.seed_admin_password),
+        ("forest-kiosk", settings.seed_kiosk_password),
+    ):
+        assert verify_password(password, accounts[login_id]), login_id
 
 
 async def test_seed_twice_does_not_duplicate(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 반복 실행 안전성 / 두 번 실행"""
     await _seed(session)
-    first = {t: await _count(session, t) for t in ("books", "store_inventory", "institutions")}
+    first = {t: await _count(session, t) for t in TABLES}
     report = await _seed(session)
-    second = {t: await _count(session, t) for t in ("books", "store_inventory", "institutions")}
-    assert (
-        first
-        == second
-        == {"books": 50, "store_inventory": first["store_inventory"], "institutions": 3}
-    )
-    assert report["books"] == (0, 50)
-    assert report["institutions"] == (0, 3)
+    second = {t: await _count(session, t) for t in TABLES}
+    assert first == second
+    assert all(created == 0 for created, _ in report.values()), report
 
 
 async def test_seed_is_deterministic(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 반복 실행 안전성 (같은 시드 값이면 같은 데이터)"""
-    from app.seed.catalog import generate_books
+    from app.seed.catalog import generate_books, generate_holdings
 
     assert generate_books(1) == generate_books(1)
     assert generate_books(1) != generate_books(2)
+    books = generate_books(1)
+    assert generate_holdings(1, books, "sunny", 1) == generate_holdings(1, books, "sunny", 1)
+
+
+async def test_seed_requires_passwords(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[platform/dev-seed-data] 시드 데이터 생성 (시드 비밀번호가 없으면 아무것도 쓰지 않음)"""
+    monkeypatch.setattr(get_settings(), "seed_admin_password", None)
+    with pytest.raises(SeedPreconditionError, match="SEED_ADMIN_PASSWORD"):
+        await _seed(session)
+    assert await _count(session, "libraries") == 0
 
 
 async def test_seed_refuses_when_migration_is_behind(session: AsyncSession) -> None:
@@ -166,8 +279,11 @@ async def test_script_success_and_rerun(empty_db_url: str) -> None:
     first = await asyncio.to_thread(_run_script, empty_db_url)
     assert first.returncode == 0, first.stderr
     assert "books: 생성 50건, 건너뜀 0건" in first.stdout
-    assert "institutions: 생성 3건, 건너뜀 0건" in first.stdout
+    assert "libraries: 생성 2건, 건너뜀 0건" in first.stdout
+    assert "loans: 생성 13건, 건너뜀 0건" in first.stdout
 
     second = await asyncio.to_thread(_run_script, empty_db_url)
     assert second.returncode == 0, second.stderr
     assert "books: 생성 0건, 건너뜀 50건" in second.stdout
+    assert "생성 0건" in second.stdout
+    assert all("생성 0건" in line for line in second.stdout.strip().splitlines())

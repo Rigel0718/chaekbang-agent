@@ -91,11 +91,13 @@ uv run ruff check . && uv run ruff format .  # 린트·포맷
 ```
 app/
 ├── main.py
-├── core/         # 설정(pydantic-settings), DB 세션, 인증, 현재 기관(library) 의존성
-├── api/          # 라우터: libraries, books, holdings, loans, members, curations, requests ...
-├── services/     # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용)
-├── models/       # SQLAlchemy 모델
+├── core/         # config(설정), db(세션), security(비밀번호·토큰), deps(현재 직원·기관, 역할),
+│                 # clock(기관 시간대 오늘), isbn(정규화·검증), migrations
+├── api/          # 라우터: auth, library, staff, books, holdings, members, loans (이후 curations, requests ...)
+├── services/     # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용). tenancy.get_owned로 기관 범위 강제
+├── models/       # SQLAlchemy 모델: library(기관·직원·세션), catalog(도서·사본), circulation(회원·대출)
 ├── schemas/      # Pydantic 스키마
+├── seed/         # 시드 데이터 생성 (scripts/seed.py가 실행)
 ├── importing/    # (2주차) 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화, 어린이 도서 분류
 ├── agents/       # (이후 단계)
 │   ├── librarian/    # 이용자용 AI 사서: tool, 프롬프트
