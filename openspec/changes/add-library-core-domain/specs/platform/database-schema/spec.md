@@ -1,0 +1,54 @@
+# Spec Delta
+
+## REMOVED Requirements
+
+### Requirement: 컨텍스트별 테이블 소유
+**Reason**: 무인 서점의 에이전트별 도메인 컨텍스트(catalog / storefront / owner-ops / supply)를 없앴다. 작은도서관 서비스에서 데이터를 가르는 기준은 컨텍스트가 아니라 기관(library_id)이다.
+**Migration**: "기관 데이터 테이블 구분" 요구사항이 대신한다. 모든 테이블은 기관 공통 테이블이거나 기관 데이터 테이블 중 하나로 등록한다.
+
+### Requirement: 컨텍스트 간 참조 방향
+**Reason**: 컨텍스트 구분이 없어졌다.
+**Migration**: "기관 간 참조 금지" 요구사항이 기관 사이의 참조를 막는다.
+
+## MODIFIED Requirements
+
+### Requirement: 마이그레이션으로 스키마 생성
+시스템은 빈 PostgreSQL 데이터베이스에 마이그레이션을 적용하면 테이블 7개(libraries, staff_users, staff_sessions, books, holdings, members, loans)를 모두 생성 SHALL 하고, 되돌린 뒤 다시 적용할 수 있어야 한다.
+
+#### Scenario: 빈 DB에 upgrade
+- **WHEN** 빈 데이터베이스에 `alembic upgrade head`를 실행하면
+- **THEN** 7개 테이블이 모두 존재한다
+
+#### Scenario: downgrade 후 재적용
+- **WHEN** `alembic downgrade base` 후 다시 `alembic upgrade head`를 실행하면
+- **THEN** 오류 없이 같은 테이블 구성이 만들어진다
+
+#### Scenario: 모델과 마이그레이션 일치
+- **WHEN** 마이그레이션을 적용한 DB와 코드의 모델 정의를 비교하면
+- **THEN** 자동 생성할 차이(autogenerate diff)가 없다
+
+## ADDED Requirements
+
+### Requirement: 기관 데이터 테이블 구분
+모든 테이블은 기관 공통 테이블과 기관 데이터 테이블 중 정확히 하나에 MUST 속한다.
+- 기관 공통 테이블: libraries, books
+- 기관 데이터 테이블: 그 밖의 모든 테이블. NULL이 될 수 없는 `library_id` 컬럼과 libraries를 가리키는 외래 키를 가진다.
+
+#### Scenario: 구분되지 않은 테이블
+- **WHEN** 마이그레이션을 적용한 DB의 테이블 목록을 두 구분과 비교하면
+- **THEN** 어디에도 속하지 않거나 둘 다에 속한 테이블이 없다
+
+#### Scenario: library_id 누락
+- **WHEN** 기관 데이터 테이블의 컬럼을 확인하면
+- **THEN** 모두 NULL이 될 수 없는 `library_id`와 libraries 외래 키를 가진다
+
+### Requirement: 기관 간 참조 금지
+기관 데이터 테이블 사이의 참조는 같은 기관의 행만 MUST 가리킨다. 대출은 같은 기관의 사본과 회원만 가리킬 수 있고, 저장 계층에서도 이를 강제한다.
+
+#### Scenario: 다른 기관 사본으로 대출 직접 저장
+- **WHEN** A 기관의 대출 행에 B 기관 사본을 가리키도록 loans에 직접 저장하려 하면
+- **THEN** 데이터베이스가 저장을 거부한다
+
+#### Scenario: 다른 기관 회원으로 대출 직접 저장
+- **WHEN** A 기관의 대출 행에 B 기관 회원을 가리키도록 loans에 직접 저장하려 하면
+- **THEN** 데이터베이스가 저장을 거부한다

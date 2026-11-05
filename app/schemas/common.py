@@ -2,10 +2,13 @@ from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
-from app.matching.isbn import normalize_isbn
+from app.core.isbn import normalize_isbn
 
 # 하이픈·공백을 받아 13자리로 정규화하고 체크 디지트를 검증한다.
 Isbn = Annotated[str, AfterValidator(normalize_isbn)]
+
+# 빈 문자열이 아닌 문자열
+NonEmpty = Annotated[str, Field(min_length=1)]
 
 # 원 단위 금액. float를 받지 않는다.
 Won = Annotated[int, Field(ge=0, strict=True)]
@@ -44,3 +47,13 @@ class PatchModel(BaseModel):
 
     def changes(self) -> dict[str, Any]:
         return self.model_dump(exclude_unset=True)
+
+
+def page_of[T](schema: type[T], items: list, total: int, page: Pagination) -> "Page[T]":
+    """ORM 행 목록을 응답 스키마의 페이지로 감싼다."""
+    return Page[schema](  # type: ignore[valid-type]
+        items=[schema.model_validate(i) for i in items],  # type: ignore[attr-defined]
+        total=total,
+        limit=page.limit,
+        offset=page.offset,
+    )
