@@ -15,7 +15,7 @@
 
 - [ ] 3.1 `app/core/config.py`에 `yes24_api_key: SecretStr | None`, `yes24_base_url`을 추가한다. `.env.example`의 값이 비어 있는지 확인한다
 - [ ] 3.2 `app/external/yes24/definitions.py`, `parsing.py`를 작성한다. `tests/external/test_yes24_parsing.py`에 응답 값 정규화 시나리오 전부를 작성해 통과시킨다. 줄인 실제 응답 구조를 픽스처로 쓴다
-- [ ] 3.3 `app/external/yes24/classify.py`를 작성한다. `tests/external/test_yes24_classify.py`에 표본에서 본 값 표를 작성해 통과시킨다 (`국내도서-유아`, `국내도서-어린이`, `국내도서-청소년`, `국내도서-전집`, `국내도서-초등학습서`, `국내도서-중고등학습서-중학교`, 빈 값, 성인물)
+- [ ] 3.3 `app/external/yes24/classify.py`를 작성한다. `tests/external/test_yes24_classify.py`에 표본에서 본 값 표를 작성해 통과시킨다 (근거: `국내도서-유아`, `국내도서-어린이`, `국내도서-초등학습서` / 근거 아님: `국내도서-청소년`, `국내도서-전집`, `국내도서-중고등학습서-중학교`, 빈 값, 성인물)
 - [ ] 3.4 `app/external/yes24/client.py`, `goods.py`를 작성한다. `tests/external/test_yes24_client.py`에 design.md 7번의 오류 구분 표 전부, 호출 속도 제한 시나리오 2개, 키 헤더 전송 시나리오를 `httpx.MockTransport`로 작성해 통과시킨다
 
 ## 4. 서지정보 채움
