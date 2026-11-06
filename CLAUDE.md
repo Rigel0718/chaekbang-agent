@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**2주차: 장서 가져오기** (OpenSpec change: `add-holdings-import`).
-기존 대출 프로그램의 엑셀·CSV 가져오기, 제적, 입수 구분 `unknown`, 파일 근거 어린이 도서 분류, 가져오기 평가.
+**2주차: 서지정보 채움** (OpenSpec change: `add-book-enrichment`).
+YES24 연동, 서지정보 채움, 외부 분류 근거(`external_category`). YES24 API 문서를 받은 뒤 제안하며, 문서 없이 응답 필드를 추측해 설계하지 않는다.
 에이전트(LLM 호출, tool 루프)는 아직 만들지 않는다.
 
 ## OpenSpec 작업 규칙
