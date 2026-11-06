@@ -1,7 +1,7 @@
 [project]
 name = "chaekbang-agent"
 version = "0.1.0"
-description = "작은 책방을 위한 AI 에이전트 백엔드"
+description = "사서 없는 작은도서관을 위한 AI 사서 웹 서비스 백엔드"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",
