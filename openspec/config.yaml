@@ -1,6 +1,6 @@
 schema: spec-driven
 context: |
-  작은 책방용 AI 에이전트 백엔드 (FastAPI, SQLAlchemy 2.0 async, PostgreSQL).
+  사서 없는 작은도서관용 AI 사서 웹 서비스 백엔드 (FastAPI, SQLAlchemy 2.0 async, PostgreSQL).
   코딩 규칙과 설계 원칙은 CLAUDE.md, 전체 설계는 docs/design.md를 따른다.
   스펙 본문은 한국어, 요구사항 키워드(SHALL/MUST/WHEN/THEN)는 영어로 쓴다.
 

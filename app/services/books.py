@@ -77,7 +77,7 @@ def _with_counts(library_id: int) -> Select:
             func.count().label("holding_count"),
             func.count().filter(Holding.status == HoldingStatus.AVAILABLE).label("available_count"),
         )
-        .where(Holding.library_id == library_id)
+        .where(Holding.library_id == library_id, Holding.status != HoldingStatus.WITHDRAWN)
         .group_by(Holding.book_id)
         .subquery()
     )
@@ -113,7 +113,11 @@ async def list_books(
         query = query.where(Book.audience == audience)
     if held:
         query = query.where(
-            exists().where(Holding.book_id == Book.id, Holding.library_id == library_id)
+            exists().where(
+                Holding.book_id == Book.id,
+                Holding.library_id == library_id,
+                Holding.status != HoldingStatus.WITHDRAWN,
+            )
         )
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     rows = await session.execute(query.order_by(Book.title, Book.id).limit(limit).offset(offset))

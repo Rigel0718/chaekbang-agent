@@ -20,4 +20,11 @@ class AuthenticationError(DomainError):
 
 
 class InvalidRequestError(DomainError):
-    """값의 형식은 맞지만 업무 규칙상 받을 수 없는 요청이다 (REST: 422)."""
+    """값의 형식은 맞지만 업무 규칙상 받을 수 없는 요청이다 (REST: 422).
+
+    extra는 응답에 함께 실을 값이다 (찾지 못한 열, 파일의 머리글 등).
+    """
+
+    def __init__(self, message: str, **extra: object) -> None:
+        super().__init__(message)
+        self.extra = extra

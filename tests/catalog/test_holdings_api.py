@@ -339,3 +339,168 @@ async def test_delete_with_loans(
     await add_loan(session, holding, member, returned_on=clock.today())  # 반납된 기록
     assert (await admin_client.delete(f"/holdings/{holding['id']}")).status_code == 409
     assert (await admin_client.get(f"/holdings/{holding['id']}")).status_code == 200
+
+
+# --- 입수 구분 unknown, 제적, 빠진 정보 ---
+
+
+async def _imported(session: AsyncSession, library_id: int, book_id: int, acc: str, **overrides):
+    values = {"source": "imported", "acquisition_type": "purchased", "purchase_price": None}
+    return await add_holding(session, library_id, book_id, acc, **{**values, **overrides})
+
+
+async def test_create_unknown_rejected(admin_client: AsyncClient, session: AsyncSession) -> None:
+    """[catalog/holdings] 입수 구분 / 직접 등록의 unknown"""
+    book = await add_book(session)
+    res = await admin_client.post(
+        "/holdings", json=_donated(book["id"]) | {"acquisition_type": "unknown"}
+    )
+    assert res.status_code == 422
+
+
+async def test_unknown_to_donated(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 입수 구분 / unknown을 기증으로 수정"""
+    book = await add_book(session)
+    holding = await _imported(session, library_a.id, book["id"], "A-1", acquisition_type="unknown")
+    res = await admin_client.patch(
+        f"/holdings/{holding['id']}", json={"acquisition_type": "donated"}
+    )
+    assert res.status_code == 200
+    assert res.json()["acquisition_type"] == "donated"
+
+
+async def test_fill_price_on_imported_purchase(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 입수 구분 / 가져온 매입 사본의 구입가 채우기"""
+    book = await add_book(session, None)
+    holding = await _imported(session, library_a.id, book["id"], "A-1")
+    res = await admin_client.patch(f"/holdings/{holding['id']}", json={"purchase_price": 9000})
+    assert res.status_code == 200
+    assert res.json()["purchase_price"] == 9000
+    assert res.json()["missing_fields"] == ["isbn"]
+
+
+async def test_imported_unknown_to_purchased_needs_isbn(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 입수 구분 / 가져온 unknown 사본을 매입으로 수정"""
+    book = await add_book(session, None)
+    holding = await _imported(session, library_a.id, book["id"], "A-1", acquisition_type="unknown")
+    res = await admin_client.patch(
+        f"/holdings/{holding['id']}", json={"acquisition_type": "purchased", "purchase_price": 9000}
+    )
+    assert res.status_code == 422
+
+
+async def test_imported_purchase_without_price_in_db(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 입수 구분 / 가져온 매입 사본의 구입가 없음 직접 저장"""
+    book = await add_book(session)
+    row = await _imported(session, library_a.id, book["id"], "A-1")
+    assert row["purchase_price"] is None
+    # 직접 등록 사본은 여전히 거부한다
+    await assert_rejected(
+        session,
+        "holdings",
+        library_id=library_a.id,
+        book_id=book["id"],
+        accession_number="A-2",
+        acquisition_type="purchased",
+        match="acquisition_fields",
+    )
+    await assert_rejected(
+        session,
+        "holdings",
+        library_id=library_a.id,
+        book_id=book["id"],
+        accession_number="A-3",
+        acquisition_type="unknown",
+        donor="주민",
+        match="acquisition_fields",
+    )
+
+
+async def test_withdraw(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 상태 / 제적 처리"""
+    book = await add_book(session)
+    holding = await add_holding(session, library_a.id, book["id"], "A-1")
+    res = await admin_client.patch(f"/holdings/{holding['id']}", json={"status": "withdrawn"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "withdrawn"
+
+
+async def test_list_excludes_withdrawn(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 제적 사본 제외"""
+    book = await add_book(session)
+    kept = await add_holding(session, library_a.id, book["id"], "A-1")
+    await add_holding(session, library_a.id, book["id"], "A-2", status="withdrawn")
+    body = (await admin_client.get("/holdings")).json()
+    assert [h["id"] for h in body["items"]] == [kept["id"]]
+    assert body["total"] == 1
+
+
+async def test_list_only_withdrawn(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 제적 사본만 보기"""
+    book = await add_book(session)
+    await add_holding(session, library_a.id, book["id"], "A-1")
+    gone = await add_holding(session, library_a.id, book["id"], "A-2", status="withdrawn")
+    res = await admin_client.get("/holdings", params={"status": "withdrawn"})
+    assert [h["id"] for h in res.json()["items"]] == [gone["id"]]
+
+
+async def test_missing_isbn_marked(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 빠진 정보 표기 / ISBN 없는 매입 사본 표기"""
+    book = await add_book(session, None)
+    holding = await _imported(session, library_a.id, book["id"], "A-1", purchase_price=9000)
+    body = (await admin_client.get(f"/holdings/{holding['id']}")).json()
+    assert body["missing_fields"] == ["isbn"]
+
+
+async def test_mark_clears_after_isbn_filled(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 빠진 정보 표기 / ISBN을 채우면 표기가 사라짐"""
+    book = await add_book(session, None)
+    holding = await _imported(session, library_a.id, book["id"], "A-1", purchase_price=9000)
+    res = await admin_client.patch(f"/books/{book['id']}", json={"isbn": VALID_ISBN_2})
+    assert res.status_code == 200
+    body = (await admin_client.get(f"/holdings/{holding['id']}")).json()
+    assert body["missing_fields"] == []
+
+
+async def test_incomplete_filter(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/holdings] 빠진 정보 표기 / 빠진 정보가 있는 사본만 거르기"""
+    no_isbn = await add_book(session, None)
+    book = await add_book(session, VALID_ISBN_2)
+    a = await _imported(session, library_a.id, no_isbn["id"], "A-1", purchase_price=9000)
+    b = await _imported(session, library_a.id, book["id"], "A-2")
+    await add_holding(session, library_a.id, book["id"], "A-3")  # 완전한 매입 사본
+    await _imported(session, library_b.id, book["id"], "B-1")  # 다른 기관
+    res = await admin_client.get("/holdings", params={"incomplete": "true"})
+    assert {h["id"] for h in res.json()["items"]} == {a["id"], b["id"]}
+
+
+async def test_donated_not_marked(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 빠진 정보 표기 / 기증 사본은 표기하지 않음"""
+    book = await add_book(session, None)
+    holding = await add_holding(
+        session, library_a.id, book["id"], "A-1", acquisition_type="donated", purchase_price=None
+    )
+    body = (await admin_client.get(f"/holdings/{holding['id']}")).json()
+    assert body["missing_fields"] == []

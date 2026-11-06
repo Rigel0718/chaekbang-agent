@@ -22,3 +22,15 @@ def normalize_isbn(raw: str) -> str:
 def isbn13_check_digit(first12: str) -> str:
     total = sum(int(d) * (3 if i % 2 else 1) for i, d in enumerate(first12))
     return str((10 - total % 10) % 10)
+
+
+def isbn10_to_13(raw: str) -> str:
+    """ISBN-10을 같은 책의 ISBN-13으로 바꾼다. 형식이나 체크 디지트가 틀리면 InvalidIsbnError."""
+    isbn = _SEPARATORS.sub("", raw).upper()
+    if len(isbn) != 10 or not isbn[:9].isdigit() or not (isbn[9].isdigit() or isbn[9] == "X"):
+        raise InvalidIsbnError(f"ISBN-10 형식이 아닙니다: {raw!r}")
+    digits = [10 if c == "X" else int(c) for c in isbn]
+    if sum(d * (10 - i) for i, d in enumerate(digits)) % 11 != 0:
+        raise InvalidIsbnError(f"ISBN-10 체크 디지트가 올바르지 않습니다: {raw!r}")
+    first12 = "978" + isbn[:9]
+    return first12 + isbn13_check_digit(first12)

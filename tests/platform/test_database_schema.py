@@ -20,6 +20,7 @@ ALL_TABLES = {
     "staff_sessions",
     "books",
     "holdings",
+    "holding_imports",
     "members",
     "loans",
 }
@@ -37,7 +38,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 7
+    assert len(ALL_TABLES) == 8
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:

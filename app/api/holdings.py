@@ -18,6 +18,7 @@ def _view(holding: Holding) -> HoldingRead:
             "isbn": holding.book.isbn,
             "title": holding.book.title,
             "author": holding.book.author,
+            "missing_fields": holdings.missing_fields(holding),
         }
     )
 
@@ -34,6 +35,7 @@ async def list_holdings(
     page: Annotated[Pagination, Query()],
     book_id: int | None = None,
     status: HoldingStatus | None = None,
+    incomplete: Annotated[bool, Query(description="true면 빠진 정보가 있는 사본만")] = False,
 ):
     rows, total = await holdings.list_holdings(
         session,
@@ -42,6 +44,7 @@ async def list_holdings(
         offset=page.offset,
         book_id=book_id,
         status=status,
+        incomplete=incomplete,
     )
     return Page[HoldingRead](
         items=[_view(h) for h in rows], total=total, limit=page.limit, offset=page.offset
