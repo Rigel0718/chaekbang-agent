@@ -15,7 +15,7 @@
 - **입수 구분을 모르는 사본(`unknown`)**
   - 구입가와 기증처를 둘 수 없다. 관리자가 사본을 수정해 `purchased`나 `donated`로 바꿀 수 있다.
 - **가져온 사본의 예외**: 출처가 `imported`인 `purchased` 사본은 구입가나 ISBN이 없어도 된다. 오류가 아니라 빠진 정보로 표기한다.
-- 사본을 수정해 입수 구분이나 구입가·기증처를 바꿀 때도 같은 규칙을 따른다. 가져온 사본의 예외는 입수 정보를 수정할 때는 적용하지 않는다.
+- 사본을 수정해 입수 구분이나 구입가·기증처를 바꿀 때도 같은 규칙을 따른다. 가져온 사본의 예외는 이미 `purchased`인 가져온 사본을 수정할 때만 유지한다. 다른 구분에서 `purchased`로 바꿀 때는 적용하지 않는다.
 
 #### Scenario: 기증 사본 등록
 - **WHEN** 관리자가 ISBN이 없는 도서로 입수 구분 `donated`, 기증처 "주민 기증"인 사본을 등록하면
@@ -44,6 +44,14 @@
 #### Scenario: unknown을 기증으로 수정
 - **WHEN** 관리자가 `unknown` 사본을 `PATCH /holdings/{id}`로 `donated`로 바꾸면
 - **THEN** 입수 구분이 `donated`가 된다
+
+#### Scenario: 가져온 매입 사본의 구입가 채우기
+- **WHEN** ISBN 없는 도서의 가져온 `purchased` 사본에 `PATCH /holdings/{id}`로 구입가만 보내면
+- **THEN** 구입가가 저장되고 `missing_fields`에는 `isbn`만 남는다
+
+#### Scenario: 가져온 unknown 사본을 매입으로 수정
+- **WHEN** ISBN 없는 도서의 가져온 `unknown` 사본을 구입가와 함께 `purchased`로 바꾸면
+- **THEN** 422를 돌려준다
 
 #### Scenario: 가져온 매입 사본의 구입가 없음 직접 저장
 - **WHEN** holdings에 출처 `imported`, 입수 구분 `purchased`, 구입가가 빈 행을 직접 저장하면

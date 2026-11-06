@@ -1,6 +1,6 @@
 """소장 사본 service. 모든 함수는 로그인한 기관(library_id) 범위 안에서만 동작한다."""
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +57,18 @@ async def create_holding(session: AsyncSession, library_id: int, data: HoldingCr
     return await get_holding(session, library_id, holding.id)
 
 
+def missing_fields(holding: Holding) -> list[str]:
+    """매입 사본에 빠진 정보. 정보를 채우면 바로 사라지도록 저장하지 않고 계산한다."""
+    if holding.acquisition_type != AcquisitionType.PURCHASED:
+        return []
+    missing = []
+    if holding.book.isbn is None:
+        missing.append("isbn")
+    if holding.purchase_price is None:
+        missing.append("purchase_price")
+    return missing
+
+
 async def get_holding(session: AsyncSession, library_id: int, holding_id: int) -> Holding:
     holding = await get_owned(session, Holding, library_id, holding_id, label=LABEL)
     await session.refresh(holding)
@@ -71,12 +83,19 @@ async def list_holdings(
     offset: int,
     book_id: int | None = None,
     status: HoldingStatus | None = None,
+    incomplete: bool = False,
 ) -> tuple[list[Holding], int]:
+    """status를 주지 않으면 제적 사본을 뺀다. incomplete=True면 빠진 정보가 있는 사본만."""
     where = [Holding.library_id == library_id]
     if book_id is not None:
         where.append(Holding.book_id == book_id)
     if status is not None:
         where.append(Holding.status == status)
+    else:
+        where.append(Holding.status != HoldingStatus.WITHDRAWN)
+    if incomplete:
+        where.append(Holding.acquisition_type == AcquisitionType.PURCHASED)
+        where.append(or_(Holding.purchase_price.is_(None), Holding.book.has(Book.isbn.is_(None))))
     total = await session.scalar(select(func.count()).select_from(Holding).where(*where))
     rows = await session.scalars(
         select(Holding)
@@ -104,11 +123,23 @@ async def update_holding(
     acquisition_keys = {"acquisition_type", "purchase_price", "donor"}
     if acquisition_keys & changes.keys():
         merged = {k: changes.get(k, getattr(holding, k)) for k in acquisition_keys}
+        # 이미 매입인 가져온 사본은 빠진 정보를 하나씩 채울 수 있어야 한다.
+        imported_purchase = (
+            holding.source == HoldingSource.IMPORTED
+            and holding.acquisition_type == AcquisitionType.PURCHASED
+            and merged["acquisition_type"] == AcquisitionType.PURCHASED
+        )
         try:
-            check_acquisition(merged["acquisition_type"], merged["purchase_price"], merged["donor"])
+            check_acquisition(
+                merged["acquisition_type"],
+                merged["purchase_price"],
+                merged["donor"],
+                imported_purchase=imported_purchase,
+            )
         except ValueError as exc:
             raise InvalidRequestError(str(exc)) from exc
-        _require_isbn_for_purchase(holding.book, merged["acquisition_type"])
+        if not imported_purchase:
+            _require_isbn_for_purchase(holding.book, merged["acquisition_type"])
 
     if "accession_number" in changes:
         await _ensure_accession_free(

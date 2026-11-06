@@ -77,16 +77,25 @@ Price = Annotated[int, Field(ge=0, strict=True)]
 
 
 def check_acquisition(
-    acquisition_type: AcquisitionType, purchase_price: int | None, donor: str | None
+    acquisition_type: AcquisitionType,
+    purchase_price: int | None,
+    donor: str | None,
+    *,
+    imported_purchase: bool = False,
 ) -> None:
-    """입수 구분 규칙: 매입은 구입가 필수·기증처 없음, 기증은 구입가 없음."""
+    """입수 구분 규칙: 매입은 구입가 필수·기증처 없음, 기증은 구입가 없음, 모름은 둘 다 없음.
+
+    imported_purchase=True면 이미 매입인 가져온 사본이라 구입가가 없어도 된다.
+    """
     if acquisition_type == AcquisitionType.PURCHASED:
-        if purchase_price is None:
+        if purchase_price is None and not imported_purchase:
             raise ValueError("매입·납품 사본은 구입가가 필요합니다")
         if donor is not None:
             raise ValueError("매입·납품 사본에는 기증처를 둘 수 없습니다")
     elif purchase_price is not None:
-        raise ValueError("기증 사본에는 구입가를 둘 수 없습니다")
+        raise ValueError("기증이나 입수 구분을 모르는 사본에는 구입가를 둘 수 없습니다")
+    elif acquisition_type == AcquisitionType.UNKNOWN and donor is not None:
+        raise ValueError("기증처가 있으면 입수 구분을 기증으로 지정하세요")
 
 
 class HoldingCreate(BaseModel):
@@ -101,6 +110,8 @@ class HoldingCreate(BaseModel):
 
     @model_validator(mode="after")
     def _acquisition(self) -> Self:
+        if self.acquisition_type == AcquisitionType.UNKNOWN:
+            raise ValueError("직접 등록할 때는 입수 구분을 매입이나 기증으로 지정하세요")
         check_acquisition(self.acquisition_type, self.purchase_price, self.donor)
         return self
 
@@ -137,3 +148,5 @@ class HoldingRead(ReadModel):
     isbn: str | None
     title: str
     author: str
+    # 매입 사본에 빠진 정보 (isbn, purchase_price). 저장하지 않고 조회할 때 계산한다
+    missing_fields: list[str]

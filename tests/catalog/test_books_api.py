@@ -298,3 +298,23 @@ async def test_audience_filter(admin_client: AsyncClient) -> None:
     await _post(admin_client, isbn=VALID_ISBN_2, title="에세이")
     res = await admin_client.get("/books", params={"audience": "children"})
     assert [b["id"] for b in res.json()["items"]] == [kid["id"]]
+
+
+async def test_withdrawn_is_not_held(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/books] 도서 단건과 목록 조회 / 제적 사본은 소장이 아님"""
+    book = await add_book(session)
+    await add_holding(session, library_a.id, book["id"], "A-1", status="withdrawn")
+    assert (await admin_client.get("/books", params={"held": "true"})).json()["total"] == 0
+    body = (await admin_client.get(f"/books/{book['id']}")).json()
+    assert (body["holding_count"], body["available_count"]) == (0, 0)
+
+
+async def test_manual_overrides_import_label(
+    admin_client: AsyncClient, session: AsyncSession
+) -> None:
+    """[catalog/books] 어린이/일반 도서 구분 (근거 우선순위: 관리자 지정이 import_label보다 우선)"""
+    book = await add_book(session, audience="children", audience_source="import_label")
+    res = await admin_client.patch(f"/books/{book['id']}", json={"audience": "general"})
+    assert (res.json()["audience"], res.json()["audience_source"]) == ("general", "manual")
