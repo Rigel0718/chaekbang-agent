@@ -43,13 +43,14 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 **MVP change 순서** (8주)
 
 1. `add-library-core-domain` – 이전 도메인 정리, 모델, 기관 분리, 인증, 장서·대출 CRUD, 시드 데이터
-2. `add-holdings-import` – 기존 시스템 엑셀·CSV 장서 가져오기, 외부 API 서지정보 채움, 어린이 도서 분류
-3. `add-librarian-agent` – AI 사서 v1, 조회 tool, tool calling 루프, 스트리밍, 추천 노출 기록
-4. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
-5. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
-6. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
-7. `add-web-ui` – 이용자·관리자 화면
-8. `add-observability-deploy` – Langfuse, 배포, README, 데모
+2. `add-holdings-import` – 기존 시스템 엑셀·CSV 장서 가져오기, 파일 근거 어린이 도서 분류
+3. `add-book-enrichment` – YES24 연동, 서지정보 채움, 외부 분류 근거
+4. `add-librarian-agent` – AI 사서 v1, 조회 tool, tool calling 루프, 스트리밍, 추천 노출 기록
+5. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
+6. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
+7. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
+8. `add-web-ui` – 이용자·관리자 화면
+9. `add-observability-deploy` – Langfuse, 배포, README, 데모
 
 **스펙 작성 규칙**
 
@@ -99,6 +100,7 @@ app/
 ├── schemas/      # Pydantic 스키마
 ├── seed/         # 시드 데이터 생성 (scripts/seed.py가 실행)
 ├── importing/    # (2주차) 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화, 어린이 도서 분류
+├── external/     # (이후 단계) 외부 API: yes24(엔드포인트·필드 정의를 한곳에), 도서관 정보나루
 ├── agents/       # (이후 단계)
 │   ├── librarian/    # 이용자용 AI 사서: tool, 프롬프트
 │   ├── admin/        # 관리자용 운영 에이전트: tool, 프롬프트, sql_guard
