@@ -20,6 +20,7 @@ ALL_TABLES = {
     "staff_sessions",
     "books",
     "library_books",
+    "library_book_audiences",
     "holdings",
     "holding_imports",
     "members",
@@ -39,7 +40,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 9
+    assert len(ALL_TABLES) == 10
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:
@@ -106,6 +107,22 @@ async def test_holding_rejects_library_book_of_other_library(
         accession_number="A-1",
         acquisition_type="donated",
         match="fk_holdings_library_id_library_book_id",
+    )
+
+
+async def test_audience_rejects_library_book_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 도서로 어린이 구분 직접 저장"""
+    theirs = await add_library_book(session, library_b.id)
+    await assert_rejected(
+        session,
+        "library_book_audiences",
+        library_id=library_a.id,
+        library_book_id=theirs["id"],
+        audience="children",
+        audience_source="manual",
+        match="fk_library_book_audiences_library_id_library_book_id",
     )
 
 

@@ -4,8 +4,11 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.external.yes24.client import RateLimiter, Yes24Client
+from app.central.enrichment import EnrichmentResult, run_enrichment
+from app.central.external.yes24.client import RateLimiter, Yes24Client
+from app.library.enrichment_targets import LibraryEnrichmentTargets
 
 TEST_API_KEY = "test-yes24-key-value"
 
@@ -79,3 +82,8 @@ def make_client(handler: Callable[[httpx.Request], httpx.Response]) -> Yes24Clie
         transport=httpx.MockTransport(handler), base_url="https://yes24.test/v1"
     )
     return Yes24Client(http, TEST_API_KEY, RateLimiter(0))
+
+
+async def enrich(session: AsyncSession, client: Yes24Client, **options: Any) -> EnrichmentResult:
+    """운영자 실행과 같이 접점을 이어서 채움을 돌린다."""
+    return await run_enrichment(session, client, LibraryEnrichmentTargets(session), **options)

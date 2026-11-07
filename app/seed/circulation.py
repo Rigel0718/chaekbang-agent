@@ -11,8 +11,8 @@ from sqlalchemy import exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.catalog import Holding, HoldingStatus
-from app.models.circulation import Loan, Member
+from app.library.models.catalog import Holding, HoldingStatus
+from app.library.models.circulation import Loan, Member
 from app.seed.library import LIBRARIES, SUNNY
 
 MEMBERS_PER_LIBRARY = 10

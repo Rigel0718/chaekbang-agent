@@ -5,9 +5,9 @@ import io
 import pytest
 from openpyxl import Workbook
 
-from app.importing import reader
-from app.importing.errors import ImportFileError
-from app.importing.reader import read_table
+from app.library.importing import reader
+from app.library.importing.errors import ImportFileError
+from app.library.importing.reader import read_table
 
 
 def _xlsx(rows: list[list]) -> bytes:

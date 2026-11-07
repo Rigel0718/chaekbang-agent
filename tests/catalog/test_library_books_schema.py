@@ -72,16 +72,3 @@ async def test_rejects_deleting_referenced_library_book(
         id=book["id"],
         match="fk_holdings_library_id_library_book_id",
     )
-
-
-async def test_rejects_unknown_audience(session: AsyncSession, library_a: Tenant) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 허용되지 않은 구분"""
-    await assert_rejected(
-        session,
-        "library_books",
-        library_id=library_a.id,
-        title="t",
-        author="a",
-        audience="teen",
-        match="audience",
-    )

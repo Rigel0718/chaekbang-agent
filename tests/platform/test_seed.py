@@ -37,7 +37,16 @@ async def _seed(session: AsyncSession) -> dict:
 
 # --- 생성 규칙 (테스트 트랜잭션 안에서 실행, 끝나면 롤백) ---
 
-TABLES = ("libraries", "staff_users", "books", "library_books", "holdings", "members", "loans")
+TABLES = (
+    "libraries",
+    "staff_users",
+    "books",
+    "library_books",
+    "library_book_audiences",
+    "holdings",
+    "members",
+    "loans",
+)
 
 
 async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
@@ -66,7 +75,6 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
         await session.execute(
             text(
                 "SELECT library_id,"
-                " count(*) FILTER (WHERE audience = 'children'),"
                 " count(*) FILTER (WHERE isbn IS NULL),"
                 " count(*) FILTER (WHERE book_id IS NOT NULL)"
                 " FROM library_books GROUP BY library_id"
@@ -74,8 +82,15 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
         )
     ).all()
     assert len(per_library_books) == 2
-    for _library, children, no_isbn, linked in per_library_books:
-        assert children >= 1 and no_isbn >= 1 and linked >= 1
+    for _library, no_isbn, linked in per_library_books:
+        assert no_isbn >= 1 and linked >= 1
+    children = await session.execute(
+        text(
+            "SELECT count(DISTINCT library_id) FROM library_book_audiences"
+            " WHERE audience = 'children'"
+        )
+    )
+    assert children.scalar() == 2
     # 같은 ISBN을 두 기관이 함께 가진 경우
     assert await session.scalar(
         text(

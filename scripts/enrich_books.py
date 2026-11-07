@@ -16,15 +16,16 @@ from sqlalchemy.pool import NullPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.central.enrichment import DEFAULT_LIMIT, run_enrichment  # noqa: E402
+from app.central.external.yes24.client import Yes24Client  # noqa: E402
+from app.central.external.yes24.definitions import REQUEST_TIMEOUT_SECONDS  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
-from app.external.yes24.client import Yes24Client  # noqa: E402
-from app.external.yes24.definitions import REQUEST_TIMEOUT_SECONDS  # noqa: E402
+from app.library.enrichment_targets import LibraryEnrichmentTargets  # noqa: E402
 from app.seed.runner import (  # noqa: E402
     CONNECT_TIMEOUT_SECONDS,
     SeedPreconditionError,
     check_migrations,
 )
-from app.services.book_enrichment import DEFAULT_LIMIT, run_enrichment  # noqa: E402
 
 EXIT_OK = 0
 EXIT_PRECONDITION = 1
@@ -53,7 +54,8 @@ async def execute(
     session: AsyncSession, client: Yes24Client, *, limit: int, retry_failed: bool
 ) -> int:
     """채움을 실행하고 결과를 출력한 뒤 종료 코드를 돌려준다."""
-    result = await run_enrichment(session, client, limit=limit, retry_failed=retry_failed)
+    targets = LibraryEnrichmentTargets(session)
+    result = await run_enrichment(session, client, targets, limit=limit, retry_failed=retry_failed)
     print(
         f"처리 {result.processed}건 (새 공식 서지 {result.enriched}, 연결 {result.linked}, "
         f"못 찾음 {result.not_found}, ISBN 불일치 {result.mismatch}), "

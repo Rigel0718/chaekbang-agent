@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.external.yes24.parsing import parse_date, parse_item, parse_price
+from app.central.external.yes24.parsing import parse_date, parse_item, parse_price
 from tests.helpers import VALID_ISBN
 from tests.yes24_helpers import item
 

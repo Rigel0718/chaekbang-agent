@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.models.library import Library, LibraryType, LoanMode, StaffRole, StaffUser
+from app.library.models.library import Library, LibraryType, LoanMode, StaffRole, StaffUser
 
 
 @dataclass(frozen=True)

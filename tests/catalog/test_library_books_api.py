@@ -341,9 +341,7 @@ async def test_linked_book_rejects_bibliographic_patch(
     res = await admin_client.patch(f"/library-books/{book['id']}", json={"title": "바꾼 서명"})
     assert res.status_code == 409
     assert (await admin_client.get(f"/library-books/{book['id']}")).json()["title"] == "공식 서명"
-    allowed = await admin_client.patch(
-        f"/library-books/{book['id']}", json={"audience": "children"}
-    )
+    allowed = await admin_client.patch(f"/library-books/{book['id']}", json={"isbn": VALID_ISBN_2})
     assert allowed.status_code == 200
 
 
@@ -435,42 +433,6 @@ async def test_delete_keeps_official_book(admin_client: AsyncClient, session: As
     assert await fetch(session, "books", official["id"]) is not None
 
 
-# --- 어린이/일반 도서 구분 ---
-
-
-async def test_audience_default(admin_client: AsyncClient) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 기본값"""
-    body = (await _post(admin_client)).json()
-    assert (body["audience"], body["audience_source"]) == ("general", "default")
-
-
-async def test_audience_manual(admin_client: AsyncClient) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 관리자 지정 (등록 시 지정 포함)"""
-    created = (await _post(admin_client)).json()
-    res = await admin_client.patch(f"/library-books/{created['id']}", json={"audience": "children"})
-    assert (res.json()["audience"], res.json()["audience_source"]) == ("children", "manual")
-
-    at_create = (await _post(admin_client, isbn=VALID_ISBN_2, audience="children")).json()
-    assert (at_create["audience"], at_create["audience_source"]) == ("children", "manual")
-
-
-async def test_audience_filter(admin_client: AsyncClient) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 어린이 도서만 거르기"""
-    kid = (await _post(admin_client, audience="children", title="공룡 그림책")).json()
-    await _post(admin_client, isbn=VALID_ISBN_2, title="에세이")
-    res = await admin_client.get("/library-books", params={"audience": "children"})
-    assert [b["id"] for b in res.json()["items"]] == [kid["id"]]
-
-
-async def test_audience_per_library(admin_client: AsyncClient, admin_client_b: AsyncClient) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 기관별 구분"""
-    ours = (await _post(admin_client)).json()
-    theirs = (await _post(admin_client_b)).json()
-    await admin_client.patch(f"/library-books/{ours['id']}", json={"audience": "children"})
-    body = (await admin_client_b.get(f"/library-books/{theirs['id']}")).json()
-    assert (body["audience"], body["audience_source"]) == ("general", "default")
-
-
 async def test_withdrawn_is_not_held(
     admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
 ) -> None:
@@ -480,17 +442,6 @@ async def test_withdrawn_is_not_held(
     assert (await admin_client.get("/library-books", params={"held": "true"})).json()["total"] == 0
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
     assert (body["holding_count"], body["available_count"]) == (0, 0)
-
-
-async def test_manual_overrides_import_label(
-    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
-) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 (관리자 지정이 import_label보다 우선)"""
-    book = await add_library_book(
-        session, library_a.id, audience="children", audience_source="import_label"
-    )
-    res = await admin_client.patch(f"/library-books/{book['id']}", json={"audience": "general"})
-    assert (res.json()["audience"], res.json()["audience_source"]) == ("general", "manual")
 
 
 # --- 처리 상태 ---
@@ -523,103 +474,3 @@ async def test_same_isbn_keeps_status(
     book = await add_library_book(session, library_a.id, enrichment_status="not_found")
     res = await admin_client.patch(f"/library-books/{book['id']}", json={"isbn": VALID_ISBN})
     assert res.json()["enrichment_status"] == "not_found"
-
-
-# --- 외부 분류 근거 ---
-
-
-async def _link_to_category(
-    client: AsyncClient, session: AsyncSession, library_id: int, category: str | None, **overrides
-) -> dict:
-    """ISBN 없는 기관 도서에 ISBN을 채워 그 분류의 공식 서지에 연결한다."""
-    await add_book(session, external_category=category)
-    book = await add_library_book(session, library_id, None, **overrides)
-    res = await client.patch(f"/library-books/{book['id']}", json={"isbn": VALID_ISBN})
-    assert res.status_code == 200
-    return res.json()
-
-
-@pytest.mark.parametrize("category", ["국내도서-유아", "국내도서-어린이", "국내도서-초등학습서"])
-async def test_children_category_on_link(
-    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, category: str
-) -> None:
-    """[catalog/library-books] 외부 분류 근거 / 어린이 근거인 분류"""
-    body = await _link_to_category(admin_client, session, library_a.id, category)
-    assert (body["audience"], body["audience_source"]) == ("children", "external_category")
-
-
-@pytest.mark.parametrize(
-    "category",
-    [
-        "국내도서-청소년",
-        "국내도서-전집",
-        "국내도서-중고등학습서-중학교",
-        "국내도서-소설/시/희곡",
-        None,
-    ],
-)
-async def test_other_category_on_link(
-    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, category: str | None
-) -> None:
-    """[catalog/library-books] 외부 분류 근거 / 어린이 근거가 아닌 분류"""
-    body = await _link_to_category(admin_client, session, library_a.id, category)
-    assert (body["audience"], body["audience_source"]) == ("general", "default")
-
-
-async def test_new_book_uses_external_category(
-    admin_client: AsyncClient, session: AsyncSession
-) -> None:
-    """[catalog/library-books] 외부 분류 근거 / 새로 등록하는 도서 (저장 전 근거가 비어 있음)"""
-    await add_book(session, external_category="국내도서-어린이")
-    body = (await _post(admin_client)).json()
-    assert (body["audience"], body["audience_source"]) == ("children", "external_category")
-
-
-async def test_requested_audience_beats_external_category(
-    admin_client: AsyncClient, session: AsyncSession
-) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 높은 근거 유지 (등록 시 지정)"""
-    await add_book(session, external_category="국내도서-어린이")
-    body = (await _post(admin_client, audience="general")).json()
-    assert (body["audience"], body["audience_source"]) == ("general", "manual")
-
-
-async def test_unlinking_reverts_external_category(
-    admin_client: AsyncClient, session: AsyncSession
-) -> None:
-    """[catalog/library-books] 외부 분류 근거 / 연결이 풀리면 되돌림"""
-    await add_book(session, external_category="국내도서-어린이")
-    created = (await _post(admin_client)).json()
-    res = await admin_client.patch(f"/library-books/{created['id']}", json={"isbn": VALID_ISBN_2})
-    body = res.json()
-    assert (body["audience"], body["audience_source"]) == ("general", "default")
-
-
-async def test_manual_kept_on_link(
-    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
-) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 높은 근거 유지"""
-    body = await _link_to_category(
-        admin_client,
-        session,
-        library_a.id,
-        "국내도서-유아",
-        audience="general",
-        audience_source="manual",
-    )
-    assert (body["audience"], body["audience_source"]) == ("general", "manual")
-
-
-async def test_import_label_kept_on_link(
-    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
-) -> None:
-    """[catalog/library-books] 어린이/일반 도서 구분 / 파일 근거 유지"""
-    body = await _link_to_category(
-        admin_client,
-        session,
-        library_a.id,
-        "국내도서-유아",
-        audience="children",
-        audience_source="import_label",
-    )
-    assert (body["audience"], body["audience_source"]) == ("children", "import_label")

@@ -3,7 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api import (
+from app.core.db import get_engine
+from app.core.errors import (
+    AuthenticationError,
+    ConflictError,
+    InvalidRequestError,
+    NotFoundError,
+)
+from app.features.children.api import router as children_router
+from app.features.children.hook import ChildrenHook
+from app.library.api import (
     auth,
     book_enrichment,
     holding_imports,
@@ -14,13 +23,10 @@ from app.api import (
     members,
     staff,
 )
-from app.core.db import get_engine
-from app.services.errors import (
-    AuthenticationError,
-    ConflictError,
-    InvalidRequestError,
-    NotFoundError,
-)
+from app.library.hooks import register_hook
+
+# 기관 개별 기능을 조립한다. 기능을 빼려면 이 줄과 라우터를 지우면 된다.
+register_hook(ChildrenHook())
 
 
 @asynccontextmanager
@@ -34,6 +40,7 @@ app.include_router(auth.router)
 app.include_router(library.router)
 app.include_router(staff.router)
 app.include_router(library_books.router)
+app.include_router(children_router)
 app.include_router(book_enrichment.router)
 app.include_router(holdings.router)
 app.include_router(holding_imports.router)
