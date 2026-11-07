@@ -21,6 +21,7 @@ from app.models.catalog import (
     Audience,
     AudienceSource,
     Book,
+    EnrichmentStatus,
     Holding,
     HoldingStatus,
     LibraryBook,
@@ -264,6 +265,9 @@ async def seed_catalog(
             **books[index],
             "library_id": library_ids[key],
             "book_id": official_ids.get(books[index]["isbn"]),
+            "enrichment_status": EnrichmentStatus.ENRICHED
+            if books[index]["isbn"]
+            else EnrichmentStatus.PENDING,
         }
         for key, rows in holdings_by_library.items()
         for index in sorted({row["book_index"] for row in rows})

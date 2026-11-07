@@ -32,9 +32,12 @@ from app.models.catalog import (
 )
 from app.models.library import Library, LoanMode
 from app.services.errors import ConflictError, InvalidRequestError
+from app.services.library_books import apply_official
 from app.services.tenancy import get_owned
 
 LABEL = "가져오기 기록"
+# 파일 근거가 덮어쓰는 근거. 저장 전 새 도서는 None이다.
+FILE_LABEL_REPLACES = (None, AudienceSource.DEFAULT, AudienceSource.EXTERNAL_CATEGORY)
 INTERNAL_LIBRARY = "장서 가져오기는 기존 대출 프로그램을 쓰는 기관만 할 수 있습니다"
 
 
@@ -231,8 +234,8 @@ def _new_book(library_id: int, row: dict[str, Any], snap: Snapshot) -> LibraryBo
         isbn=row["isbn"],
         title=row["title"],
         author=row["author"],
-        book=snap.officials.get(row["isbn"]),
     )
+    apply_official(book, snap.officials.get(row["isbn"]))
     if row["isbn"]:
         snap.books_by_isbn[row["isbn"]] = book
     else:
@@ -249,7 +252,7 @@ def _fill_book(book: LibraryBook, row: dict[str, Any]) -> None:
     if book.published_date is None and row["published_date"]:
         book.published_date = date.fromisoformat(row["published_date"])
     # 관리자 지정(manual)은 바꾸지 않는다. 근거가 없는 행은 값을 내리지 않는다.
-    if row["children"] and book.audience_source in (None, AudienceSource.DEFAULT):
+    if row["children"] and book.audience_source in FILE_LABEL_REPLACES:
         book.audience = Audience.CHILDREN
         book.audience_source = AudienceSource.IMPORT_LABEL
 

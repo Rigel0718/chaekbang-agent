@@ -83,6 +83,7 @@ docker compose up -d db                      # DB 실행
 uv run alembic upgrade head                  # 마이그레이션 적용
 uv run alembic revision --autogenerate -m "" # 마이그레이션 생성
 uv run python scripts/seed.py                # 시드 데이터
+uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움 (--limit, --retry-failed)
 uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
@@ -101,7 +102,7 @@ app/
 ├── schemas/      # Pydantic 스키마
 ├── seed/         # 시드 데이터 생성 (scripts/seed.py가 실행)
 ├── importing/    # (2주차) 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화, 어린이 도서 분류
-├── external/     # (이후 단계) 외부 API: yes24(엔드포인트·필드 정의를 한곳에), 도서관 정보나루
+├── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에), (이후) 도서관 정보나루
 ├── agents/       # (이후 단계)
 │   ├── librarian/    # 이용자용 AI 사서: tool, 프롬프트
 │   ├── admin/        # 관리자용 운영 에이전트: tool, 프롬프트, sql_guard
@@ -109,6 +110,7 @@ app/
 └── recommendation/   # (이후 단계) 후보 검색(키워드·임베딩), 규칙 필터(소장·어린이 도서)
 migrations/       # Alembic
 scripts/seed.py   # 더미 데이터 (Faker)
+scripts/enrich_books.py  # 운영자용 공식 서지 채움
 evals/            # (이후 단계) 추천·장서 가져오기·에이전트 평가 시나리오와 채점
 tests/
 docs/design.md
@@ -120,7 +122,7 @@ openspec/
 ## 설계 원칙 (반드시 지킬 것)
 
 1. **라우터는 얇게, 로직은 services에.** REST API와 에이전트 tool이 같은 service 함수를 호출한다. 라우터에 비즈니스 로직을 넣지 않는다.
-2. **기관 데이터는 항상 분리한다.** 모든 기관 데이터는 `library_id`로 나눈다. 조회·쓰기·에이전트 tool·자연어 SQL 모두 현재 로그인한 기관 범위를 코드에서 강제한다. 요청 값으로 받은 library_id를 그대로 믿지 않는다. 공식 서지(`books`)는 기관이 쓸 수 없고, 기관의 판단과 입력 값은 기관 도서(`library_books`)에 둔다.
+2. **기관 데이터는 항상 분리한다.** 모든 기관 데이터는 `library_id`로 나눈다. 조회·쓰기·에이전트 tool·자연어 SQL 모두 현재 로그인한 기관 범위를 코드에서 강제한다. 요청 값으로 받은 library_id를 그대로 믿지 않는다. 공식 서지(`books`)는 기관이 쓸 수 없고, 기관의 판단과 입력 값은 기관 도서(`library_books`)에 둔다. 운영자 층(`books`, `app/external/`, `book_enrichment`)은 어린이 구분을 모르고 바꾸지도 않는다. 어린이 구분은 MVP 작은도서관에 필요한 기관 층의 기능이다.
 3. **확정 작업은 승인 흐름을 거친다.** 큐레이션 게시, 연체 안내, 구매 요청서 확정은 `draft → pending_approval → approved → (published | confirmed)` 상태를 따른다. 승인 대기 상태는 DB에 저장한다. 이용자 쪽 쓰기는 대출·반납과 희망도서 신청만 허용한다.
 4. **소장 도서만 추천한다.** 추천 결과는 항상 해당 기관의 holdings에 있는 책이다. 대출 중이면 표시하고, 없으면 희망도서 신청으로 연결한다. 어린이 요청에는 그 기관에서 어린이 도서(`audience = children`)로 분류된 책만 추천하고, 분류가 확실하지 않은 책은 일반 도서로 둔다. 이 규칙은 LLM이 아니라 코드(필터)로 강제한다.
 5. **기존 시스템 위에 얹는다.** 장서는 기존 대출 프로그램에서 가져오는 것을 기본으로 하고, 담당자가 같은 정보를 두 번 입력하게 만들지 않는다. 가져오기 기관(`loan_mode = imported`)에서는 대출 쓰기 tool을 끄고, 대출 상태에는 마지막 갱신 시각을 함께 보여 준다.
@@ -152,7 +154,7 @@ openspec/
 - **제적(withdrawn)**: 장서에서 빠진 사본. 가져온 파일에서 사라지면 이 상태가 되고, 추천·소장 권수에서 빠지며 대출 기록은 남는다.
 - **회원번호(member number)**: 기관이 이용자에게 붙이는 번호. 대출과 희망도서 신청에만 쓴다. 필드 이름은 `member_number`.
 - **운영 방식(loan_mode)**: `imported`는 기존 대출 프로그램의 내보내기를 가져와 쓰는 기관, `internal`은 AI 사서가 대출까지 처리하는 기관.
-- **어린이 도서(audience)**: 책을 `children`(어린이 도서)과 `general`(일반 도서)로만 나눈다. 나이를 세밀하게 나누지 않는다. 기관 도서마다 근거(관리자 지정, 별치기호·자료실·부가기호, 외부 API 분류)를 함께 저장하고, 같은 책이라도 기관마다 다를 수 있다.
+- **어린이 도서(audience)**: 영유아·초등학생 대상 도서. 책을 `children`(어린이 도서)과 `general`(일반 도서)로만 나눈다. 나이를 세밀하게 나누지 않는다. 기관 층의 기능이고, 기관 도서마다 근거(`manual` 관리자 지정, `import_label` 별치기호·자료실·부가기호, `external_category` 공식 서지의 분류 원문)를 함께 저장한다. 같은 책이라도 기관마다 다를 수 있다.
 - **별치기호**: 일반 자료와 따로 배가하는 자료에 붙이는 기호. 아동 자료 표시가 어린이 도서 분류 근거가 된다.
 - **희망도서**: 이용자가 도서관에 구입을 요청한 책.
 - **보충 구매 요청서**: 관리자가 납품처(동네 책방)에 보낼 구매 목록. 금액은 코드로 계산한다.

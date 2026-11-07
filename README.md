@@ -2,14 +2,14 @@
 
 사서가 없는 작은도서관을 위한 AI 사서 웹 서비스의 백엔드. 도서관 PC에 켜 둔 화면에서 이용자는 AI 사서에게 추천을 받고 대출하며, 관리자는 운영 에이전트로 장서·대출 현황을 다룬다. 배경과 전체 설계는 [docs/design.md](docs/design.md), 코딩 규칙은 [CLAUDE.md](CLAUDE.md)를 참고한다.
 
-현재 단계: 2주차 기관 서지 층 (공식 서지와 기관 도서 분리). 에이전트 기능은 아직 없다.
+현재 단계: 2주차 서지정보 채움 (YES24 연동, 공식 서지). 에이전트 기능은 아직 없다.
 
 ## 도메인
 
 | 구분 | 테이블 | API |
 | --- | --- | --- |
 | 기관과 인증 | libraries, staff_users, staff_sessions | `/auth`, `/library`, `/staff` |
-| 장서 | books(공식 서지, 기관 공통), library_books(기관 도서), holdings(소장 사본), holding_imports(가져오기 기록) | `/library-books`, `/holdings`, `/holding-imports` |
+| 장서 | books(공식 서지, 기관 공통), library_books(기관 도서), holdings(소장 사본), holding_imports(가져오기 기록) | `/library-books`, `/holdings`, `/holding-imports`, `/book-enrichment` |
 | 대출 | members, loans | `/members`, `/loans` |
 
 - **기관 분리**: books·libraries를 뺀 모든 테이블은 `library_id`를 가진다. 기관은 로그인 토큰으로 정해지고, 다른 기관의 데이터는 404로 응답한다.
@@ -92,13 +92,31 @@ uv run alembic downgrade base
 - 인식하지 못한 열은 저장하지 않는다. 원본 파일도 보관하지 않는다.
 - 매입 사본에 ISBN이나 가격이 없으면 오류가 아니라 표기다. `GET /holdings?incomplete=true`로 모아 본다.
 - 다시 가져오면 파일에서 빠진 사본은 제적(`withdrawn`)되고, 다시 나타나면 복구된다. 빠진 사본이 절반 이상이면 `?confirm_withdraw=true`가 필요하다.
-- 별치기호·자료실·부가기호의 아동 표시로 그 기관의 어린이 도서를 분류한다. 관리자가 지정한 값이 우선한다.
+- 별치기호(`아`, `아동`, `어린이`, `유`, `유아`, `j`)·자료실·부가기호(첫 자리 6, 7)로 그 기관의 어린이 도서를 분류한다. 관리자가 지정한 값이 우선한다.
 
 가상 내보내기 파일로 인식률을 재는 평가는 다음으로 실행한다.
 
 ```bash
 uv run python -m evals.holdings_import
 ```
+
+## 서지정보 채움 (운영자)
+
+공식 서지(`books`)는 서비스 운영자가 YES24로 채운다. 기관 API로는 실행할 수 없다. `.env`에 `YES24_API_KEY`가 필요하다.
+
+```bash
+uv run python scripts/enrich_books.py --limit 100
+```
+
+- 어느 기관이든 소장한 처리 대기 ISBN을 `--limit`개까지 처리한다. 같은 ISBN은 한 번만 조회하고, 공식 서지가 이미 있으면 호출 없이 연결한다.
+- 처리 상태는 기관 도서마다 저장한다. 다시 실행하면 남은 ISBN부터 이어서 처리한다.
+- 찾지 못한 도서(`not_found`, `mismatch`)는 `--retry-failed`를 줄 때만 처리 대기 뒤에 다시 조회한다.
+- 호출 한도는 하루 20,000회, 초당 10회이고 초당 5회 이하로 호출한다. 한도 초과나 외부 장애가 나면 사유를 출력하고 멈춘다.
+- 종료 코드: `0` 완료, `1` 키·인자·DB 문제, `2` 외부 장애로 중단.
+- 기관 도서의 파일 값과 어린이 구분은 바뀌지 않는다. 연결되면 조회할 때 공식 값과 출처(`external_source`, `external_url`)가 나온다.
+- 어린이 구분은 기관의 기능이다. 채움 뒤 기관 관리자가 `POST /library-books/audience/refresh`를 호출하면 자기 기관 도서를 공식 서지의 분류 원문으로 갱신한다. 어린이 구분이 필요 없는 기관은 호출하지 않으면 된다.
+- 기관 관리자는 `GET /book-enrichment`로 자기 기관의 처리 현황을 본다.
+- YES24 이용 조건에 따라 소장 도서의 ISBN만 조회하고, 판매가와 판매 상태는 저장하지 않는다. 표지는 원본 URL만 저장한다.
 
 ## 테스트와 린트
 

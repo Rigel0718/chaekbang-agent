@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import (
     auth,
+    book_enrichment,
     holding_imports,
     holdings,
     library,
@@ -33,6 +34,7 @@ app.include_router(auth.router)
 app.include_router(library.router)
 app.include_router(staff.router)
 app.include_router(library_books.router)
+app.include_router(book_enrichment.router)
 app.include_router(holdings.router)
 app.include_router(holding_imports.router)
 app.include_router(members.router)

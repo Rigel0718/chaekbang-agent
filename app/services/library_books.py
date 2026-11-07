@@ -15,11 +15,13 @@ from app.models.catalog import (
     Audience,
     AudienceSource,
     Book,
+    EnrichmentStatus,
     Holding,
     HoldingStatus,
     LibraryBook,
 )
 from app.schemas.catalog import LibraryBookCreate, LibraryBookUpdate
+from app.services.audience import is_children_category
 from app.services.errors import ConflictError
 from app.services.tenancy import get_owned
 
@@ -58,12 +60,42 @@ async def _commit(session: AsyncSession, isbn: str | None) -> None:
         raise _duplicate_isbn(isbn or "") from exc
 
 
+def connect_official(library_book: LibraryBook, book: Book | None) -> None:
+    """공식 서지 참조와 처리 상태만 정한다. 운영자 실행은 이 함수만 쓴다."""
+    library_book.book = book
+    library_book.enrichment_status = (
+        EnrichmentStatus.ENRICHED if book is not None else EnrichmentStatus.PENDING
+    )
+
+
+def apply_audience(library_book: LibraryBook) -> None:
+    """연결된 공식 서지의 분류 원문으로 어린이 근거를 맞춘다. 기관의 요청에서만 쓴다.
+
+    새 기관 도서는 저장 전까지 근거가 None이다. 기본값이 DB에 있어서 default로 다룬다.
+    """
+    book = library_book.book
+    source = library_book.audience_source or AudienceSource.DEFAULT
+    children = book is not None and is_children_category(book.external_category)
+    if children and source == AudienceSource.DEFAULT:
+        library_book.audience = Audience.CHILDREN
+        library_book.audience_source = AudienceSource.EXTERNAL_CATEGORY
+    elif not children and source == AudienceSource.EXTERNAL_CATEGORY:
+        library_book.audience = Audience.GENERAL
+        library_book.audience_source = AudienceSource.DEFAULT
+
+
+def apply_official(library_book: LibraryBook, book: Book | None) -> None:
+    """기관의 요청에서 연결을 정하고 어린이 구분까지 맞춘다."""
+    connect_official(library_book, book)
+    apply_audience(library_book)
+
+
 async def link_official(session: AsyncSession, library_book: LibraryBook) -> None:
     """ISBN이 같은 공식 서지에 연결한다. 없으면 연결을 비운다."""
-    if library_book.isbn is None:
-        library_book.book = None
-        return
-    library_book.book = await session.scalar(select(Book).where(Book.isbn == library_book.isbn))
+    book = None
+    if library_book.isbn is not None:
+        book = await session.scalar(select(Book).where(Book.isbn == library_book.isbn))
+    apply_official(library_book, book)
 
 
 async def create_library_book(
@@ -160,6 +192,7 @@ async def update_library_book(
 ) -> LibraryBook:
     library_book = await get_library_book(session, library_id, library_book_id)
     changes = data.changes()
+    isbn_changed = "isbn" in changes and changes["isbn"] != library_book.isbn
     if library_book.book_id is not None and set(changes) & set(BIBLIOGRAPHIC_FIELDS):
         raise ConflictError("공식 서지에 연결된 도서는 ISBN과 대상 구분만 고칠 수 있습니다")
     if "isbn" in changes:
@@ -181,11 +214,30 @@ async def update_library_book(
         library_book.audience_source = AudienceSource.MANUAL
     for field, value in changes.items():
         setattr(library_book, field, value)
-    if "isbn" in changes:
+    if isbn_changed:
         await link_official(session, library_book)
     await _commit(session, changes.get("isbn"))
     await session.refresh(library_book)
     return library_book
+
+
+async def refresh_audience(session: AsyncSession, library_id: int) -> int:
+    """자기 기관 도서의 어린이 구분을 공식 서지의 분류 원문에 맞추고 바뀐 건수를 돌려준다."""
+    rows = await session.scalars(
+        select(LibraryBook).where(
+            LibraryBook.library_id == library_id,
+            LibraryBook.audience_source.in_(
+                (AudienceSource.DEFAULT, AudienceSource.EXTERNAL_CATEGORY)
+            ),
+        )
+    )
+    updated = 0
+    for library_book in rows:
+        before = library_book.audience
+        apply_audience(library_book)
+        updated += library_book.audience != before
+    await session.commit()
+    return updated
 
 
 async def delete_library_book(session: AsyncSession, library_id: int, library_book_id: int) -> None:

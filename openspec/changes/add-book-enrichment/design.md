@@ -91,10 +91,10 @@ scripts/enrich_books.py          # 인자 해석, 전제 조건 확인, 결과 �
 
 | 층 | 하는 일 | 어린이 구분 |
 | --- | --- | --- |
-| 운영자 (`books`, `app/external/yes24/`, `book_enrichment.py`) | YES24 값을 공식 서지로 보관. 분류 원문은 사실로만 둔다 | 모름 |
-| 기관 (`library_books`, `audience.py`, `importing/classify.py`) | 공식 서지와 파일을 보고 그 기관의 어린이 구분을 정함 | 판단하고 저장 |
+| 운영자 (`books`, `app/external/yes24/`, `book_enrichment.py`) | YES24 값을 공식 서지로 보관하고 기관 도서를 연결. 분류 원문은 사실로만 둔다 | 모르고 바꾸지 않음 |
+| 기관 (`library_books`, `audience.py`, `importing/classify.py`) | 기관의 요청에서 공식 서지와 파일을 보고 그 기관의 어린이 구분을 정함 | 판단하고 저장 |
 
-어린이 구분은 MVP 대상인 작은도서관에 필요한 기관의 기능이다. 군부대, 대학, 어르신 도서관처럼 필요 없는 기관도 있으므로 공식 서지나 외부 연동의 일부가 되면 안 된다. 운영자 실행은 기관 층의 연결 함수만 부르고, 어린이 규칙은 알지 못한다.
+어린이 구분은 MVP 대상인 작은도서관에 필요한 기관의 기능이다. 군부대, 대학, 어르신 도서관처럼 필요 없는 기관도 있으므로 공식 서지나 외부 연동의 일부가 되면 안 된다. 코드 위치뿐 아니라 실행도 나눈다. 운영자 실행은 공식 서지 참조와 처리 상태만 쓰고 어린이 구분에는 닿지 않는다. 어린이 구분이 바뀌는 곳은 등록, 가져오기, ISBN 수정, 기관 관리자의 갱신뿐이다.
 
 **어린이 도서의 정의**: 영유아·초등학생 대상 도서. 부가기호표의 6·7, YES24의 유아·어린이·초등학습서가 이 경계와 맞는다. 청소년은 제외한다.
 
@@ -113,16 +113,22 @@ scripts/enrich_books.py          # 인자 해석, 전제 조건 확인, 결과 �
 
 ### 6. 어린이 구분은 기관 도서에 저장
 
-공식 서지에는 분류 원문(`external_category`)만 두고, 연결할 때 코드가 판단해 기관 도서의 `audience`에 저장한다. 판단 결과를 공식 서지에 따로 저장하지 않아서, 같은 정보를 두 곳에 두지 않고 규칙을 바꿔도 공식 서지를 다시 계산할 필요가 없다.
+공식 서지에는 분류 원문(`external_category`)만 두고, 기관의 요청에서 코드가 판단해 기관 도서의 `audience`에 저장한다. 판단 결과를 공식 서지에 따로 저장하지 않아서, 같은 정보를 두 곳에 두지 않고 규칙을 바꿔도 공식 서지를 다시 계산할 필요가 없다.
 - 어린이 필터와 자연어 SQL이 `library_books.audience` 하나만 보면 된다.
 - **대안: 조회할 때마다 기관 값과 공식 값을 비교** → 저장은 한 번 줄지만 어린이 필터를 쓰는 모든 쿼리가 복잡해지고, 필터 하나만 빠져도 어린이 요청에 일반 도서가 나갈 수 있다.
 - 파일 근거는 `external_category`를 덮어쓰고, 관리자 지정은 어떤 근거도 바꾸지 못한다.
 
 ### 7. 연결 처리를 한곳에
 
-`app/services/library_books.py`의 `link_official`을 `apply_official(library_book, book)`로 나눠 연결, 처리 상태, 어린이 근거를 기관 층 한곳에서 처리한다. 등록, ISBN 수정, 가져오기의 `_new_book`, 채움 실행이 모두 이 함수를 쓴다.
+`app/services/library_books.py`에 함수를 둘로 나눈다.
+- `connect_official(library_book, book)`: 공식 서지 참조와 처리 상태만 쓴다. 운영자 실행은 이 함수만 부른다.
+- `apply_audience(library_book)`: 연결된 공식 서지의 분류 원문으로 어린이 근거를 맞춘다.
+- `apply_official(library_book, book)`: 두 함수를 잇는다. 등록, ISBN 수정, 가져오기의 `_new_book`처럼 기관의 요청에서 쓴다.
+- `refresh_audience(session, library_id)`: 기관 관리자의 갱신. 근거가 `default`나 `external_category`인 자기 기관 도서에 `apply_audience`를 쓴다.
 
-새로 만든 `LibraryBook`은 저장 전까지 `audience_source`가 `None`이다. 기본값이 DB에 있기 때문이다. `apply_official`은 `None`을 `default`로 다뤄야 한다. 그렇지 않으면 등록과 가져오기에서 외부 근거가 조용히 빠진다.
+아래 표는 `apply_official`의 동작이다.
+
+새로 만든 `LibraryBook`은 저장 전까지 `audience_source`가 `None`이다. 기본값이 DB에 있기 때문이다. `apply_audience`는 `None`을 `default`로 다뤄야 한다. 그렇지 않으면 등록과 가져오기에서 외부 근거가 조용히 빠진다.
 
 | 상황 | book_id | 처리 상태 | 어린이 구분 |
 | --- | --- | --- | --- |
@@ -166,7 +172,7 @@ scripts/enrich_books.py          # 인자 해석, 전제 조건 확인, 결과 �
 1. 대상 ISBN을 고른다. 제적 아닌 사본이 있고 처리 상태가 `pending`인 기관 도서의 ISBN을 중복 없이 정렬한다. `--retry-failed`면 그 뒤에 `not_found`, `mismatch`를 붙인다. `--limit`개까지만 쓴다.
 2. 트랜잭션을 끝낸 뒤 ISBN마다 처리한다. 외부 호출 동안 DB 트랜잭션이나 행 잠금을 잡지 않는다.
 3. `books`에 이미 있으면 호출 없이 연결한다. 없으면 호출한다.
-4. 찾으면 `books` 행을 만들고(`ON CONFLICT (isbn) DO NOTHING` 뒤 다시 읽음) 같은 ISBN의 기관 도서를 모두 `apply_official`로 연결한다. `FOR UPDATE`로 읽어 그 사이의 수정과 겹치지 않게 한다.
+4. 찾으면 `books` 행을 만들고(`ON CONFLICT (isbn) DO NOTHING` 뒤 다시 읽음) 같은 ISBN의 기관 도서를 모두 `connect_official`로 연결한다. `FOR UPDATE`로 읽어 그 사이의 수정과 겹치지 않게 한다.
 5. ISBN마다 커밋한다. 중단돼도 처리한 결과가 남는다.
 
 서지 값은 공식 서지에만 쓰고 기관 값은 건드리지 않는다.
@@ -209,6 +215,7 @@ scripts/enrich_books.py          # 인자 해석, 전제 조건 확인, 결과 �
 ## Risks / Trade-offs
 
 - [분류 규칙의 표본이 인기 도서에 치우침] → 분류 원문을 보관해 호출 없이 다시 판단할 수 있고, 관리자 지정이 항상 우선한다.
+- [운영자가 공식 서지를 채운 뒤 기관이 갱신하기 전까지 어린이 구분에 반영되지 않음] → 그동안 어린이 요청에서 빠질 뿐 일반 도서가 섞이지는 않는다. 관리자 화면의 버튼이나 기관 설정의 자동 실행으로 줄일 수 있다.
 - [어린이 도서가 `general`로 남음. 전집이 대표적] → 어린이 요청에 일반 도서가 나가는 것보다 낫다고 본다. 비율은 `add-recommendation-evals`에서 본다.
 - [어린이 추천 후보에 문제집이 섞일 수 있음] → `add-recommendation-evals`에서 확인하고, 문제가 되면 `external_category` 값으로 추천 후보에서 낮춘다.
 - [`초등참고서` 아래 `예비중` 도서가 `국내도서-초등학습서` 값으로 올 수 있음] → 어른 책은 아니므로 허용한다.
