@@ -3,8 +3,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from app.models.library import StaffRole
-from app.schemas.common import NonEmpty, PatchModel, ReadModel
+from app.core.schemas import NonEmpty, PatchModel, ReadModel
+from app.library.models.library import StaffRole
 
 Password = Annotated[str, Field(min_length=8, max_length=200)]
 

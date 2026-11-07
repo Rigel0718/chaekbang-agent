@@ -4,12 +4,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError
 from app.core.security import hash_password
-from app.models.library import StaffRole, StaffUser
-from app.schemas.staff import StaffCreate, StaffUpdate
-from app.services.auth import revoke_all_sessions
-from app.services.errors import ConflictError
-from app.services.tenancy import get_owned
+from app.core.tenancy import get_owned
+from app.library.models.library import StaffRole, StaffUser
+from app.library.schemas.staff import StaffCreate, StaffUpdate
+from app.library.services.auth import revoke_all_sessions
 
 
 async def list_staff(

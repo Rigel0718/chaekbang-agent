@@ -8,8 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.external.yes24.client import StopReason
-from app.services.book_enrichment import run_enrichment
+from app.central.external.yes24.client import StopReason
 from tests.conftest import Tenant
 from tests.helpers import (
     VALID_ISBN,
@@ -20,7 +19,7 @@ from tests.helpers import (
     add_library_book,
     fetch,
 )
-from tests.yes24_helpers import FakeYes24, error, item, ok
+from tests.yes24_helpers import FakeYes24, enrich, error, item, ok
 
 
 @pytest.fixture
@@ -64,7 +63,7 @@ async def test_processes_held_books(
     """[catalog/book-enrichment] 채움 실행과 대상 / 소장 도서 처리"""
     await _held(session, library_a.id)
     await add_library_book(session, library_a.id, VALID_ISBN_2)  # 사본 없음
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert yes24.isbns == [VALID_ISBN]
 
 
@@ -74,7 +73,7 @@ async def test_same_isbn_called_once(
     """[catalog/book-enrichment] 채움 실행과 대상 / 같은 ISBN은 한 번만 조회"""
     ours = await _held(session, library_a.id)
     theirs = await _held(session, library_b.id)
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert yes24.isbns == [VALID_ISBN]
     assert await _status(session, ours) == await _status(session, theirs) == "enriched"
     assert (await fetch(session, "library_books", theirs["id"]))["book_id"] is not None
@@ -86,14 +85,14 @@ async def test_withdrawn_only_excluded(
     """[catalog/book-enrichment] 채움 실행과 대상 / 제적 사본만 있는 도서 제외"""
     book = await add_library_book(session, library_a.id)
     await add_holding(session, library_a.id, book["id"], "A-1", status="withdrawn")
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert yes24.isbns == []
 
 
 async def test_no_isbn_excluded(session: AsyncSession, yes24: FakeYes24, library_a: Tenant) -> None:
     """[catalog/book-enrichment] 채움 실행과 대상 / ISBN 없는 도서 제외"""
     book = await _held(session, library_a.id, None)
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert yes24.isbns == []
     assert await _status(session, book) == "pending"
 
@@ -109,16 +108,16 @@ async def _three_pending(session: AsyncSession, library_id: int) -> None:
 async def test_limit(session: AsyncSession, yes24: FakeYes24, library_a: Tenant) -> None:
     """[catalog/book-enrichment] 나눠서 처리 / limit만큼 처리"""
     await _three_pending(session, library_a.id)
-    result = await run_enrichment(session, yes24.client(), limit=2)
+    result = await enrich(session, yes24.client(), limit=2)
     assert (result.processed, result.remaining) == (2, 1)
 
 
 async def test_continues(session: AsyncSession, yes24: FakeYes24, library_a: Tenant) -> None:
     """[catalog/book-enrichment] 나눠서 처리 / 이어서 처리"""
     await _three_pending(session, library_a.id)
-    await run_enrichment(session, yes24.client(), limit=2)
+    await enrich(session, yes24.client(), limit=2)
     done = list(yes24.isbns)
-    await run_enrichment(session, yes24.client(), limit=2)
+    await enrich(session, yes24.client(), limit=2)
     assert len(yes24.isbns) == 3 and len(set(yes24.isbns)) == 3
     assert yes24.isbns[:2] == done
 
@@ -132,7 +131,7 @@ async def test_links_without_call(
     """[catalog/book-enrichment] 이미 있는 공식 서지 사용 / 외부 호출 없이 연결"""
     official = await add_book(session)
     book = await _held(session, library_a.id)
-    result = await run_enrichment(session, yes24.client())
+    result = await enrich(session, yes24.client())
     assert yes24.isbns == []
     assert result.linked == 1
     row = await fetch(session, "library_books", book["id"])
@@ -148,7 +147,7 @@ async def test_creates_official_book(
 ) -> None:
     """[catalog/book-enrichment] 공식 서지 만들기 / 공식 서지 생성"""
     book = await _held(session, library_a.id)
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     official = await _official(session)
     assert official["title"] == "강아지똥"
     assert official["publisher"] == "길벗어린이"
@@ -167,7 +166,7 @@ async def test_library_values_kept(
     """[catalog/book-enrichment] 공식 서지 만들기 / 기관 값 유지"""
     book = await _held(session, library_a.id, title="클린코드")
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, title="클린 코드"))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert (await fetch(session, "library_books", book["id"]))["title"] == "클린코드"
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
     assert body["title"] == "클린 코드"
@@ -177,7 +176,7 @@ async def test_author_kept_raw(session: AsyncSession, yes24: FakeYes24, library_
     """[catalog/book-enrichment] 공식 서지 만들기 / 저자 원문 보관"""
     await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, author="앤디 위어 저/박아람 역"))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert (await _official(session))["author"] == "앤디 위어 저/박아람 역"
 
 
@@ -188,7 +187,7 @@ async def test_summary_as_description(
     await _held(session, library_a.id)
     detail = {"bookIntroduction": None, "bookSummary": "줄거리", "tableOfContents": None}
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, contentDetail=detail))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert (await _official(session))["description"] == "줄거리"
 
 
@@ -197,7 +196,7 @@ async def test_many_series(session: AsyncSession, yes24: FakeYes24, library_a: T
     await _held(session, library_a.id)
     series = [{"seriesName": "민들레그림책"}, {"seriesName": "우리그림책"}]
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, series=series))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert (await _official(session))["series_name"] == "민들레그림책, 우리그림책"
 
 
@@ -208,7 +207,7 @@ async def test_extra_fields_in_response(
     book = await _held(session, library_a.id)
     detail = {"bookIntroduction": "소개", "bookSummary": None, "tableOfContents": "1장"}
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, subTitle="부제", contentDetail=detail))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
     assert (body["subtitle"], body["table_of_contents"]) == ("부제", "1장")
     assert body["series_name"] == "민들레그림책"
@@ -220,7 +219,7 @@ async def test_category_kept_raw(
     """[catalog/book-enrichment] 공식 서지 만들기 / 분류 원문 보관"""
     book = await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, goodsSortNm="국내도서-청소년"))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert (await _official(session))["external_category"] == "국내도서-청소년"
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
     assert body["external_category"] == "국내도서-청소년"
@@ -232,100 +231,8 @@ async def test_existing_official_not_changed(
     """[catalog/book-enrichment] 공식 서지 만들기 (이미 있는 공식 서지는 고치지 않음)"""
     await add_book(session, title="원래 공식 서명")
     await _held(session, library_a.id)
-    await run_enrichment(session, yes24.client(), retry_failed=True)
+    await enrich(session, yes24.client(), retry_failed=True)
     assert (await _official(session))["title"] == "원래 공식 서명"
-
-
-# --- 운영자 실행과 기관의 어린이 구분 ---
-
-
-async def test_run_does_not_touch_audience(
-    session: AsyncSession, yes24: FakeYes24, library_a: Tenant
-) -> None:
-    """[catalog/library-books] 외부 분류 근거 / 운영자 실행은 바꾸지 않음"""
-    book = await _held(session, library_a.id)
-    yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, goodsSortNm="국내도서-어린이"))
-    await run_enrichment(session, yes24.client())
-    row = await fetch(session, "library_books", book["id"])
-    assert row["book_id"] is not None
-    assert (row["audience"], row["audience_source"]) == ("general", "default")
-
-
-async def test_linking_existing_official_does_not_touch_audience(
-    session: AsyncSession, yes24: FakeYes24, library_a: Tenant
-) -> None:
-    """[catalog/library-books] 외부 분류 근거 / 운영자 실행은 바꾸지 않음 (호출 없는 연결)"""
-    await add_book(session, external_category="국내도서-어린이")
-    book = await _held(session, library_a.id)
-    await run_enrichment(session, yes24.client())
-    row = await fetch(session, "library_books", book["id"])
-    assert (row["audience"], row["audience_source"]) == ("general", "default")
-
-
-async def test_refresh_after_run(
-    session: AsyncSession, yes24: FakeYes24, library_a: Tenant, admin_client: AsyncClient
-) -> None:
-    """[catalog/library-books] 어린이 구분 갱신 / 채움 뒤 갱신"""
-    book = await _held(session, library_a.id)
-    yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, goodsSortNm="국내도서-어린이"))
-    await run_enrichment(session, yes24.client())
-    res = await admin_client.post("/library-books/audience/refresh")
-    assert res.status_code == 200
-    assert res.json() == {"updated": 1}
-    row = await fetch(session, "library_books", book["id"])
-    assert (row["audience"], row["audience_source"]) == ("children", "external_category")
-
-
-async def test_refresh_keeps_other_library(
-    session: AsyncSession,
-    yes24: FakeYes24,
-    library_a: Tenant,
-    library_b: Tenant,
-    admin_client: AsyncClient,
-) -> None:
-    """[catalog/library-books] 어린이 구분 갱신 / 다른 기관에 영향 없음"""
-    await _held(session, library_a.id)
-    theirs = await _held(session, library_b.id)
-    await run_enrichment(session, yes24.client())
-    await admin_client.post("/library-books/audience/refresh")
-    row = await fetch(session, "library_books", theirs["id"])
-    assert (row["audience"], row["audience_source"]) == ("general", "default")
-
-
-@pytest.mark.parametrize(
-    ("audience", "source"), [("general", "manual"), ("children", "import_label")]
-)
-async def test_refresh_keeps_higher_evidence(
-    session: AsyncSession,
-    yes24: FakeYes24,
-    library_a: Tenant,
-    admin_client: AsyncClient,
-    audience: str,
-    source: str,
-) -> None:
-    """[catalog/library-books] 어린이 구분 갱신 / 높은 근거는 갱신하지 않음"""
-    book = await _held(session, library_a.id, audience=audience, audience_source=source)
-    await run_enrichment(session, yes24.client())
-    res = await admin_client.post("/library-books/audience/refresh")
-    assert res.json() == {"updated": 0}
-    row = await fetch(session, "library_books", book["id"])
-    assert (row["audience"], row["audience_source"]) == (audience, source)
-
-
-async def test_refresh_twice(
-    session: AsyncSession, yes24: FakeYes24, library_a: Tenant, admin_client: AsyncClient
-) -> None:
-    """[catalog/library-books] 어린이 구분 갱신 / 다시 갱신"""
-    await _held(session, library_a.id)
-    await run_enrichment(session, yes24.client())
-    await admin_client.post("/library-books/audience/refresh")
-    res = await admin_client.post("/library-books/audience/refresh")
-    assert res.json() == {"updated": 0}
-
-
-async def test_refresh_rejects_kiosk(kiosk_client: AsyncClient) -> None:
-    """[catalog/library-books] 어린이 구분 갱신 / 키오스크 계정 거부"""
-    assert (await kiosk_client.post("/library-books/audience/refresh")).status_code == 403
 
 
 # --- 저장하지 않는 값 ---
@@ -336,7 +243,7 @@ async def test_volatile_values_not_stored(
 ) -> None:
     """[catalog/book-enrichment] 저장하지 않는 값 / 변동 정보 미저장"""
     book = await _held(session, library_a.id)
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     dump = await session.scalar(text("SELECT json_agg(t)::text FROM books t"))
     body = (await admin_client.get(f"/library-books/{book['id']}")).text
     for value in ("12600", "판매중", "46881", "9.5"):
@@ -349,7 +256,7 @@ async def test_cover_image_not_requested(
 ) -> None:
     """[catalog/book-enrichment] 저장하지 않는 값 / 표지 파일 미저장"""
     await _held(session, library_a.id)
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert [r.url.path for r in yes24.requests] == ["/v1/goods/itemDetail"]
     assert (await _official(session))["cover_url"].startswith("https://")
 
@@ -361,7 +268,7 @@ async def test_mismatch(session: AsyncSession, yes24: FakeYes24, library_a: Tena
     """[catalog/book-enrichment] ISBN 일치 확인 / 다른 책 응답"""
     book = await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN_2))
-    result = await run_enrichment(session, yes24.client())
+    result = await enrich(session, yes24.client())
     assert await _books(session) == 0
     assert await _status(session, book) == "mismatch"
     assert result.mismatch == 1
@@ -378,7 +285,7 @@ async def test_not_found_continues(
     second = await _held(session, library_a.id, VALID_ISBN_2)
     isbns = sorted([VALID_ISBN, VALID_ISBN_2])
     yes24.responses[isbns[0]] = error(404, "GOODS_002")
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert yes24.isbns == isbns
     statuses = {await _status(session, first), await _status(session, second)}
     assert statuses == {"not_found", "enriched"}
@@ -390,7 +297,7 @@ async def test_empty_success_is_not_found(
     """[catalog/book-enrichment] 찾지 못한 도서 / 결과가 빈 성공 응답"""
     book = await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = ok()
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert await _status(session, book) == "not_found"
 
 
@@ -403,7 +310,7 @@ async def test_required_field_missing(
     """[catalog/book-enrichment] 찾지 못한 도서 / 저자 없는 응답 (길이 초과 포함)"""
     book = await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = ok(item(VALID_ISBN, **overrides))
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert await _books(session) == 0
     assert await _status(session, book) == "not_found"
 
@@ -413,7 +320,7 @@ async def test_failed_skipped_by_default(
 ) -> None:
     """[catalog/book-enrichment] 찾지 못한 도서 / 기본 실행에서 제외"""
     await _held(session, library_a.id, enrichment_status="not_found")
-    await run_enrichment(session, yes24.client())
+    await enrich(session, yes24.client())
     assert yes24.isbns == []
 
 
@@ -421,7 +328,7 @@ async def test_retry_failed(session: AsyncSession, yes24: FakeYes24, library_a: 
     """[catalog/book-enrichment] 찾지 못한 도서 / 다시 시도"""
     book = await _held(session, library_a.id, enrichment_status="not_found")
     mismatch = await _held(session, library_a.id, VALID_ISBN_2, enrichment_status="mismatch")
-    await run_enrichment(session, yes24.client(), retry_failed=True)
+    await enrich(session, yes24.client(), retry_failed=True)
     assert await _status(session, book) == "enriched"
     assert await _status(session, mismatch) == "enriched"
 
@@ -432,7 +339,7 @@ async def test_retry_failed_after_pending(
     """[catalog/book-enrichment] 찾지 못한 도서 (처리 대기 ISBN 뒤에 다시 조회)"""
     await _held(session, library_a.id, VALID_ISBN_2, enrichment_status="not_found")
     await _held(session, library_a.id, VALID_ISBN_3)
-    await run_enrichment(session, yes24.client(), limit=1, retry_failed=True)
+    await enrich(session, yes24.client(), limit=1, retry_failed=True)
     assert yes24.isbns == [VALID_ISBN_3]
 
 
@@ -454,7 +361,7 @@ async def test_rate_limited(session: AsyncSession, yes24: FakeYes24, library_a: 
     """[catalog/book-enrichment] 외부 장애 시 중단 / 호출 한도 초과"""
     first, second = await _two_isbns(session, library_a.id)
     yes24.responses[second] = httpx.Response(429)
-    result = await run_enrichment(session, yes24.client())
+    result = await enrich(session, yes24.client())
     assert result.stopped == StopReason.RATE_LIMITED
     assert await _statuses(session) == {first: "enriched", second: "pending"}
     assert result.remaining == 1
@@ -466,7 +373,7 @@ async def test_upstream_unavailable(
     """[catalog/book-enrichment] 외부 장애 시 중단 / 외부 서비스 장애"""
     first, second = await _two_isbns(session, library_a.id)
     yes24.responses[first] = error(503, "UPSTREAM_UNAVAILABLE")
-    result = await run_enrichment(session, yes24.client())
+    result = await enrich(session, yes24.client())
     assert result.stopped == StopReason.UPSTREAM_UNAVAILABLE
     assert yes24.isbns == [first]
     assert await _statuses(session) == {first: "pending", second: "pending"}
@@ -476,7 +383,7 @@ async def test_network_error(session: AsyncSession, yes24: FakeYes24, library_a:
     """[catalog/book-enrichment] 외부 장애 시 중단 / 네트워크 오류"""
     await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = httpx.ReadTimeout("시간 초과")
-    result = await run_enrichment(session, yes24.client())
+    result = await enrich(session, yes24.client())
     assert result.stopped == StopReason.UPSTREAM_UNAVAILABLE
 
 
@@ -484,5 +391,5 @@ async def test_auth_failed(session: AsyncSession, yes24: FakeYes24, library_a: T
     """[catalog/book-enrichment] 외부 장애 시 중단 / 인증 실패"""
     await _held(session, library_a.id)
     yes24.responses[VALID_ISBN] = error(401, "AUTH_002")
-    result = await run_enrichment(session, yes24.client())
+    result = await enrich(session, yes24.client())
     assert result.stopped == StopReason.AUTH_FAILED

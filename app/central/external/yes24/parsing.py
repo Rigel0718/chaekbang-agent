@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.external.yes24.definitions import ITEM_FIELDS, SERIES_NAME_KEY
+from app.central.external.yes24.definitions import ITEM_FIELDS, SERIES_NAME_KEY
 
 MAX_PRICE = 2**31 - 1  # 정가 열(Integer)의 상한
 

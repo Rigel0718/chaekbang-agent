@@ -2,8 +2,8 @@ from typing import Annotated
 
 from pydantic import Field
 
-from app.models.library import LibraryType, LoanMode
-from app.schemas.common import NonEmpty, PatchModel, ReadModel
+from app.core.schemas import NonEmpty, PatchModel, ReadModel
+from app.library.models.library import LibraryType, LoanMode
 
 
 class LibraryRead(ReadModel):

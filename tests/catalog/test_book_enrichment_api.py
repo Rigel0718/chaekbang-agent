@@ -3,7 +3,6 @@
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.book_enrichment import run_enrichment
 from tests.conftest import Tenant
 from tests.helpers import (
     VALID_ISBN,
@@ -13,7 +12,7 @@ from tests.helpers import (
     add_library_book,
     make_isbn,
 )
-from tests.yes24_helpers import FakeYes24
+from tests.yes24_helpers import FakeYes24, enrich
 
 
 async def _held(session: AsyncSession, library_id: int, isbn: str | None, **overrides):
@@ -73,7 +72,7 @@ async def test_source_and_link(
 ) -> None:
     """[catalog/book-enrichment] 출처 표시 / 출처와 링크"""
     book = await _held(session, library_a.id, VALID_ISBN)
-    await run_enrichment(session, FakeYes24().client())
+    await enrich(session, FakeYes24().client())
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
     assert body["external_source"] == "yes24"
     assert body["external_url"] == "https://www.yes24.com/product/goods/15320"

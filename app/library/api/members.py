@@ -2,10 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.core.deps import AdminStaff, Session
-from app.schemas.circulation import MemberCreate, MemberRead, MemberUpdate
-from app.schemas.common import Page, Pagination, page_of
-from app.services import members
+from app.core.schemas import Page, Pagination, page_of
+from app.library.deps import AdminStaff, Session
+from app.library.schemas.circulation import MemberCreate, MemberRead, MemberUpdate
+from app.library.services import members
 
 router = APIRouter(prefix="/members", tags=["members"])
 

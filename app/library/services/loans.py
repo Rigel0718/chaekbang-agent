@@ -11,10 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
-from app.models.catalog import Holding, HoldingStatus
-from app.models.circulation import Loan, Member
-from app.models.library import Library, LoanMode
-from app.services.errors import ConflictError, NotFoundError
+from app.core.errors import ConflictError, NotFoundError
+from app.library.models.catalog import Holding, HoldingStatus
+from app.library.models.circulation import Loan, Member
+from app.library.models.library import Library, LoanMode
 
 DESK_ONLY = "이 도서관의 대출·반납은 데스크에서 해 주세요"
 

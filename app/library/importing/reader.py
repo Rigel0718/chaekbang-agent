@@ -7,7 +7,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from app.importing.errors import ImportFileError
+from app.library.importing.errors import ImportFileError
 
 MAX_BYTES = 20 * 1024 * 1024
 MAX_ROWS = 50_000

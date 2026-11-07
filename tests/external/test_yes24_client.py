@@ -3,9 +3,9 @@
 import httpx
 import pytest
 
-from app.external.yes24.client import RateLimiter, StopReason, Yes24Stopped
-from app.external.yes24.definitions import MIN_CALL_INTERVAL_SECONDS
-from app.external.yes24.goods import get_items_by_isbn
+from app.central.external.yes24.client import RateLimiter, StopReason, Yes24Stopped
+from app.central.external.yes24.definitions import MIN_CALL_INTERVAL_SECONDS
+from app.central.external.yes24.goods import get_items_by_isbn
 from tests.helpers import VALID_ISBN, VALID_ISBN_2
 from tests.yes24_helpers import TEST_API_KEY, FakeYes24, error, item, ok
 

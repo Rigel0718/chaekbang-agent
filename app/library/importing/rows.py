@@ -4,9 +4,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
-from app.importing.classify import has_children_label
-from app.importing.columns import LABELS, REQUIRED, HeaderMatch
-from app.importing.normalize import (
+from app.library.importing.columns import LABELS, REQUIRED, HeaderMatch
+from app.library.importing.normalize import (
     clean_text,
     normalize_cell_isbn,
     parse_acquisition,
@@ -14,7 +13,7 @@ from app.importing.normalize import (
     parse_price,
     parse_status,
 )
-from app.models.catalog import AcquisitionType
+from app.library.models.catalog import AcquisitionType
 
 MAX_LENGTHS = {
     "accession_number": 50,
@@ -49,7 +48,8 @@ class ParsedRow:
     acquisition: str | None = None  # 알 수 없으면 None. 적용 때 기존 값이나 unknown이 된다
     price: int | None = None
     donor: str | None = None
-    children: bool = False
+    separate_mark: str | None = None  # 파일 값 그대로. 뜻은 기관 개별 기능이 해석한다
+    addition_code: str | None = None
     skip_reason: str | None = None
     flags: list[str] = field(default_factory=list)
 
@@ -111,11 +111,8 @@ def parse_row(row_no: int, row: list[Any], match: HeaderMatch) -> ParsedRow:
         parsed.donor = None  # 매입 사본에는 기증처를 두지 않는다
     # 그 밖의 사본에서 가격 열은 정가일 수 있어 쓰지 않는다.
 
-    parsed.children = has_children_label(
-        clean_text(_cell(row, match, "separate_mark")),
-        parsed.shelf_location,
-        clean_text(_cell(row, match, "addition_code")),
-    )
+    parsed.separate_mark = clean_text(_cell(row, match, "separate_mark"))
+    parsed.addition_code = clean_text(_cell(row, match, "addition_code"))
 
     missing = [LABELS[name] for name in REQUIRED if getattr(parsed, name) is None]
     if missing:

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import clock
 from app.core.db import get_session
 from app.core.security import hash_token
-from app.models.library import StaffRole, StaffSession, StaffUser
+from app.library.models.library import StaffRole, StaffSession, StaffUser
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 

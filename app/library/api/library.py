@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
-from app.core.deps import AdminStaff, CurrentStaff, Session
-from app.schemas.library import LibraryRead, LibraryUpdate
-from app.services import library
+from app.library.deps import AdminStaff, CurrentStaff, Session
+from app.library.schemas.library import LibraryRead, LibraryUpdate
+from app.library.services import library
 
 router = APIRouter(prefix="/library", tags=["library"])
 

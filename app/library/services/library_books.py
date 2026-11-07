@@ -9,21 +9,19 @@ from sqlalchemy import Select, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.catalog import (
+from app.central.models import Book
+from app.core.errors import ConflictError
+from app.core.tenancy import get_owned
+from app.library.hooks import notify_official_changed
+from app.library.models.catalog import (
     BIBLIOGRAPHIC_FIELDS,
     AcquisitionType,
-    Audience,
-    AudienceSource,
-    Book,
     EnrichmentStatus,
     Holding,
     HoldingStatus,
     LibraryBook,
 )
-from app.schemas.catalog import LibraryBookCreate, LibraryBookUpdate
-from app.services.audience import is_children_category
-from app.services.errors import ConflictError
-from app.services.tenancy import get_owned
+from app.library.schemas.catalog import LibraryBookCreate, LibraryBookUpdate
 
 LABEL = "도서"
 
@@ -51,8 +49,14 @@ async def _ensure_isbn_free(
         raise _duplicate_isbn(isbn)
 
 
-async def _commit(session: AsyncSession, isbn: str | None) -> None:
+async def _save(
+    session: AsyncSession, library_book: LibraryBook, isbn: str | None, *, official_changed: bool
+) -> None:
+    """저장하고, 기관의 요청으로 연결이 정해졌으면 기관 개별 기능에 알린다."""
     try:
+        await session.flush()
+        if official_changed:
+            await notify_official_changed(session, library_book)
         await session.commit()
     except IntegrityError as exc:
         # 동시에 같은 ISBN이 들어온 경우 UNIQUE 제약이 막는다.
@@ -61,33 +65,11 @@ async def _commit(session: AsyncSession, isbn: str | None) -> None:
 
 
 def connect_official(library_book: LibraryBook, book: Book | None) -> None:
-    """공식 서지 참조와 처리 상태만 정한다. 운영자 실행은 이 함수만 쓴다."""
+    """공식 서지 참조와 처리 상태만 정한다."""
     library_book.book = book
     library_book.enrichment_status = (
         EnrichmentStatus.ENRICHED if book is not None else EnrichmentStatus.PENDING
     )
-
-
-def apply_audience(library_book: LibraryBook) -> None:
-    """연결된 공식 서지의 분류 원문으로 어린이 근거를 맞춘다. 기관의 요청에서만 쓴다.
-
-    새 기관 도서는 저장 전까지 근거가 None이다. 기본값이 DB에 있어서 default로 다룬다.
-    """
-    book = library_book.book
-    source = library_book.audience_source or AudienceSource.DEFAULT
-    children = book is not None and is_children_category(book.external_category)
-    if children and source == AudienceSource.DEFAULT:
-        library_book.audience = Audience.CHILDREN
-        library_book.audience_source = AudienceSource.EXTERNAL_CATEGORY
-    elif not children and source == AudienceSource.EXTERNAL_CATEGORY:
-        library_book.audience = Audience.GENERAL
-        library_book.audience_source = AudienceSource.DEFAULT
-
-
-def apply_official(library_book: LibraryBook, book: Book | None) -> None:
-    """기관의 요청에서 연결을 정하고 어린이 구분까지 맞춘다."""
-    connect_official(library_book, book)
-    apply_audience(library_book)
 
 
 async def link_official(session: AsyncSession, library_book: LibraryBook) -> None:
@@ -95,7 +77,7 @@ async def link_official(session: AsyncSession, library_book: LibraryBook) -> Non
     book = None
     if library_book.isbn is not None:
         book = await session.scalar(select(Book).where(Book.isbn == library_book.isbn))
-    apply_official(library_book, book)
+    connect_official(library_book, book)
 
 
 async def create_library_book(
@@ -103,13 +85,10 @@ async def create_library_book(
 ) -> LibraryBook:
     if data.isbn is not None:
         await _ensure_isbn_free(session, library_id, data.isbn)
-    library_book = LibraryBook(library_id=library_id, **data.model_dump(exclude={"audience"}))
-    if data.audience is not None:
-        library_book.audience = data.audience
-        library_book.audience_source = AudienceSource.MANUAL
+    library_book = LibraryBook(library_id=library_id, **data.model_dump())
     await link_official(session, library_book)
     session.add(library_book)
-    await _commit(session, data.isbn)
+    await _save(session, library_book, data.isbn, official_changed=True)
     await session.refresh(library_book)
     return library_book
 
@@ -160,14 +139,14 @@ async def list_library_books(
     offset: int,
     isbn: str | None = None,
     held: bool = False,
-    audience: Audience | None = None,
+    within: Select | None = None,
 ) -> tuple[list[LibraryBookCounts], int]:
-    """held=True면 제적이 아닌 사본이 하나 이상 있는 도서만."""
+    """held=True면 제적이 아닌 사본이 하나 이상 있는 도서만. within은 기관 도서 id 조건이다."""
     query = _with_counts(library_id)
     if isbn is not None:
         query = query.where(LibraryBook.isbn == isbn)
-    if audience is not None:
-        query = query.where(LibraryBook.audience == audience)
+    if within is not None:
+        query = query.where(LibraryBook.id.in_(within))
     if held:
         query = query.where(
             exists().where(
@@ -194,7 +173,7 @@ async def update_library_book(
     changes = data.changes()
     isbn_changed = "isbn" in changes and changes["isbn"] != library_book.isbn
     if library_book.book_id is not None and set(changes) & set(BIBLIOGRAPHIC_FIELDS):
-        raise ConflictError("공식 서지에 연결된 도서는 ISBN과 대상 구분만 고칠 수 있습니다")
+        raise ConflictError("공식 서지에 연결된 도서는 ISBN만 고칠 수 있습니다")
     if "isbn" in changes:
         new_isbn = changes["isbn"]
         if new_isbn is None and library_book.isbn is not None:
@@ -210,34 +189,13 @@ async def update_library_book(
                 raise ConflictError("매입·납품 사본이 있는 도서는 ISBN을 비울 수 없습니다")
         elif new_isbn is not None:
             await _ensure_isbn_free(session, library_id, new_isbn, except_id=library_book_id)
-    if "audience" in changes:
-        library_book.audience_source = AudienceSource.MANUAL
     for field, value in changes.items():
         setattr(library_book, field, value)
     if isbn_changed:
         await link_official(session, library_book)
-    await _commit(session, changes.get("isbn"))
+    await _save(session, library_book, changes.get("isbn"), official_changed=isbn_changed)
     await session.refresh(library_book)
     return library_book
-
-
-async def refresh_audience(session: AsyncSession, library_id: int) -> int:
-    """자기 기관 도서의 어린이 구분을 공식 서지의 분류 원문에 맞추고 바뀐 건수를 돌려준다."""
-    rows = await session.scalars(
-        select(LibraryBook).where(
-            LibraryBook.library_id == library_id,
-            LibraryBook.audience_source.in_(
-                (AudienceSource.DEFAULT, AudienceSource.EXTERNAL_CATEGORY)
-            ),
-        )
-    )
-    updated = 0
-    for library_book in rows:
-        before = library_book.audience
-        apply_audience(library_book)
-        updated += library_book.audience != before
-    await session.commit()
-    return updated
 
 
 async def delete_library_book(session: AsyncSession, library_id: int, library_book_id: int) -> None:

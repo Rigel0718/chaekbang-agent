@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.core.isbn import InvalidIsbnError, isbn10_to_13, normalize_isbn
-from app.models.catalog import AcquisitionType, HoldingStatus
+from app.library.models.catalog import AcquisitionType, HoldingStatus
 
 _SPACES = re.compile(r"\s+")
 _NON_DIGIT = re.compile(r"[^\d]")

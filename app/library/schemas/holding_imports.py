@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Any
 
-from app.models.catalog import ImportStatus
-from app.schemas.common import ReadModel
+from app.core.schemas import ReadModel
+from app.library.models.catalog import ImportStatus
 
 
 class HoldingImportRead(ReadModel):

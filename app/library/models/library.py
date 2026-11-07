@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, TimestampMixin, str_enum
+from app.core.model_base import Base, TimestampMixin, str_enum
 
 
 class LibraryType(StrEnum):

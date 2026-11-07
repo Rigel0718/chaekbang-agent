@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.importing.columns import find_header
-from app.importing.errors import ImportFileError
+from app.library.importing.columns import find_header
+from app.library.importing.errors import ImportFileError
 
 
 def test_header_synonyms() -> None:

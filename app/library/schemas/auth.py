@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.models.library import StaffRole
+from app.library.models.library import StaffRole
 
 
 class LoginRequest(BaseModel):

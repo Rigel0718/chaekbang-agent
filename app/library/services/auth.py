@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
 from app.core.config import get_settings
+from app.core.errors import AuthenticationError
 from app.core.security import hash_token, new_token, verify_dummy, verify_password
-from app.models.library import Library, StaffRole, StaffSession, StaffUser
-from app.services.errors import AuthenticationError
+from app.library.models.library import Library, StaffRole, StaffSession, StaffUser
 
 INVALID_LOGIN = "아이디 또는 비밀번호가 올바르지 않습니다"
 

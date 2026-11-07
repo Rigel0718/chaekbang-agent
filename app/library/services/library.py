@@ -3,9 +3,9 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.library import Library
-from app.schemas.library import LibraryUpdate
-from app.services.errors import ConflictError
+from app.core.errors import ConflictError
+from app.library.models.library import Library
+from app.library.schemas.library import LibraryUpdate
 
 
 async def get_library(session: AsyncSession, library_id: int) -> Library:

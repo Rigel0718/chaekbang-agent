@@ -3,12 +3,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from app.core import clock
-from app.core.deps import AdminStaff, CurrentStaff, Session
-from app.models.circulation import Loan
-from app.schemas.circulation import LoanCreate, LoanRead, LoanReturn
-from app.schemas.common import Page, Pagination
-from app.services import loans
-from app.services.loans import LoanFilter
+from app.core.schemas import Page, Pagination
+from app.library.deps import AdminStaff, CurrentStaff, Session
+from app.library.models.circulation import Loan
+from app.library.schemas.circulation import LoanCreate, LoanRead, LoanReturn
+from app.library.services import loans
+from app.library.services.loans import LoanFilter
 
 router = APIRouter(prefix="/loans", tags=["loans"])
 

@@ -3,19 +3,17 @@ from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.catalog import (
+from app.central.models import ExternalSource
+from app.core.schemas import Isbn, NonEmpty, PatchModel, ReadModel, Won
+from app.library.models.catalog import (
     BIBLIOGRAPHIC_FIELDS,
     OFFICIAL_ONLY_FIELDS,
     AcquisitionType,
-    Audience,
-    AudienceSource,
     EnrichmentStatus,
-    ExternalSource,
     HoldingSource,
     HoldingStatus,
     LibraryBook,
 )
-from app.schemas.common import Isbn, NonEmpty, PatchModel, ReadModel, Won
 
 # --- 기관 도서 ---
 
@@ -30,7 +28,6 @@ class LibraryBookCreate(BaseModel):
     published_date: date | None = None
     list_price: Won | None = None
     kdc: str | None = None
-    audience: Audience | None = None
     cover_url: str | None = None
     description: str | None = None
 
@@ -38,7 +35,7 @@ class LibraryBookCreate(BaseModel):
 class LibraryBookUpdate(PatchModel):
     """요청에 포함된 필드만 바꾼다. ISBN은 null로 보내 비울 수 있다."""
 
-    NOT_NULL_FIELDS = ("title", "author", "audience")
+    NOT_NULL_FIELDS = ("title", "author")
 
     isbn: Isbn | None = None
     title: NonEmpty | None = None
@@ -47,7 +44,6 @@ class LibraryBookUpdate(PatchModel):
     published_date: date | None = None
     list_price: Won | None = None
     kdc: str | None = None
-    audience: Audience | None = None
     cover_url: str | None = None
     description: str | None = None
 
@@ -64,8 +60,6 @@ class LibraryBookRead(ReadModel):
     published_date: date | None
     list_price: int | None
     kdc: str | None
-    audience: Audience
-    audience_source: AudienceSource
     cover_url: str | None
     description: str | None
     enrichment_status: EnrichmentStatus
@@ -97,10 +91,6 @@ class LibraryBookWithHoldings(LibraryBookRead):
 
     holding_count: int
     available_count: int
-
-
-class AudienceRefreshResult(BaseModel):
-    updated: int  # 어린이 구분이 바뀐 건수
 
 
 class EnrichmentCounts(BaseModel):

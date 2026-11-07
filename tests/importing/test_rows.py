@@ -1,7 +1,7 @@
 """[catalog/holdings-import] 행 분류, 입수 구분 인식."""
 
-from app.importing.columns import find_header
-from app.importing.rows import (
+from app.library.importing.columns import find_header
+from app.library.importing.rows import (
     FLAG_INVALID_ISBN,
     FLAG_NO_ISBN,
     FLAG_NO_PRICE,
@@ -9,7 +9,7 @@ from app.importing.rows import (
     acquisition_flags,
     parse_rows,
 )
-from app.models.catalog import AcquisitionType
+from app.library.models.catalog import AcquisitionType
 
 HEADER = ["등록번호", "서명", "저자", "ISBN", "수입구분", "가격", "기증처", "대출상태"]
 

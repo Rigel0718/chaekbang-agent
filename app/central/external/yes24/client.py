@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from app.external.yes24.definitions import (
+from app.central.external.yes24.definitions import (
     API_KEY_HEADER,
     MIN_CALL_INTERVAL_SECONDS,
     NOT_FOUND_ERROR_CODES,

@@ -1,8 +1,8 @@
 """GOODS API 역할 함수."""
 
-from app.external.yes24.client import StopReason, Yes24Client, Yes24Stopped
-from app.external.yes24.definitions import DETAIL_ALL, GOODS_ITEM_DETAIL, SEARCH_TYPE_ISBN13
-from app.external.yes24.parsing import Yes24Item, parse_item
+from app.central.external.yes24.client import StopReason, Yes24Client, Yes24Stopped
+from app.central.external.yes24.definitions import DETAIL_ALL, GOODS_ITEM_DETAIL, SEARCH_TYPE_ISBN13
+from app.central.external.yes24.parsing import Yes24Item, parse_item
 
 
 async def get_items_by_isbn(client: Yes24Client, isbn: str) -> list[Yes24Item]:

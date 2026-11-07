@@ -2,11 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.core.deps import AdminStaff, CurrentStaff, Session
-from app.models.catalog import Holding, HoldingStatus
-from app.schemas.catalog import HoldingCreate, HoldingRead, HoldingUpdate
-from app.schemas.common import Page, Pagination
-from app.services import holdings
+from app.core.schemas import Page, Pagination
+from app.library.deps import AdminStaff, CurrentStaff, Session
+from app.library.models.catalog import Holding, HoldingStatus
+from app.library.schemas.catalog import HoldingCreate, HoldingRead, HoldingUpdate
+from app.library.services import holdings
 
 router = APIRouter(prefix="/holdings", tags=["holdings"])
 

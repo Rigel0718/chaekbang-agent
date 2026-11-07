@@ -4,18 +4,18 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.catalog import (
+from app.core.errors import ConflictError, InvalidRequestError
+from app.core.tenancy import get_owned
+from app.library.models.catalog import (
     AcquisitionType,
     Holding,
     HoldingSource,
     HoldingStatus,
     LibraryBook,
 )
-from app.models.circulation import Loan
-from app.schemas.catalog import HoldingCreate, HoldingUpdate, check_acquisition
-from app.services.errors import ConflictError, InvalidRequestError
-from app.services.library_books import get_library_book
-from app.services.tenancy import get_owned
+from app.library.models.circulation import Loan
+from app.library.schemas.catalog import HoldingCreate, HoldingUpdate, check_acquisition
+from app.library.services.library_books import get_library_book
 
 LABEL = "사본"
 

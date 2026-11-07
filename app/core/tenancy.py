@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.errors import NotFoundError
+from app.core.errors import NotFoundError
 
 
 async def get_owned[M](

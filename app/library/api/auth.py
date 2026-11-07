@@ -1,8 +1,8 @@
 from fastapi import APIRouter, status
 
-from app.core.deps import CurrentStaff, Session
-from app.schemas.auth import LoginRequest, LoginResponse, MeResponse
-from app.services import auth
+from app.library.deps import CurrentStaff, Session
+from app.library.schemas.auth import LoginRequest, LoginResponse, MeResponse
+from app.library.services import auth
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

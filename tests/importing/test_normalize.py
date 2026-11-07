@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from app.importing.normalize import (
+from app.library.importing.normalize import (
     clean_text,
     normalize_cell_isbn,
     parse_acquisition,
@@ -12,7 +12,7 @@ from app.importing.normalize import (
     parse_price,
     parse_status,
 )
-from app.models.catalog import AcquisitionType, HoldingStatus
+from app.library.models.catalog import AcquisitionType, HoldingStatus
 
 
 def test_isbn10() -> None:

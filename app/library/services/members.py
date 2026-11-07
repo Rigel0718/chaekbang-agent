@@ -4,10 +4,10 @@ from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.circulation import Loan, Member
-from app.schemas.circulation import MemberCreate, MemberUpdate
-from app.services.errors import ConflictError
-from app.services.tenancy import get_owned
+from app.core.errors import ConflictError
+from app.core.tenancy import get_owned
+from app.library.models.circulation import Loan, Member
+from app.library.schemas.circulation import MemberCreate, MemberUpdate
 
 LABEL = "회원"
 

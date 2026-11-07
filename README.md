@@ -2,7 +2,7 @@
 
 사서가 없는 작은도서관을 위한 AI 사서 웹 서비스의 백엔드. 도서관 PC에 켜 둔 화면에서 이용자는 AI 사서에게 추천을 받고 대출하며, 관리자는 운영 에이전트로 장서·대출 현황을 다룬다. 배경과 전체 설계는 [docs/design.md](docs/design.md), 코딩 규칙은 [CLAUDE.md](CLAUDE.md)를 참고한다.
 
-현재 단계: 2주차 서지정보 채움 (YES24 연동, 공식 서지). 에이전트 기능은 아직 없다.
+현재 단계: 패키지 분리 (운영자·기관 공통·기관 개별). 에이전트 기능은 아직 없다.
 
 ## 도메인
 
@@ -10,11 +10,12 @@
 | --- | --- | --- |
 | 기관과 인증 | libraries, staff_users, staff_sessions | `/auth`, `/library`, `/staff` |
 | 장서 | books(공식 서지, 기관 공통), library_books(기관 도서), holdings(소장 사본), holding_imports(가져오기 기록) | `/library-books`, `/holdings`, `/holding-imports`, `/book-enrichment` |
+| 어린이 구분 (기관 개별 기능) | library_book_audiences | `/children` |
 | 대출 | members, loans | `/members`, `/loans` |
 
 - **기관 분리**: books·libraries를 뺀 모든 테이블은 `library_id`를 가진다. 기관은 로그인 토큰으로 정해지고, 다른 기관의 데이터는 404로 응답한다.
 - **공식 서지**: `books`는 ISBN이 있는 책의 공식 서지다. 기관 API로는 쓸 수 없다.
-- **기관 도서와 사본**: 기관 도서는 그 기관의 책이다. 내부 id로 식별하고 ISBN은 선택이며, 어린이 구분도 여기 있다. ISBN이 같은 공식 서지가 있으면 연결되고(`book_id`), 조회할 때 공식 값을 먼저 보여 준다. 연결된 도서는 ISBN과 어린이 구분만 고칠 수 있다. 사본은 등록번호(`accession_number`), 청구기호(`call_number`), 입수 구분(매입·납품은 구입가와 ISBN 필수, 기증은 기증처 선택, 가져온 사본은 `unknown`도 가능)을 가진다.
+- **기관 도서와 사본**: 기관 도서는 그 기관의 책이다. 내부 id로 식별하고 ISBN은 선택이다. ISBN이 같은 공식 서지가 있으면 연결되고(`book_id`), 조회할 때 공식 값을 먼저 보여 준다. 연결된 도서는 ISBN만 고칠 수 있다. 사본은 등록번호(`accession_number`), 청구기호(`call_number`), 입수 구분(매입·납품은 구입가와 ISBN 필수, 기증은 기증처 선택, 가져온 사본은 `unknown`도 가능)을 가진다.
 - **운영 방식(`loan_mode`)**: `internal` 기관은 이 서비스에서 대출·반납하고, `imported` 기관은 기존 대출 프로그램에서 하므로 대출·반납 요청에 409로 안내한다.
 
 ## 로컬 실행
@@ -100,6 +101,27 @@ uv run alembic downgrade base
 uv run python -m evals.holdings_import
 ```
 
+## 어린이 구분
+
+기관 개별 기능이다. 공통 API의 응답에는 어린이 값이 없고 `/children`에서 다룬다.
+
+| API | 하는 일 | 권한 |
+| --- | --- | --- |
+| `GET /children/books` | 자기 기관의 어린이 도서 목록 | 직원 |
+| `GET /children/books/{id}` | 대상 구분과 근거 | 직원 |
+| `PUT /children/books/{id}` | 관리자 지정 | 관리자 |
+| `POST /children/refresh` | 공식 서지의 분류 원문으로 갱신 | 관리자 |
+
+근거의 우선순위는 `manual`, `import_label`, `external_category`, `default` 순이다. 저장된 값이 없으면 `general`, `default`다.
+
+## 패키지 구조
+
+`features → library → central → core` 방향으로만 의존한다. `tests/platform/test_package_layers.py`가 강제한다.
+
+- `app/central/`: 운영자 층. 공식 서지와 외부 연동
+- `app/library/`: 기관 공통
+- `app/features/`: 기관 개별 기능. 공통은 훅(`app/library/hooks.py`)으로 사건만 알리고, 기능은 `app/main.py`에서 등록한다
+
 ## 서지정보 채움 (운영자)
 
 공식 서지(`books`)는 서비스 운영자가 YES24로 채운다. 기관 API로는 실행할 수 없다. `.env`에 `YES24_API_KEY`가 필요하다.
@@ -114,7 +136,7 @@ uv run python scripts/enrich_books.py --limit 100
 - 호출 한도는 하루 20,000회, 초당 10회이고 초당 5회 이하로 호출한다. 한도 초과나 외부 장애가 나면 사유를 출력하고 멈춘다.
 - 종료 코드: `0` 완료, `1` 키·인자·DB 문제, `2` 외부 장애로 중단.
 - 기관 도서의 파일 값과 어린이 구분은 바뀌지 않는다. 연결되면 조회할 때 공식 값과 출처(`external_source`, `external_url`)가 나온다.
-- 어린이 구분은 기관의 기능이다. 채움 뒤 기관 관리자가 `POST /library-books/audience/refresh`를 호출하면 자기 기관 도서를 공식 서지의 분류 원문으로 갱신한다. 어린이 구분이 필요 없는 기관은 호출하지 않으면 된다.
+- 어린이 구분은 기관 개별 기능이다. 채움 뒤 기관 관리자가 `POST /children/refresh`를 호출하면 자기 기관 도서를 공식 서지의 분류 원문으로 갱신한다. 어린이 구분이 필요 없는 기관은 호출하지 않으면 된다.
 - 기관 관리자는 `GET /book-enrichment`로 자기 기관의 처리 현황을 본다.
 - YES24 이용 조건에 따라 소장 도서의 ISBN만 조회하고, 판매가와 판매 상태는 저장하지 않는다. 표지는 원본 URL만 저장한다.
 

@@ -148,6 +148,23 @@ async def add_library_book(
     return await insert(session, "library_books", **values)
 
 
+async def add_audience(
+    session: AsyncSession,
+    library_id: int,
+    library_book_id: int,
+    audience: str = "children",
+    source: str = "manual",
+) -> Any:
+    return await insert(
+        session,
+        "library_book_audiences",
+        library_id=library_id,
+        library_book_id=library_book_id,
+        audience=audience,
+        audience_source=source,
+    )
+
+
 async def add_holding(
     session: AsyncSession,
     library_id: int,

@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 
-from app.schemas.common import NonEmpty, PatchModel, ReadModel
+from app.core.schemas import NonEmpty, PatchModel, ReadModel
 
 
 class MemberCreate(BaseModel):

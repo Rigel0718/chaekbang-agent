@@ -2,19 +2,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.core.deps import AdminStaff, CurrentStaff, Session
 from app.core.isbn import InvalidIsbnError, normalize_isbn
-from app.models.catalog import Audience, LibraryBook
-from app.schemas.catalog import (
-    AudienceRefreshResult,
+from app.core.schemas import Page, Pagination
+from app.library.deps import AdminStaff, CurrentStaff, Session
+from app.library.models.catalog import LibraryBook
+from app.library.schemas.catalog import (
     LibraryBookCreate,
     LibraryBookRead,
     LibraryBookUpdate,
     LibraryBookWithHoldings,
 )
-from app.schemas.common import Page, Pagination
-from app.services import library_books
-from app.services.library_books import LibraryBookCounts
+from app.library.services import library_books
+from app.library.services.library_books import LibraryBookCounts
 
 router = APIRouter(prefix="/library-books", tags=["library-books"])
 
@@ -23,7 +22,7 @@ def _read(library_book: LibraryBook) -> LibraryBookRead:
     return LibraryBookRead(**LibraryBookRead.of(library_book))
 
 
-def _view(row: LibraryBookCounts) -> LibraryBookWithHoldings:
+def book_view(row: LibraryBookCounts) -> LibraryBookWithHoldings:
     return LibraryBookWithHoldings(
         **LibraryBookRead.of(row.library_book),
         holding_count=row.holding_count,
@@ -53,7 +52,6 @@ async def list_library_books(
     page: Annotated[Pagination, Query()],
     isbn: Annotated[str | None, Query(description="하이픈이 있어도 된다")] = None,
     held: Annotated[bool, Query(description="true면 제적이 아닌 사본이 있는 도서만")] = False,
-    audience: Audience | None = None,
 ):
     rows, total = await library_books.list_library_books(
         session,
@@ -62,23 +60,15 @@ async def list_library_books(
         offset=page.offset,
         isbn=_query_isbn(isbn),
         held=held,
-        audience=audience,
     )
     return Page[LibraryBookWithHoldings](
-        items=[_view(r) for r in rows], total=total, limit=page.limit, offset=page.offset
+        items=[book_view(r) for r in rows], total=total, limit=page.limit, offset=page.offset
     )
-
-
-@router.post("/audience/refresh", response_model=AudienceRefreshResult)
-async def refresh_audience(staff: AdminStaff, session: Session):
-    """공식 서지가 채워진 뒤 자기 기관의 어린이 구분을 갱신한다."""
-    updated = await library_books.refresh_audience(session, staff.library_id)
-    return AudienceRefreshResult(updated=updated)
 
 
 @router.get("/{library_book_id}", response_model=LibraryBookWithHoldings)
 async def get_library_book(library_book_id: int, staff: CurrentStaff, session: Session):
-    return _view(
+    return book_view(
         await library_books.get_library_book_with_counts(session, staff.library_id, library_book_id)
     )
 

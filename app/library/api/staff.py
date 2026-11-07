@@ -2,10 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.core.deps import AdminStaff, Session
-from app.schemas.common import Page, Pagination, page_of
-from app.schemas.staff import StaffCreate, StaffRead, StaffUpdate
-from app.services import staff as staff_service
+from app.core.schemas import Page, Pagination, page_of
+from app.library.deps import AdminStaff, Session
+from app.library.schemas.staff import StaffCreate, StaffRead, StaffUpdate
+from app.library.services import staff as staff_service
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 

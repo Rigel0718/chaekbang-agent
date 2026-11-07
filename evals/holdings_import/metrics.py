@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass
 
-from app.importing.columns import find_header
-from app.importing.reader import read_table
-from app.importing.rows import FLAG_INVALID_ISBN, ParsedRow, acquisition_flags, parse_rows
-from app.models.catalog import AcquisitionType
+from app.features.children.rules import has_children_label
+from app.library.importing.columns import find_header
+from app.library.importing.reader import read_table
+from app.library.importing.rows import FLAG_INVALID_ISBN, ParsedRow, acquisition_flags, parse_rows
+from app.library.models.catalog import AcquisitionType
 from evals.holdings_import.files import EvalFile
 
 
@@ -30,6 +31,10 @@ def _row_flags(row: ParsedRow) -> list[str]:
     return row.flags + acquisition_flags(acquisition, bool(row.isbn), row.price is not None)
 
 
+def _is_children(row: ParsedRow) -> bool:
+    return has_children_label(row.separate_mark, row.shelf_location, row.addition_code)
+
+
 def score_file(file: EvalFile) -> FileScore:
     table = read_table(file.filename, file.content)
     rows = parse_rows(table, find_header(table))
@@ -38,7 +43,7 @@ def score_file(file: EvalFile) -> FileScore:
 
     with_isbn = [(t, r) for t, r in pairs if t.isbn]
     invalid = [r for t, r in pairs if t.invalid_isbn]
-    predicted = [(t, r) for t, r in pairs if r.children]
+    predicted = [(t, r) for t, r in pairs if _is_children(r)]
     actual = [(t, r) for t, r in pairs if t.children]
     return FileScore(
         name=file.name,
@@ -47,6 +52,6 @@ def score_file(file: EvalFile) -> FileScore:
         isbn_recognition=_ratio(sum(t.isbn == r.isbn for t, r in with_isbn), len(with_isbn)),
         invalid_flagged=_ratio(sum(FLAG_INVALID_ISBN in r.flags for r in invalid), len(invalid)),
         children_precision=_ratio(sum(t.children for t, _ in predicted), len(predicted)),
-        children_recall=_ratio(sum(r.children for _, r in actual), len(actual)),
+        children_recall=_ratio(sum(_is_children(r) for _, r in actual), len(actual)),
         flagged_rate=sum(bool(_row_flags(r)) for r in rows) / len(rows),
     )

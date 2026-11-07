@@ -12,17 +12,18 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.central.models import Book
 from app.core import clock
-from app.importing.columns import find_header
-from app.importing.errors import ImportFileError
-from app.importing.normalize import clean_text
-from app.importing.reader import read_table
-from app.importing.rows import FLAG_NO_ISBN, FLAG_NO_PRICE, acquisition_flags, parse_rows
-from app.models.catalog import (
+from app.core.errors import ConflictError, InvalidRequestError
+from app.core.tenancy import get_owned
+from app.library.hooks import notify_official_changed, notify_row_applied
+from app.library.importing.columns import find_header
+from app.library.importing.errors import ImportFileError
+from app.library.importing.normalize import clean_text
+from app.library.importing.reader import read_table
+from app.library.importing.rows import FLAG_NO_ISBN, FLAG_NO_PRICE, acquisition_flags, parse_rows
+from app.library.models.catalog import (
     AcquisitionType,
-    Audience,
-    AudienceSource,
-    Book,
     Holding,
     HoldingImport,
     HoldingSource,
@@ -30,14 +31,10 @@ from app.models.catalog import (
     ImportStatus,
     LibraryBook,
 )
-from app.models.library import Library, LoanMode
-from app.services.errors import ConflictError, InvalidRequestError
-from app.services.library_books import apply_official
-from app.services.tenancy import get_owned
+from app.library.models.library import Library, LoanMode
+from app.library.services.library_books import connect_official
 
 LABEL = "가져오기 기록"
-# 파일 근거가 덮어쓰는 근거. 저장 전 새 도서는 None이다.
-FILE_LABEL_REPLACES = (None, AudienceSource.DEFAULT, AudienceSource.EXTERNAL_CATEGORY)
 INTERNAL_LIBRARY = "장서 가져오기는 기존 대출 프로그램을 쓰는 기관만 할 수 있습니다"
 
 
@@ -56,6 +53,7 @@ class Snapshot:
     books_by_isbn: dict[str, LibraryBook]  # 기관 도서
     books_without_isbn: dict[tuple[str, str], LibraryBook]
     officials: dict[str, Book]  # 행의 ISBN에 맞는 공식 서지
+    created: list[LibraryBook] = field(default_factory=list)  # 이번 적용에서 만든 기관 도서
 
 
 @dataclass
@@ -235,7 +233,8 @@ def _new_book(library_id: int, row: dict[str, Any], snap: Snapshot) -> LibraryBo
         title=row["title"],
         author=row["author"],
     )
-    apply_official(book, snap.officials.get(row["isbn"]))
+    connect_official(book, snap.officials.get(row["isbn"]))
+    snap.created.append(book)
     if row["isbn"]:
         snap.books_by_isbn[row["isbn"]] = book
     else:
@@ -251,15 +250,11 @@ def _fill_book(book: LibraryBook, row: dict[str, Any]) -> None:
         book.kdc = row["kdc"]
     if book.published_date is None and row["published_date"]:
         book.published_date = date.fromisoformat(row["published_date"])
-    # 관리자 지정(manual)은 바꾸지 않는다. 근거가 없는 행은 값을 내리지 않는다.
-    if row["children"] and book.audience_source in FILE_LABEL_REPLACES:
-        book.audience = Audience.CHILDREN
-        book.audience_source = AudienceSource.IMPORT_LABEL
 
 
 def _apply_row(
     session: AsyncSession, library_id: int, row: dict[str, Any], plan: RowPlan, snap: Snapshot
-) -> None:
+) -> LibraryBook:
     book = plan.book or _find_book(row, snap.holdings.get(row["accession_number"]), snap)
     if book is None:
         book = _new_book(library_id, row, snap)
@@ -274,6 +269,18 @@ def _apply_row(
     for name, value in plan.values.items():
         setattr(holding, name, value)
     holding.last_synced_at = clock.now()
+    return book
+
+
+async def _notify(
+    session: AsyncSession, snap: Snapshot, applied: list[tuple[LibraryBook, dict[str, Any]]]
+) -> None:
+    """기관 개별 기능에 알린다. 새 도서의 연결을 먼저 알려 파일 근거가 그 위에 놓이게 한다."""
+    await session.flush()
+    for book in snap.created:
+        await notify_official_changed(session, book)
+    for book, row in applied:
+        await notify_row_applied(session, book, row)
 
 
 async def apply_import(
@@ -296,9 +303,11 @@ async def apply_import(
         )
 
     plans = [_plan_row(row, snap) for row in rows]
-    for row, plan in zip(rows, plans, strict=True):
-        if plan.outcome != Outcome.SKIPPED:
-            _apply_row(session, library_id, row, plan, snap)
+    applied = [
+        (_apply_row(session, library_id, row, plan, snap), row)
+        for row, plan in zip(rows, plans, strict=True)
+        if plan.outcome != Outcome.SKIPPED
+    ]
     for holding in missing:
         holding.status = HoldingStatus.WITHDRAWN
 
@@ -308,6 +317,7 @@ async def apply_import(
     record.status = ImportStatus.APPLIED
     record.applied_at = clock.now()
     try:
+        await _notify(session, snap, applied)
         await session.commit()
     except IntegrityError as exc:
         # 같은 기관의 직접 등록이 같은 ISBN의 도서를 먼저 만든 경우다.

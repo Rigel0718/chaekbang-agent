@@ -15,8 +15,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin
-from app.models.catalog import Holding
+from app.core.model_base import Base, TimestampMixin
+from app.library.models.catalog import Holding
 
 
 class Member(TimestampMixin, Base):

@@ -15,12 +15,11 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.central.models import Book
 from app.core.isbn import isbn13_check_digit
-from app.models.catalog import (
+from app.features.children.models import Audience, AudienceSource, LibraryBookAudience
+from app.library.models.catalog import (
     AcquisitionType,
-    Audience,
-    AudienceSource,
-    Book,
     EnrichmentStatus,
     Holding,
     HoldingStatus,
@@ -236,6 +235,36 @@ async def _seed_library_books(session: AsyncSession, rows: list[dict]) -> int:
     return created + len(missing)
 
 
+def _library_values(book: dict) -> dict:
+    return {k: v for k, v in book.items() if k not in ("audience", "audience_source")}
+
+
+async def _seed_audiences(
+    session: AsyncSession, library_id: int, books: list[dict], ids: dict[tuple, int]
+) -> int:
+    """기관의 어린이 도서를 어린이 기능의 저장소에 넣는다."""
+    rows = [
+        {
+            "library_id": library_id,
+            "library_book_id": ids[key],
+            "audience": book["audience"],
+            "audience_source": book["audience_source"],
+        }
+        for book in books
+        if book["audience_source"] != AudienceSource.DEFAULT
+        and (key := _key(book["isbn"], book["title"], book["author"])) in ids
+    ]
+    if not rows:
+        return 0
+    result = await session.execute(
+        insert(LibraryBookAudience)
+        .values(rows)
+        .on_conflict_do_nothing(index_elements=["library_id", "library_book_id"])
+        .returning(LibraryBookAudience.library_book_id)
+    )
+    return len(result.all())
+
+
 async def _library_book_ids(session: AsyncSession, library_id: int) -> dict[tuple, int]:
     """기관의 도서 id. ISBN이 있으면 ISBN으로, 없으면 제목+저자로 찾는다."""
     rows = await session.execute(
@@ -262,7 +291,7 @@ async def seed_catalog(
     }
     library_book_rows = [
         {
-            **books[index],
+            **_library_values(books[index]),
             "library_id": library_ids[key],
             "book_id": official_ids.get(books[index]["isbn"]),
             "enrichment_status": EnrichmentStatus.ENRICHED
@@ -275,9 +304,11 @@ async def seed_catalog(
     created_library_books = await _seed_library_books(session, library_book_rows)
 
     holding_rows = []
+    created_audiences = 0
     for key, rows in holdings_by_library.items():
         library_id = library_ids[key]
         ids = await _library_book_ids(session, library_id)
+        created_audiences += await _seed_audiences(session, library_id, books, ids)
         for row in rows:
             book = books[row.pop("book_index")]
             holding_rows.append(
@@ -297,5 +328,6 @@ async def seed_catalog(
     return {
         "books": (created_books, len(official_ids) - created_books),
         "library_books": (created_library_books, len(library_book_rows) - created_library_books),
+        "library_book_audiences": (created_audiences, 0),
         "holdings": (created_holdings, len(holding_rows) - created_holdings),
     }
