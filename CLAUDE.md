@@ -15,7 +15,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**3주차: AI 사서** (OpenSpec change: `add-librarian-agent`, 아직 제안 전).
+**3주차: AI 사서** (OpenSpec change: `add-librarian-agent`, 제안됨. 승인 전).
 공통 실행기(`app/agent/`)는 끝났다. 패키지별 `tools.py`와 프로필로 AI 사서를 올린다. 정한 내용은 `docs/design.md`의 '에이전트 구조'에 있다. 저자 구조화는 하지 않고 원문을 부분 문자열로 검색한다.
 
 ## OpenSpec 작업 규칙
