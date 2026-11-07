@@ -48,7 +48,7 @@ async def test_preview_does_not_change_holdings(
     assert body["summary"]["missing_count"] == 0
     assert body["column_mapping"]["title"] == "서명"
     assert await _count(session, "holdings") == 0
-    assert await _count(session, "books") == 0
+    assert await _count(session, "library_books") == 0
 
 
 async def test_missing_required_column_response(admin_client_b: AsyncClient) -> None:

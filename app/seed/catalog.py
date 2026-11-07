@@ -1,7 +1,9 @@
-"""도서 50권(기관 공통)과 기관별 소장 사본 시드. 같은 seed면 같은 데이터가 만들어진다.
+"""공식 서지와 기관별 기관 도서·소장 사본 시드. 같은 seed면 같은 데이터가 만들어진다.
 
-- 어린이 도서 15권, 일반 도서 30권(ISBN·정가 있음), ISBN·정가 없는 기증 도서 5권
-- 사본: 기관마다 도서 약 35권, 일부는 2~3권. 분실·훼손 사본을 섞는다.
+- 도서 50권: 어린이 15권, 일반 30권(ISBN·정가 있음), ISBN·정가 없는 기증 도서 5권
+- 공식 서지: ISBN 있는 45권. 가짜 ISBN이라 실제 공식 서지가 아니라 연결을 보여 주는 데모 값이다.
+- 기관 도서: 기관마다 도서 약 35권. ISBN이 있으면 공식 서지에 연결한다.
+- 사본: 기관 도서마다 1~3권. 분실·훼손 사본을 섞는다.
 - 약 70%는 매입·납품(구입가 = 정가의 90%), 나머지는 기증. ISBN 없는 도서는 모두 기증이다.
 """
 
@@ -21,6 +23,7 @@ from app.models.catalog import (
     Book,
     Holding,
     HoldingStatus,
+    LibraryBook,
 )
 from app.seed.library import LIBRARIES
 
@@ -186,69 +189,99 @@ def generate_holdings(seed: int, books: list[dict], library_key: str, offset: in
     return rows
 
 
-async def _book_ids(session: AsyncSession, books: list[dict]) -> list[int]:
-    """books 순서대로 id. ISBN이 있으면 ISBN으로, 없으면 제목+저자로 찾는다."""
-    by_isbn = dict(
+async def _seed_official(session: AsyncSession, books: list[dict]) -> tuple[dict[str, int], int]:
+    """(ISBN별 공식 서지 id, 새로 만든 건수). 어린이 구분은 기관 도서에 두므로 넣지 않는다."""
+    rows = [
+        {k: v for k, v in b.items() if k not in ("audience", "audience_source")}
+        for b in books
+        if b["isbn"]
+    ]
+    result = await session.execute(
+        insert(Book).values(rows).on_conflict_do_nothing(index_elements=["isbn"]).returning(Book.id)
+    )
+    created = len(result.all())
+    ids = await session.execute(
+        select(Book.isbn, Book.id).where(Book.isbn.in_([r["isbn"] for r in rows]))
+    )
+    return dict(ids.all()), created
+
+
+async def _seed_library_books(session: AsyncSession, rows: list[dict]) -> int:
+    """기관 도서를 만들고 새로 만든 건수를 돌려준다."""
+    with_isbn = [r for r in rows if r["isbn"]]
+    result = await session.execute(
+        insert(LibraryBook)
+        .values(with_isbn)
+        .on_conflict_do_nothing(index_elements=["library_id", "isbn"])
+        .returning(LibraryBook.id)
+    )
+    created = len(result.all())
+    # ISBN 없는 도서는 UNIQUE 키가 없어 기관·제목·저자로 있는지 먼저 본다.
+    without_isbn = [r for r in rows if not r["isbn"]]
+    keys = [(r["library_id"], r["title"], r["author"]) for r in without_isbn]
+    existing = set(
         (
             await session.execute(
-                select(Book.isbn, Book.id).where(
-                    Book.isbn.in_([b["isbn"] for b in books if b["isbn"]])
+                select(LibraryBook.library_id, LibraryBook.title, LibraryBook.author).where(
+                    LibraryBook.isbn.is_(None),
+                    tuple_(LibraryBook.library_id, LibraryBook.title, LibraryBook.author).in_(keys),
                 )
             )
         ).all()
     )
-    pairs = [(b["title"], b["author"]) for b in books if b["isbn"] is None]
-    by_title = {
-        (t, a): i
-        for t, a, i in (
-            await session.execute(
-                select(Book.title, Book.author, Book.id).where(
-                    Book.isbn.is_(None), tuple_(Book.title, Book.author).in_(pairs)
-                )
-            )
-        ).all()
-    }
-    return [by_isbn[b["isbn"]] if b["isbn"] else by_title[(b["title"], b["author"])] for b in books]
+    missing = [r for r, key in zip(without_isbn, keys, strict=True) if key not in existing]
+    if missing:
+        await session.execute(insert(LibraryBook).values(missing))
+    return created + len(missing)
+
+
+async def _library_book_ids(session: AsyncSession, library_id: int) -> dict[tuple, int]:
+    """기관의 도서 id. ISBN이 있으면 ISBN으로, 없으면 제목+저자로 찾는다."""
+    rows = await session.execute(
+        select(LibraryBook.isbn, LibraryBook.title, LibraryBook.author, LibraryBook.id).where(
+            LibraryBook.library_id == library_id
+        )
+    )
+    return {_key(isbn, title, author): id for isbn, title, author, id in rows.all()}
+
+
+def _key(isbn: str | None, title: str, author: str) -> tuple:
+    return (isbn,) if isbn else (title, author)
 
 
 async def seed_catalog(
     session: AsyncSession, seed: int, library_ids: dict[str, int]
 ) -> dict[str, tuple[int, int]]:
     books = generate_books(seed)
+    official_ids, created_books = await _seed_official(session, books)
 
-    with_isbn = [b for b in books if b["isbn"]]
-    result = await session.execute(
-        insert(Book)
-        .values(with_isbn)
-        .on_conflict_do_nothing(index_elements=["isbn"])
-        .returning(Book.id)
-    )
-    created_books = len(result.all())
-    # ISBN 없는 도서는 UNIQUE 키가 없어 제목+저자로 있는지 먼저 본다.
-    existing = set(
-        (
-            await session.execute(
-                select(Book.title, Book.author).where(
-                    Book.isbn.is_(None),
-                    tuple_(Book.title, Book.author).in_(
-                        [(b["title"], b["author"]) for b in books if not b["isbn"]]
-                    ),
-                )
-            )
-        ).all()
-    )
-    missing = [b for b in books if not b["isbn"] and (b["title"], b["author"]) not in existing]
-    if missing:
-        await session.execute(insert(Book).values(missing))
-        created_books += len(missing)
+    holdings_by_library = {
+        lib.key: generate_holdings(seed, books, lib.key, offset)
+        for offset, lib in enumerate(LIBRARIES, start=1)
+    }
+    library_book_rows = [
+        {
+            **books[index],
+            "library_id": library_ids[key],
+            "book_id": official_ids.get(books[index]["isbn"]),
+        }
+        for key, rows in holdings_by_library.items()
+        for index in sorted({row["book_index"] for row in rows})
+    ]
+    created_library_books = await _seed_library_books(session, library_book_rows)
 
-    ids = await _book_ids(session, books)
     holding_rows = []
-    for offset, lib in enumerate(LIBRARIES, start=1):
-        for row in generate_holdings(seed, books, lib.key, offset):
-            book_index = row.pop("book_index")
+    for key, rows in holdings_by_library.items():
+        library_id = library_ids[key]
+        ids = await _library_book_ids(session, library_id)
+        for row in rows:
+            book = books[row.pop("book_index")]
             holding_rows.append(
-                {**row, "library_id": library_ids[lib.key], "book_id": ids[book_index]}
+                {
+                    **row,
+                    "library_id": library_id,
+                    "library_book_id": ids[_key(book["isbn"], book["title"], book["author"])],
+                }
             )
     result = await session.execute(
         insert(Holding)
@@ -258,6 +291,7 @@ async def seed_catalog(
     )
     created_holdings = len(result.all())
     return {
-        "books": (created_books, len(books) - created_books),
+        "books": (created_books, len(official_ids) - created_books),
+        "library_books": (created_library_books, len(library_book_rows) - created_library_books),
         "holdings": (created_holdings, len(holding_rows) - created_holdings),
     }

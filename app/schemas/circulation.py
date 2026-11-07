@@ -38,7 +38,7 @@ class LoanRead(BaseModel):
     id: int
     holding_id: int
     accession_number: str
-    book_id: int
+    library_book_id: int
     title: str
     member_number: str | None  # 회원이 삭제된 반납 기록은 비어 있다
     loaned_on: date

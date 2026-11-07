@@ -28,6 +28,7 @@ from app.models.catalog import (
     HoldingSource,
     HoldingStatus,
     ImportStatus,
+    LibraryBook,
 )
 from app.models.library import Library, LoanMode
 from app.services.errors import ConflictError, InvalidRequestError
@@ -49,8 +50,9 @@ class Snapshot:
     """비교에 쓰는 현재 장서. 적용 중에 만든 도서도 여기에 더해 같은 파일의 뒤 행이 다시 쓴다."""
 
     holdings: dict[str, Holding]
-    books_by_isbn: dict[str, Book]
-    books_without_isbn: dict[tuple[str, str], Book]
+    books_by_isbn: dict[str, LibraryBook]  # 기관 도서
+    books_without_isbn: dict[tuple[str, str], LibraryBook]
+    officials: dict[str, Book]  # 행의 ISBN에 맞는 공식 서지
 
 
 @dataclass
@@ -58,7 +60,7 @@ class RowPlan:
     outcome: Outcome
     flags: list[str]
     values: dict[str, Any] = field(default_factory=dict)  # 사본에 넣을 값
-    book: Book | None = None  # 찾은 도서. None이면 새로 만든다
+    book: LibraryBook | None = None  # 찾은 기관 도서. None이면 새로 만든다
 
 
 def _book_key(title: str | None, author: str | None) -> tuple[str, str]:
@@ -68,20 +70,23 @@ def _book_key(title: str | None, author: str | None) -> tuple[str, str]:
 async def _snapshot(session: AsyncSession, library_id: int, rows: list[dict[str, Any]]) -> Snapshot:
     holdings = await session.scalars(select(Holding).where(Holding.library_id == library_id))
     isbns = {row["isbn"] for row in rows if row["isbn"]}
-    with_isbn = await session.scalars(select(Book).where(Book.isbn.in_(isbns))) if isbns else []
-    without_isbn = await session.scalars(select(Book).where(Book.isbn.is_(None)))
+    own = select(LibraryBook).where(LibraryBook.library_id == library_id)
+    with_isbn = await session.scalars(own.where(LibraryBook.isbn.in_(isbns))) if isbns else []
+    without_isbn = await session.scalars(own.where(LibraryBook.isbn.is_(None)))
+    officials = await session.scalars(select(Book).where(Book.isbn.in_(isbns))) if isbns else []
     return Snapshot(
         holdings={h.accession_number: h for h in holdings},
         books_by_isbn={b.isbn: b for b in with_isbn},
         books_without_isbn={_book_key(b.title, b.author): b for b in without_isbn},
+        officials={b.isbn: b for b in officials},
     )
 
 
-def _find_book(row: dict[str, Any], holding: Holding | None, snap: Snapshot) -> Book | None:
+def _find_book(row: dict[str, Any], holding: Holding | None, snap: Snapshot) -> LibraryBook | None:
     if row["isbn"]:
         return snap.books_by_isbn.get(row["isbn"])
     if holding is not None:
-        return holding.book  # 파일에 ISBN이 없으면 지금 도서를 유지한다
+        return holding.library_book  # 파일에 ISBN이 없으면 지금 도서를 유지한다
     return snap.books_without_isbn.get(_book_key(row["title"], row["author"]))
 
 
@@ -133,7 +138,7 @@ def _plan_row(row: dict[str, Any], snap: Snapshot) -> RowPlan:
     )
     if holding is None:
         return RowPlan(Outcome.CREATE, flags, values, book)
-    changed = book is None or book.id != holding.book_id
+    changed = book is None or book.id != holding.library_book_id
     changed = changed or any(getattr(holding, k) != v for k, v in values.items())
     return RowPlan(Outcome.UPDATE if changed else Outcome.UNCHANGED, flags, values, book)
 
@@ -219,8 +224,15 @@ async def create_preview(
     return record
 
 
-def _new_book(row: dict[str, Any], snap: Snapshot) -> Book:
-    book = Book(isbn=row["isbn"], title=row["title"], author=row["author"])
+def _new_book(library_id: int, row: dict[str, Any], snap: Snapshot) -> LibraryBook:
+    """기관 도서만 만든다. 파일 값은 공식 서지에 쓰지 않고, 같은 ISBN이 있으면 연결한다."""
+    book = LibraryBook(
+        library_id=library_id,
+        isbn=row["isbn"],
+        title=row["title"],
+        author=row["author"],
+        book=snap.officials.get(row["isbn"]),
+    )
     if row["isbn"]:
         snap.books_by_isbn[row["isbn"]] = book
     else:
@@ -228,7 +240,7 @@ def _new_book(row: dict[str, Any], snap: Snapshot) -> Book:
     return book
 
 
-def _fill_book(book: Book, row: dict[str, Any]) -> None:
+def _fill_book(book: LibraryBook, row: dict[str, Any]) -> None:
     """이미 있는 값은 파일 값으로 덮어쓰지 않고 빈 필드만 채운다."""
     if book.publisher is None:
         book.publisher = row["publisher"]
@@ -247,7 +259,7 @@ def _apply_row(
 ) -> None:
     book = plan.book or _find_book(row, snap.holdings.get(row["accession_number"]), snap)
     if book is None:
-        book = _new_book(row, snap)
+        book = _new_book(library_id, row, snap)
     _fill_book(book, row)
 
     holding = snap.holdings.get(row["accession_number"])
@@ -255,7 +267,7 @@ def _apply_row(
         holding = Holding(library_id=library_id, accession_number=row["accession_number"])
         session.add(holding)
         snap.holdings[row["accession_number"]] = holding
-    holding.book = book
+    holding.library_book = book
     for name, value in plan.values.items():
         setattr(holding, name, value)
     holding.last_synced_at = clock.now()
@@ -295,7 +307,7 @@ async def apply_import(
     try:
         await session.commit()
     except IntegrityError as exc:
-        # 다른 기관의 가져오기가 같은 ISBN의 도서를 먼저 만든 경우다.
+        # 같은 기관의 직접 등록이 같은 ISBN의 도서를 먼저 만든 경우다.
         await session.rollback()
         raise ConflictError("다른 작업과 겹쳤습니다. 다시 적용해 주세요") from exc
     await session.refresh(record)

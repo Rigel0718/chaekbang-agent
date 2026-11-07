@@ -3,7 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api import auth, books, holding_imports, holdings, library, loans, members, staff
+from app.api import (
+    auth,
+    holding_imports,
+    holdings,
+    library,
+    library_books,
+    loans,
+    members,
+    staff,
+)
 from app.core.db import get_engine
 from app.services.errors import (
     AuthenticationError,
@@ -23,7 +32,7 @@ app = FastAPI(title="chaekbang-agent", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(library.router)
 app.include_router(staff.router)
-app.include_router(books.router)
+app.include_router(library_books.router)
 app.include_router(holdings.router)
 app.include_router(holding_imports.router)
 app.include_router(members.router)

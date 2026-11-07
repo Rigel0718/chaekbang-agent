@@ -9,6 +9,7 @@ SHARED_TABLES: set[str] = {"libraries", "books"}
 TENANT_TABLES: set[str] = {
     "staff_users",
     "staff_sessions",
+    "library_books",
     "holdings",
     "holding_imports",
     "members",

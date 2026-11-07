@@ -1,21 +1,23 @@
 from datetime import date, datetime
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.models.catalog import (
+    BIBLIOGRAPHIC_FIELDS,
     AcquisitionType,
     Audience,
     AudienceSource,
     HoldingSource,
     HoldingStatus,
+    LibraryBook,
 )
 from app.schemas.common import Isbn, NonEmpty, PatchModel, ReadModel, Won
 
-# --- 도서 (기관 공통 서지정보) ---
+# --- 기관 도서 ---
 
 
-class BookCreate(BaseModel):
+class LibraryBookCreate(BaseModel):
     """ISBN과 정가는 선택이다 (ISBN 없는 기증 도서, 정가를 모르는 책)."""
 
     isbn: Isbn | None = None
@@ -30,7 +32,7 @@ class BookCreate(BaseModel):
     description: str | None = None
 
 
-class BookUpdate(PatchModel):
+class LibraryBookUpdate(PatchModel):
     """요청에 포함된 필드만 바꾼다. ISBN은 null로 보내 비울 수 있다."""
 
     NOT_NULL_FIELDS = ("title", "author", "audience")
@@ -47,8 +49,11 @@ class BookUpdate(PatchModel):
     description: str | None = None
 
 
-class BookRead(ReadModel):
+class LibraryBookRead(ReadModel):
+    """서지 필드는 표시 값이다. book_id가 있으면 공식 서지의 값을 먼저 쓴다."""
+
     id: int
+    book_id: int | None
     isbn: str | None
     title: str
     author: str
@@ -63,9 +68,15 @@ class BookRead(ReadModel):
     created_at: datetime
     updated_at: datetime
 
+    @classmethod
+    def of(cls, library_book: LibraryBook) -> dict[str, Any]:
+        """기관 도서를 표시 값이 채워진 응답 값으로 바꾼다."""
+        values = {f: getattr(library_book, f) for f in LibraryBookRead.model_fields}
+        return values | {f: library_book.shown(f) for f in BIBLIOGRAPHIC_FIELDS}
 
-class BookWithHoldings(BookRead):
-    """로그인한 기관 기준의 소장 권수와 대출 가능 권수를 붙인 도서."""
+
+class LibraryBookWithHoldings(LibraryBookRead):
+    """소장 권수와 대출 가능 권수를 붙인 기관 도서."""
 
     holding_count: int
     available_count: int
@@ -99,7 +110,7 @@ def check_acquisition(
 
 
 class HoldingCreate(BaseModel):
-    book_id: int
+    library_book_id: int
     accession_number: NonEmpty
     call_number: str | None = None
     shelf_location: str | None = None
@@ -132,7 +143,7 @@ class HoldingUpdate(PatchModel):
 
 class HoldingRead(ReadModel):
     id: int
-    book_id: int
+    library_book_id: int
     accession_number: str
     call_number: str | None
     shelf_location: str | None

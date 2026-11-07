@@ -1,4 +1,4 @@
-"""도서(기관 공통 서지정보)와 소장 사본(기관별)."""
+"""공식 서지(기관 공통), 기관 도서와 소장 사본(기관별)."""
 
 from datetime import date, datetime
 from enum import StrEnum
@@ -20,6 +20,18 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import ISBN_PATTERN, Base, TimestampMixin, str_enum
+
+# 공식 서지와 기관 도서가 함께 가진 서지 필드. 연결된 도서는 공식 값을 먼저 보여 준다.
+BIBLIOGRAPHIC_FIELDS = (
+    "title",
+    "author",
+    "publisher",
+    "published_date",
+    "list_price",
+    "kdc",
+    "cover_url",
+    "description",
+)
 
 
 class Audience(StrEnum):
@@ -58,6 +70,8 @@ class ImportStatus(StrEnum):
 
 
 class Book(TimestampMixin, Base):
+    """공식 서지. ISBN이 있는 책만 두고, 기관 API로는 쓸 수 없다."""
+
     __tablename__ = "books"
     __table_args__ = (
         CheckConstraint(f"isbn ~ '{ISBN_PATTERN}'", name="isbn_format"),
@@ -65,7 +79,34 @@ class Book(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    isbn: Mapped[str | None] = mapped_column(CHAR(13), unique=True)
+    isbn: Mapped[str] = mapped_column(CHAR(13), unique=True)
+    title: Mapped[str] = mapped_column(String(500))
+    author: Mapped[str] = mapped_column(String(300))
+    publisher: Mapped[str | None] = mapped_column(String(200))
+    published_date: Mapped[date | None] = mapped_column(Date)
+    list_price: Mapped[int | None] = mapped_column(Integer)
+    kdc: Mapped[str | None] = mapped_column(String(20))
+    cover_url: Mapped[str | None] = mapped_column(String(1000))
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class LibraryBook(TimestampMixin, Base):
+    """기관 도서: 이 도서관의 그 책. 기관 값, 어린이 구분, ISBN 없는 책이 여기 있다."""
+
+    __tablename__ = "library_books"
+    __table_args__ = (
+        UniqueConstraint("library_id", "id", name="uq_library_books_library_id_id"),
+        UniqueConstraint("library_id", "isbn", name="uq_library_books_library_id_isbn"),
+        CheckConstraint(f"isbn ~ '{ISBN_PATTERN}'", name="isbn_format"),
+        CheckConstraint("list_price >= 0", name="list_price_nonnegative"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="RESTRICT"))
+    book_id: Mapped[int | None] = mapped_column(
+        ForeignKey("books.id", ondelete="RESTRICT"), index=True
+    )
+    isbn: Mapped[str | None] = mapped_column(CHAR(13))
     title: Mapped[str] = mapped_column(String(500))
     author: Mapped[str] = mapped_column(String(300))
     publisher: Mapped[str | None] = mapped_column(String(200))
@@ -81,6 +122,13 @@ class Book(TimestampMixin, Base):
     cover_url: Mapped[str | None] = mapped_column(String(1000))
     description: Mapped[str | None] = mapped_column(Text)
 
+    book: Mapped[Book | None] = relationship(lazy="joined")
+
+    def shown(self, field: str) -> Any:
+        """표시 값: 연결된 공식 서지의 값을 먼저 쓰고, 비어 있으면 기관 값을 쓴다."""
+        official = getattr(self.book, field) if self.book is not None else None
+        return official if official is not None else getattr(self, field)
+
 
 class Holding(TimestampMixin, Base):
     __tablename__ = "holdings"
@@ -89,6 +137,12 @@ class Holding(TimestampMixin, Base):
             "library_id", "accession_number", name="uq_holdings_library_id_accession_number"
         ),
         UniqueConstraint("library_id", "id", name="uq_holdings_library_id_id"),
+        ForeignKeyConstraint(
+            ["library_id", "library_book_id"],
+            ["library_books.library_id", "library_books.id"],
+            name="fk_holdings_library_id_library_book_id_library_books",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint("purchase_price >= 0", name="purchase_price_nonnegative"),
         CheckConstraint(
             "(acquisition_type = 'purchased' AND donor IS NULL"
@@ -101,7 +155,7 @@ class Holding(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="RESTRICT"))
-    book_id: Mapped[int] = mapped_column(ForeignKey("books.id", ondelete="RESTRICT"), index=True)
+    library_book_id: Mapped[int] = mapped_column(Integer, index=True)
     accession_number: Mapped[str] = mapped_column(String(50))
     call_number: Mapped[str | None] = mapped_column(String(100))
     shelf_location: Mapped[str | None] = mapped_column(String(100))
@@ -118,7 +172,7 @@ class Holding(TimestampMixin, Base):
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    book: Mapped[Book] = relationship(lazy="joined")
+    library_book: Mapped[LibraryBook] = relationship(lazy="joined")
 
 
 class HoldingImport(TimestampMixin, Base):

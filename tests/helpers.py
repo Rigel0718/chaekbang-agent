@@ -134,12 +134,30 @@ async def add_book(session: AsyncSession, isbn: str | None = VALID_ISBN, **overr
     return await insert(session, "books", **values)
 
 
-async def add_holding(
-    session: AsyncSession, library_id: int, book_id: int, accession_number: str, **overrides: Any
+async def add_library_book(
+    session: AsyncSession, library_id: int, isbn: str | None = VALID_ISBN, **overrides: Any
 ) -> Any:
     values = {
         "library_id": library_id,
-        "book_id": book_id,
+        "isbn": isbn,
+        "title": "테스트 도서",
+        "author": "테스트 저자",
+        "list_price": 15000,
+    }
+    values.update(overrides)
+    return await insert(session, "library_books", **values)
+
+
+async def add_holding(
+    session: AsyncSession,
+    library_id: int,
+    library_book_id: int,
+    accession_number: str,
+    **overrides: Any,
+) -> Any:
+    values = {
+        "library_id": library_id,
+        "library_book_id": library_book_id,
         "accession_number": accession_number,
         "acquisition_type": "purchased",
         "purchase_price": 13500,

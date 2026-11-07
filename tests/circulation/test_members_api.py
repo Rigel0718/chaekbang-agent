@@ -5,7 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
 from tests.conftest import Tenant
-from tests.helpers import add_book, add_holding, add_loan, add_member, assert_rejected, fetch
+from tests.helpers import (
+    add_holding,
+    add_library_book,
+    add_loan,
+    add_member,
+    assert_rejected,
+    fetch,
+)
 
 
 async def test_create_member(admin_client: AsyncClient) -> None:
@@ -59,7 +66,7 @@ async def test_get_and_rename(
 
 
 async def _member_with_loan(session: AsyncSession, library_id: int, *, returned: bool):
-    book = await add_book(session)
+    book = await add_library_book(session, library_id)
     holding = await add_holding(session, library_id, book["id"], "A-1")
     member = await add_member(session, library_id, "M0001")
     loan = await add_loan(session, holding, member, returned_on=clock.today() if returned else None)
@@ -99,7 +106,7 @@ async def test_delete_member_without_loans(
 
 async def test_active_loan_needs_member_in_db(session: AsyncSession, library_a: Tenant) -> None:
     """[circulation/members] 회원 조회·수정·삭제 / 회원 없는 미반납 대출 직접 저장"""
-    book = await add_book(session)
+    book = await add_library_book(session, library_a.id)
     holding = await add_holding(session, library_a.id, book["id"], "A-1")
     today = clock.today()
     await assert_rejected(
