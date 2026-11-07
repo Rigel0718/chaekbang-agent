@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 **2주차: 서지정보 채움** (OpenSpec change: `add-book-enrichment`).
-YES24 연동, 서지정보 채움, 외부 분류 근거(`external_category`). YES24 API 문서를 받은 뒤 제안하며, 문서 없이 응답 필드를 추측해 설계하지 않는다.
+YES24 연동, 공식 서지 채움, 외부 분류 근거(`external_category`). 응답 필드는 `yes24-open-api-guide/`의 문서와 실제 응답을 근거로 한다.
 에이전트(LLM 호출, tool 루프)는 아직 만들지 않는다.
 
 ## OpenSpec 작업 규칙
@@ -44,13 +44,14 @@ YES24 연동, 서지정보 채움, 외부 분류 근거(`external_category`). YE
 
 1. `add-library-core-domain` – 이전 도메인 정리, 모델, 기관 분리, 인증, 장서·대출 CRUD, 시드 데이터
 2. `add-holdings-import` – 기존 시스템 엑셀·CSV 장서 가져오기, 파일 근거 어린이 도서 분류
-3. `add-book-enrichment` – YES24 연동, 서지정보 채움, 외부 분류 근거
-4. `add-librarian-agent` – AI 사서 v1, 조회 tool, tool calling 루프, 스트리밍, 추천 노출 기록
-5. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
-6. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
-7. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
-8. `add-web-ui` – 이용자·관리자 화면
-9. `add-observability-deploy` – Langfuse, 배포, README, 데모
+3. `add-library-catalog-layer` – 공식 서지와 기관 도서 분리, 기관별 어린이 구분
+4. `add-book-enrichment` – YES24 연동, 공식 서지 채움, 외부 분류 근거
+5. `add-librarian-agent` – AI 사서 v1, 조회 tool, tool calling 루프, 스트리밍, 추천 노출 기록
+6. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
+7. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
+8. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
+9. `add-web-ui` – 이용자·관리자 화면
+10. `add-observability-deploy` – Langfuse, 배포, README, 데모
 
 **스펙 작성 규칙**
 
@@ -94,9 +95,9 @@ app/
 ├── main.py
 ├── core/         # config(설정), db(세션), security(비밀번호·토큰), deps(현재 직원·기관, 역할),
 │                 # clock(기관 시간대 오늘), isbn(정규화·검증), migrations
-├── api/          # 라우터: auth, library, staff, books, holdings, members, loans (이후 curations, requests ...)
+├── api/          # 라우터: auth, library, staff, library_books, holdings, members, loans (이후 curations, requests ...)
 ├── services/     # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용). tenancy.get_owned로 기관 범위 강제
-├── models/       # SQLAlchemy 모델: library(기관·직원·세션), catalog(도서·사본), circulation(회원·대출)
+├── models/       # SQLAlchemy 모델: library(기관·직원·세션), catalog(공식 서지·기관 도서·사본), circulation(회원·대출)
 ├── schemas/      # Pydantic 스키마
 ├── seed/         # 시드 데이터 생성 (scripts/seed.py가 실행)
 ├── importing/    # (2주차) 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화, 어린이 도서 분류
@@ -119,9 +120,9 @@ openspec/
 ## 설계 원칙 (반드시 지킬 것)
 
 1. **라우터는 얇게, 로직은 services에.** REST API와 에이전트 tool이 같은 service 함수를 호출한다. 라우터에 비즈니스 로직을 넣지 않는다.
-2. **기관 데이터는 항상 분리한다.** 모든 기관 데이터는 `library_id`로 나눈다. 조회·쓰기·에이전트 tool·자연어 SQL 모두 현재 로그인한 기관 범위를 코드에서 강제한다. 요청 값으로 받은 library_id를 그대로 믿지 않는다.
+2. **기관 데이터는 항상 분리한다.** 모든 기관 데이터는 `library_id`로 나눈다. 조회·쓰기·에이전트 tool·자연어 SQL 모두 현재 로그인한 기관 범위를 코드에서 강제한다. 요청 값으로 받은 library_id를 그대로 믿지 않는다. 공식 서지(`books`)는 기관이 쓸 수 없고, 기관의 판단과 입력 값은 기관 도서(`library_books`)에 둔다.
 3. **확정 작업은 승인 흐름을 거친다.** 큐레이션 게시, 연체 안내, 구매 요청서 확정은 `draft → pending_approval → approved → (published | confirmed)` 상태를 따른다. 승인 대기 상태는 DB에 저장한다. 이용자 쪽 쓰기는 대출·반납과 희망도서 신청만 허용한다.
-4. **소장 도서만 추천한다.** 추천 결과는 항상 해당 기관의 holdings에 있는 책이다. 대출 중이면 표시하고, 없으면 희망도서 신청으로 연결한다. 어린이 요청에는 어린이 도서(`audience = children`)로 분류된 책만 추천하고, 분류가 확실하지 않은 책은 일반 도서로 둔다. 이 규칙은 LLM이 아니라 코드(필터)로 강제한다.
+4. **소장 도서만 추천한다.** 추천 결과는 항상 해당 기관의 holdings에 있는 책이다. 대출 중이면 표시하고, 없으면 희망도서 신청으로 연결한다. 어린이 요청에는 그 기관에서 어린이 도서(`audience = children`)로 분류된 책만 추천하고, 분류가 확실하지 않은 책은 일반 도서로 둔다. 이 규칙은 LLM이 아니라 코드(필터)로 강제한다.
 5. **기존 시스템 위에 얹는다.** 장서는 기존 대출 프로그램에서 가져오는 것을 기본으로 하고, 담당자가 같은 정보를 두 번 입력하게 만들지 않는다. 가져오기 기관(`loan_mode = imported`)에서는 대출 쓰기 tool을 끄고, 대출 상태에는 마지막 갱신 시각을 함께 보여 준다.
 6. **책 정보는 데이터로만 답한다.** 줄거리·저자 정보는 DB나 외부 API 결과를 근거로 하고, LLM이 인용문이나 정보를 지어내지 않게 한다.
 7. **LLM이 할 일과 코드가 할 일을 나눈다.** 금액 계산, 권차 변환, 텍스트·ISBN 정규화, 어린이 도서 분류, 소장 필터는 결정적인 코드로 처리한다. LLM은 의도 파악, 후보 선택과 설명, 애매한 매칭 판단에 쓴다.
@@ -136,19 +137,22 @@ openspec/
 - 상태 값은 `StrEnum`으로 정의한다.
 - 외부 API 키, DB URL은 `.env`에서 읽고 코드에 하드코딩하지 않는다. `.env.example`을 함께 관리한다.
 - 외부 도서 API의 표지 이미지는 저장하지 않고 원본 URL로만 표시하며, 출처를 함께 보여준다.
+- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다.
 - 새 service 함수에는 테스트를 같이 작성한다. 기관 분리(다른 기관 데이터가 보이지 않는지) 테스트를 빠뜨리지 않는다.
 
 ## 도메인 용어
 
 - **작은도서관**: 주민센터·아파트 등에 있는 소규모 도서관. 전담 사서가 없고 담당자나 자원봉사자가 운영하는 경우가 많다.
-- **장서 / 소장 사본(holding)**: 같은 책(book)이라도 여러 권을 가질 수 있다. 대출은 사본 단위로 한다.
+- **공식 서지(book)**: 서비스 운영자 층의 서지정보. ISBN이 있는 책만 두고 YES24 값을 공식으로 본다. 기관은 쓸 수 없다.
+- **기관 도서(library book)**: 이 도서관의 그 책. 파일·입력 값, 어린이 구분, ISBN 없는 책이 여기 있다. ISBN이 같은 공식 서지가 있으면 연결하고, 표시할 때 공식 값을 먼저 쓴다. 필드 이름은 `library_book_id`.
+- **장서 / 소장 사본(holding)**: 같은 기관 도서라도 여러 권을 가질 수 있다. 대출은 사본 단위로 한다.
 - **등록번호(accession number)**: 도서관이 사본마다 붙이는 고유 번호. 장서 가져오기에서 사본을 식별하는 기준이다. 필드 이름은 `accession_number`.
 - **청구기호(call number)**: 서가에서 책을 찾는 주소(분류기호·저자기호·권차, 예: `813.7-한232ㅊ`). 같은 책의 복본은 같은 값일 수 있다. 사본 식별에는 쓰지 않는다. 필드 이름은 `call_number`.
 - **입수 구분(acquisition type)**: 사본이 들어온 경로. `purchased`(매입·공식 납품, 구입가와 ISBN 필수), `donated`(기증, 기증처만 선택으로 기록), `unknown`(가져온 파일에 정보가 없음)이다. 가져온 매입 사본은 구입가나 ISBN이 없어도 오류가 아니라 빠진 정보(`missing_fields`)로 표기한다. 같은 책이라도 사본마다 다를 수 있어 사본에 둔다. 필드 이름은 `acquisition_type`, `purchase_price`, `donor`.
 - **제적(withdrawn)**: 장서에서 빠진 사본. 가져온 파일에서 사라지면 이 상태가 되고, 추천·소장 권수에서 빠지며 대출 기록은 남는다.
 - **회원번호(member number)**: 기관이 이용자에게 붙이는 번호. 대출과 희망도서 신청에만 쓴다. 필드 이름은 `member_number`.
 - **운영 방식(loan_mode)**: `imported`는 기존 대출 프로그램의 내보내기를 가져와 쓰는 기관, `internal`은 AI 사서가 대출까지 처리하는 기관.
-- **어린이 도서(audience)**: 책을 `children`(어린이 도서)과 `general`(일반 도서)로만 나눈다. 나이를 세밀하게 나누지 않는다. 근거(관리자 지정, 별치기호·자료실·부가기호, 외부 API 분류)를 함께 저장한다.
+- **어린이 도서(audience)**: 책을 `children`(어린이 도서)과 `general`(일반 도서)로만 나눈다. 나이를 세밀하게 나누지 않는다. 기관 도서마다 근거(관리자 지정, 별치기호·자료실·부가기호, 외부 API 분류)를 함께 저장하고, 같은 책이라도 기관마다 다를 수 있다.
 - **별치기호**: 일반 자료와 따로 배가하는 자료에 붙이는 기호. 아동 자료 표시가 어린이 도서 분류 근거가 된다.
 - **희망도서**: 이용자가 도서관에 구입을 요청한 책.
 - **보충 구매 요청서**: 관리자가 납품처(동네 책방)에 보낼 구매 목록. 금액은 코드로 계산한다.

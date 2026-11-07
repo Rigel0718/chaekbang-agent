@@ -4,11 +4,17 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.catalog import AcquisitionType, Book, Holding, HoldingSource, HoldingStatus
+from app.models.catalog import (
+    AcquisitionType,
+    Holding,
+    HoldingSource,
+    HoldingStatus,
+    LibraryBook,
+)
 from app.models.circulation import Loan
 from app.schemas.catalog import HoldingCreate, HoldingUpdate, check_acquisition
-from app.services.books import get_book
 from app.services.errors import ConflictError, InvalidRequestError
+from app.services.library_books import get_library_book
 from app.services.tenancy import get_owned
 
 LABEL = "사본"
@@ -18,8 +24,10 @@ def _duplicate(accession_number: str) -> ConflictError:
     return ConflictError(f"이미 쓰는 등록번호입니다: {accession_number}")
 
 
-def _require_isbn_for_purchase(book: Book, acquisition_type: AcquisitionType) -> None:
-    if acquisition_type == AcquisitionType.PURCHASED and book.isbn is None:
+def _require_isbn_for_purchase(
+    library_book: LibraryBook, acquisition_type: AcquisitionType
+) -> None:
+    if acquisition_type == AcquisitionType.PURCHASED and library_book.isbn is None:
         raise InvalidRequestError(
             "매입·납품 사본은 ISBN이 있는 도서로만 등록할 수 있습니다. 도서의 ISBN을 먼저 채우세요"
         )
@@ -48,8 +56,8 @@ async def _commit(session: AsyncSession, accession_number: str) -> None:
 async def create_holding(session: AsyncSession, library_id: int, data: HoldingCreate) -> Holding:
     if data.status == HoldingStatus.ON_LOAN:
         raise ConflictError("대출 중 상태는 대출로만 바뀝니다")
-    book = await get_book(session, data.book_id)
-    _require_isbn_for_purchase(book, data.acquisition_type)
+    library_book = await get_library_book(session, library_id, data.library_book_id)
+    _require_isbn_for_purchase(library_book, data.acquisition_type)
     await _ensure_accession_free(session, library_id, data.accession_number)
     holding = Holding(library_id=library_id, source=HoldingSource.MANUAL, **data.model_dump())
     session.add(holding)
@@ -62,7 +70,7 @@ def missing_fields(holding: Holding) -> list[str]:
     if holding.acquisition_type != AcquisitionType.PURCHASED:
         return []
     missing = []
-    if holding.book.isbn is None:
+    if holding.library_book.isbn is None:
         missing.append("isbn")
     if holding.purchase_price is None:
         missing.append("purchase_price")
@@ -81,21 +89,26 @@ async def list_holdings(
     *,
     limit: int,
     offset: int,
-    book_id: int | None = None,
+    library_book_id: int | None = None,
     status: HoldingStatus | None = None,
     incomplete: bool = False,
 ) -> tuple[list[Holding], int]:
     """status를 주지 않으면 제적 사본을 뺀다. incomplete=True면 빠진 정보가 있는 사본만."""
     where = [Holding.library_id == library_id]
-    if book_id is not None:
-        where.append(Holding.book_id == book_id)
+    if library_book_id is not None:
+        where.append(Holding.library_book_id == library_book_id)
     if status is not None:
         where.append(Holding.status == status)
     else:
         where.append(Holding.status != HoldingStatus.WITHDRAWN)
     if incomplete:
         where.append(Holding.acquisition_type == AcquisitionType.PURCHASED)
-        where.append(or_(Holding.purchase_price.is_(None), Holding.book.has(Book.isbn.is_(None))))
+        where.append(
+            or_(
+                Holding.purchase_price.is_(None),
+                Holding.library_book.has(LibraryBook.isbn.is_(None)),
+            )
+        )
     total = await session.scalar(select(func.count()).select_from(Holding).where(*where))
     rows = await session.scalars(
         select(Holding)
@@ -139,7 +152,7 @@ async def update_holding(
         except ValueError as exc:
             raise InvalidRequestError(str(exc)) from exc
         if not imported_purchase:
-            _require_isbn_for_purchase(holding.book, merged["acquisition_type"])
+            _require_isbn_for_purchase(holding.library_book, merged["acquisition_type"])
 
     if "accession_number" in changes:
         await _ensure_accession_free(

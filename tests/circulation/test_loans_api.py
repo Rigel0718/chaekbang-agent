@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
 from tests.conftest import Tenant
-from tests.helpers import add_book, add_holding, add_loan, add_member, assert_rejected, fetch
+from tests.helpers import (
+    add_holding,
+    add_library_book,
+    add_loan,
+    add_member,
+    assert_rejected,
+    fetch,
+)
 
 TODAY = date(2026, 11, 5)
 
@@ -23,7 +30,7 @@ def fixed_today(monkeypatch: pytest.MonkeyPatch) -> date:
 @pytest.fixture
 async def shelf(session: AsyncSession, library_a: Tenant) -> dict:
     """A 기관(자체 대출)의 사본 하나와 회원 하나."""
-    book = await add_book(session, title="모모")
+    book = await add_library_book(session, library_a.id, title="모모")
     holding = await add_holding(session, library_a.id, book["id"], "EM0001")
     member = await add_member(session, library_a.id, "M0001")
     return {"book": book, "holding": holding, "member": member}
@@ -80,7 +87,7 @@ async def test_other_library_accession(
     kiosk_client: AsyncClient, session: AsyncSession, shelf: dict, library_b: Tenant
 ) -> None:
     """[circulation/loans] 대출하기 / 다른 기관의 등록번호"""
-    book = await add_book(session, None, title="B 기관 책")
+    book = await add_library_book(session, library_b.id, None, title="B 기관 책")
     await add_holding(
         session, library_b.id, book["id"], "B-ONLY", acquisition_type="donated", purchase_price=None
     )
@@ -100,7 +107,7 @@ async def test_lost_copy(
     kiosk_client: AsyncClient, session: AsyncSession, library_a: Tenant
 ) -> None:
     """[circulation/loans] 대출 가능 조건 / 분실된 사본"""
-    book = await add_book(session)
+    book = await add_library_book(session, library_a.id)
     await add_holding(session, library_a.id, book["id"], "LOST-1", status="lost")
     await add_member(session, library_a.id, "M0001")
     assert (await _borrow(kiosk_client, accession="LOST-1")).status_code == 409
@@ -127,7 +134,7 @@ async def test_two_active_loans_rejected_by_db(
 
 
 async def _imported_shelf(session: AsyncSession, library_b: Tenant) -> None:
-    book = await add_book(session)
+    book = await add_library_book(session, library_b.id)
     await add_holding(session, library_b.id, book["id"], "EM0001")
     await add_member(session, library_b.id, "M0001")
 
@@ -187,7 +194,7 @@ async def test_return_other_library_accession(
     kiosk_client: AsyncClient, session: AsyncSession, shelf: dict, library_b: Tenant
 ) -> None:
     """[circulation/loans] 반납 / 다른 기관의 등록번호로 반납"""
-    book = await add_book(session, None, title="B 기관 책")
+    book = await add_library_book(session, library_b.id, None, title="B 기관 책")
     theirs = await add_holding(
         session, library_b.id, book["id"], "B-ONLY", acquisition_type="donated", purchase_price=None
     )
@@ -201,7 +208,7 @@ async def test_return_other_library_accession(
 
 async def _history(session: AsyncSession, library_a: Tenant) -> dict:
     """연체 1건, 대출 중(기한 남음) 1건, 반납 1건."""
-    book = await add_book(session)
+    book = await add_library_book(session, library_a.id)
     member = await add_member(session, library_a.id, "M0001")
     h = [await add_holding(session, library_a.id, book["id"], f"H-{n}") for n in range(3)]
     overdue = await add_loan(
@@ -252,7 +259,7 @@ async def test_list_after_member_deleted(
     admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
 ) -> None:
     """[circulation/loans] 대출 목록과 연체 (회원이 삭제된 반납 기록은 회원번호가 비어 있음)"""
-    book = await add_book(session)
+    book = await add_library_book(session, library_a.id)
     holding = await add_holding(session, library_a.id, book["id"], "H-1")
     member = await add_member(session, library_a.id, "M0001")
     await add_loan(session, holding, member, returned_on=TODAY)
@@ -265,7 +272,7 @@ async def test_list_only_own_library(
     admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, library_b: Tenant
 ) -> None:
     """[library/libraries] 기관 데이터 분리 (대출 목록에 다른 기관 대출 없음)"""
-    book = await add_book(session)
+    book = await add_library_book(session, library_b.id)
     theirs = await add_holding(session, library_b.id, book["id"], "B-1")
     await add_loan(session, theirs, await add_member(session, library_b.id, "B-M1"))
     assert (await admin_client.get("/loans")).json()["total"] == 0

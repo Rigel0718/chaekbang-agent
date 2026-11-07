@@ -12,13 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.migrations import alembic_config
 from app.models import SHARED_TABLES, TENANT_TABLES, Base
 from tests.conftest import Tenant
-from tests.helpers import add_book, add_holding, add_member, assert_rejected
+from tests.helpers import add_holding, add_library_book, add_member, assert_rejected
 
 ALL_TABLES = {
     "libraries",
     "staff_users",
     "staff_sessions",
     "books",
+    "library_books",
     "holdings",
     "holding_imports",
     "members",
@@ -38,7 +39,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 8
+    assert len(ALL_TABLES) == 9
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:
@@ -92,11 +93,27 @@ async def test_tenant_tables_have_library_id(engine: AsyncEngine) -> None:
         ), f"{table}에 libraries 외래 키가 없다"
 
 
+async def test_holding_rejects_library_book_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 도서로 사본 직접 저장"""
+    theirs = await add_library_book(session, library_b.id)
+    await assert_rejected(
+        session,
+        "holdings",
+        library_id=library_a.id,
+        library_book_id=theirs["id"],
+        accession_number="A-1",
+        acquisition_type="donated",
+        match="fk_holdings_library_id_library_book_id",
+    )
+
+
 async def test_loan_rejects_holding_of_other_library(
     session: AsyncSession, library_a: Tenant, library_b: Tenant
 ) -> None:
     """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 사본으로 대출 직접 저장"""
-    book = await add_book(session)
+    book = await add_library_book(session, library_b.id)
     holding_b = await add_holding(session, library_b.id, book["id"], "EM0001")
     member_a = await add_member(session, library_a.id, "M0001")
     await assert_rejected(
@@ -115,7 +132,7 @@ async def test_loan_rejects_member_of_other_library(
     session: AsyncSession, library_a: Tenant, library_b: Tenant
 ) -> None:
     """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 회원으로 대출 직접 저장"""
-    book = await add_book(session)
+    book = await add_library_book(session, library_a.id)
     holding_a = await add_holding(session, library_a.id, book["id"], "EM0001")
     member_b = await add_member(session, library_b.id, "M0001")
     await assert_rejected(

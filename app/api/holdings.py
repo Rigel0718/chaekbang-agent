@@ -15,9 +15,9 @@ def _view(holding: Holding) -> HoldingRead:
     return HoldingRead.model_validate(
         {
             **{f: getattr(holding, f) for f in HoldingRead.model_fields if hasattr(holding, f)},
-            "isbn": holding.book.isbn,
-            "title": holding.book.title,
-            "author": holding.book.author,
+            "isbn": holding.library_book.isbn,
+            "title": holding.library_book.shown("title"),
+            "author": holding.library_book.shown("author"),
             "missing_fields": holdings.missing_fields(holding),
         }
     )
@@ -33,7 +33,7 @@ async def list_holdings(
     staff: CurrentStaff,
     session: Session,
     page: Annotated[Pagination, Query()],
-    book_id: int | None = None,
+    library_book_id: int | None = None,
     status: HoldingStatus | None = None,
     incomplete: Annotated[bool, Query(description="true면 빠진 정보가 있는 사본만")] = False,
 ):
@@ -42,7 +42,7 @@ async def list_holdings(
         staff.library_id,
         limit=page.limit,
         offset=page.offset,
-        book_id=book_id,
+        library_book_id=library_book_id,
         status=status,
         incomplete=incomplete,
     )

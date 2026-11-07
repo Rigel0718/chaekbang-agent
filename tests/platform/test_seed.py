@@ -37,13 +37,13 @@ async def _seed(session: AsyncSession) -> dict:
 
 # --- 생성 규칙 (테스트 트랜잭션 안에서 실행, 끝나면 롤백) ---
 
-TABLES = ("libraries", "staff_users", "books", "holdings", "members", "loans")
+TABLES = ("libraries", "staff_users", "books", "library_books", "holdings", "members", "loans")
 
 
 async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 시드 데이터 생성 / 빈 DB에 시드 실행"""
     report = await _seed(session)
-    assert report["books"] == (50, 0)
+    assert report["books"] == (45, 0)
     assert await _count(session, "libraries") == 2
     modes = set(await session.scalars(text("SELECT loan_mode FROM libraries")))
     assert modes == {"internal", "imported"}
@@ -60,9 +60,29 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
         [("internal", "admin"), ("internal", "kiosk"), ("imported", "admin"), ("imported", "kiosk")]
     )
 
-    assert await _count(session, "books") == 50
-    assert await session.scalar(text("SELECT count(*) FROM books WHERE audience = 'children'"))
-    assert await session.scalar(text("SELECT count(*) FROM books WHERE isbn IS NULL"))
+    assert await _count(session, "books") == 45
+    assert not await session.scalar(text("SELECT count(*) FROM books WHERE isbn IS NULL"))
+    per_library_books = (
+        await session.execute(
+            text(
+                "SELECT library_id,"
+                " count(*) FILTER (WHERE audience = 'children'),"
+                " count(*) FILTER (WHERE isbn IS NULL),"
+                " count(*) FILTER (WHERE book_id IS NOT NULL)"
+                " FROM library_books GROUP BY library_id"
+            )
+        )
+    ).all()
+    assert len(per_library_books) == 2
+    for _library, children, no_isbn, linked in per_library_books:
+        assert children >= 1 and no_isbn >= 1 and linked >= 1
+    # 같은 ISBN을 두 기관이 함께 가진 경우
+    assert await session.scalar(
+        text(
+            "SELECT count(*) FROM (SELECT isbn FROM library_books WHERE isbn IS NOT NULL"
+            " GROUP BY isbn HAVING count(*) > 1) t"
+        )
+    )
 
     per_library = (
         await session.execute(
@@ -70,7 +90,7 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
                 "SELECT l.loan_mode,"
                 " count(*) FILTER (WHERE h.acquisition_type = 'purchased'),"
                 " count(*) FILTER (WHERE h.acquisition_type = 'donated'),"
-                " count(DISTINCT h.book_id)"
+                " count(DISTINCT h.library_book_id)"
                 " FROM holdings h JOIN libraries l ON l.id = h.library_id GROUP BY l.loan_mode"
             )
         )
@@ -82,7 +102,7 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
     # 같은 책 여러 권, 분실·훼손 사본
     assert await session.scalar(
         text(
-            "SELECT count(*) FROM (SELECT 1 FROM holdings GROUP BY library_id, book_id"
+            "SELECT count(*) FROM (SELECT 1 FROM holdings GROUP BY library_id, library_book_id"
             " HAVING count(*) > 1) t"
         )
     )
@@ -119,16 +139,18 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
 async def test_seed_respects_domain_rules(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 시드 데이터 생성 / 시드 데이터가 도메인 규칙을 지킴"""
     await _seed(session)
-    for isbn, price in (await session.execute(text("SELECT isbn, list_price FROM books"))).all():
-        if isbn is not None:
-            assert normalize_isbn(isbn) == isbn
-        assert price is None or (isinstance(price, int) and price >= 0)
+    for table in ("books", "library_books"):
+        rows = (await session.execute(text(f"SELECT isbn, list_price FROM {table}"))).all()
+        for isbn, price in rows:
+            if isbn is not None:
+                assert normalize_isbn(isbn) == isbn
+            assert price is None or (isinstance(price, int) and price >= 0)
 
     holdings = (
         await session.execute(
             text(
                 "SELECT h.acquisition_type, h.purchase_price, b.isbn FROM holdings h"
-                " JOIN books b ON b.id = h.book_id"
+                " JOIN library_books b ON b.id = h.library_book_id"
             )
         )
     ).all()
@@ -278,12 +300,12 @@ async def test_script_success_and_rerun(empty_db_url: str) -> None:
 
     first = await asyncio.to_thread(_run_script, empty_db_url)
     assert first.returncode == 0, first.stderr
-    assert "books: 생성 50건, 건너뜀 0건" in first.stdout
+    assert "books: 생성 45건, 건너뜀 0건" in first.stdout
     assert "libraries: 생성 2건, 건너뜀 0건" in first.stdout
     assert "loans: 생성 13건, 건너뜀 0건" in first.stdout
 
     second = await asyncio.to_thread(_run_script, empty_db_url)
     assert second.returncode == 0, second.stderr
-    assert "books: 생성 0건, 건너뜀 50건" in second.stdout
+    assert "books: 생성 0건, 건너뜀 45건" in second.stdout
     assert "생성 0건" in second.stdout
     assert all("생성 0건" in line for line in second.stdout.strip().splitlines())
