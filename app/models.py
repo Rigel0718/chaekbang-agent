@@ -1,5 +1,6 @@
 """모든 모델을 import해 Base.metadata에 등록한다 (Alembic, 테스트용)."""
 
+from app.agent import models as agent
 from app.central import models as central
 from app.core.model_base import Base
 from app.features.children import models as children
@@ -17,12 +18,15 @@ TENANT_TABLES: set[str] = {
     "holding_imports",
     "members",
     "loans",
+    "agent_runs",
+    "agent_steps",
 }
 
 __all__ = [
     "SHARED_TABLES",
     "TENANT_TABLES",
     "Base",
+    "agent",
     "catalog",
     "central",
     "children",

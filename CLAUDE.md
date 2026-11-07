@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 **3주차: AI 사서** (OpenSpec change: `add-librarian-agent`, 아직 제안 전).
-공통 실행기(`app/agent/`), 패키지별 `tools.py`, 프로필 구조로 만든다. 제안 전에 저자 구조화를 어디서 할지 정한다.
+공통 실행기(`app/agent/`)는 끝났다. 패키지별 `tools.py`와 프로필로 AI 사서를 올린다. 정한 내용은 `docs/design.md`의 '에이전트 구조'에 있다. 저자 구조화는 하지 않고 원문을 부분 문자열로 검색한다.
 
 ## OpenSpec 작업 규칙
 
@@ -48,12 +48,14 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 3. `add-library-catalog-layer` – 공식 서지와 기관 도서 분리, 기관별 어린이 구분
 4. `add-book-enrichment` – YES24 연동, 공식 서지 채움, 외부 분류 근거
 5. `refactor-layer-packages` – 운영자·기관 공통·기관 개별 패키지 분리, 어린이 기능 분리
-6. `add-librarian-agent` – AI 사서 v1, 조회 tool, tool calling 루프, 스트리밍, 추천 노출 기록
-7. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
-8. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
-9. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
-10. `add-web-ui` – 이용자·관리자 화면
-11. `add-observability-deploy` – Langfuse, 배포, README, 데모
+6. `add-agent-runner` – 공통 실행기, tool 계약, 프로필, LLM 접점, 실행 기록, 최종 검사 자리
+7. `add-librarian-agent` – AI 사서 v1, 조회 tool, 어린이 검사, 대화 API와 SSE, 추천 노출 기록
+8. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
+9. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
+10. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
+11. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
+12. `add-web-ui` – 이용자·관리자 화면
+13. `add-observability-deploy` – Langfuse, 배포, README, 데모
 
 **스펙 작성 규칙**
 
@@ -76,6 +78,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 - PostgreSQL (+ pgvector), SQLAlchemy 2.0 (async), Alembic
 - 패키지 관리: uv / 린트·포맷: ruff / 테스트: pytest, pytest-asyncio, httpx
 - 로컬 실행: Docker Compose
+- LLM: OpenAI Responses API (기본 `gpt-6-luna`, 모델별 가격은 `app/core/config.py`의 `LLM_PRICES`)
 - (이후 단계) Langfuse 트레이싱, sqlglot
 
 ## 자주 쓰는 명령
@@ -110,15 +113,15 @@ app/
 │   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출)
 │   ├── schemas/  # Pydantic 스키마
 │   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
+│   ├── recommendation/ # (이후 단계) 후보 검색(키워드·임베딩), 소장 검사, 노출 기록. 어린이 필터는 기능에 둔다
 │   ├── deps.py   # 현재 직원·기관, 역할
 │   ├── hooks.py  # 기관 개별 기능 접점
 │   └── enrichment_targets.py # 운영자 접점 구현, 처리 현황
 ├── features/     # 기관 개별 기능 (패키지마다 README.md가 있다)
 │   └── children/ # 어린이 구분: 규칙, 저장소, service, 훅, API
 ├── seed/         # 조립: 시드 데이터 생성 (scripts/seed.py가 실행)
-├── agent/        # (이후 단계) 공통 실행기: tool calling 루프, 승인 대기·재개, 실행 기록.
-│                 # 어떤 tool이 있는지 모른다. tool은 패키지별 tools.py가 내놓고 main.py가 조립한다
-└── recommendation/   # (이후 단계) 후보 검색(키워드·임베딩), 규칙 필터(소장·어린이 도서)
+└── agent/        # 공통 실행기: tool calling 루프, 최종 검사, 실행 기록, (이후) 승인 대기·재개.
+                  # 어떤 tool이 있는지 모른다. tool은 패키지별 tools.py가 내놓고 main.py가 조립한다
 migrations/       # Alembic
 scripts/seed.py   # 더미 데이터 (Faker)
 scripts/enrich_books.py  # 운영자용 공식 서지 채움
