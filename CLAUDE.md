@@ -15,9 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**패키지 분리** (OpenSpec change: `refactor-layer-packages`).
-`app/central/`(운영자), `app/library/`(기관 공통), `app/features/`(기관 개별)로 나누고 어린이 기능을 분리한다. `add-librarian-agent` 전에 끝낸다.
-에이전트(LLM 호출, tool 루프)는 아직 만들지 않는다.
+**3주차: AI 사서** (OpenSpec change: `add-librarian-agent`, 아직 제안 전).
+공통 실행기(`app/agent/`), 패키지별 `tools.py`, 프로필 구조로 만든다. 제안 전에 저자 구조화를 어디서 할지 정한다.
 
 ## OpenSpec 작업 규칙
 
