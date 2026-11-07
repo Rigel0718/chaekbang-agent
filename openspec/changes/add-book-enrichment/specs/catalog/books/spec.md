@@ -2,30 +2,13 @@
 
 ## MODIFIED Requirements
 
-### Requirement: 어린이/일반 도서 구분
-시스템은 도서마다 대상 구분(`audience`)과 그 근거(`audience_source`)를 SHALL 보관한다.
-- 대상 구분: `children`(어린이 도서) 또는 `general`(일반 도서). 기본값은 `general`이다.
-- 근거: `default`(근거 없음, 기본값), `manual`(관리자 지정), `import_label`(가져온 파일의 별치기호·자료실·부가기호), `external_category`(외부 도서 API 분류)
-- 근거의 우선순위는 `manual`, `import_label`, `external_category`, `default` 순이다. 낮은 근거는 높은 근거의 값을 바꾸지 않는다.
-- 관리자가 대상 구분을 지정하면 근거는 `manual`이 된다.
-- 목록 조회는 대상 구분으로 거를 수 있다.
+### Requirement: 공식 서지 쓰기 제한
+공식 서지(`books`)는 ISBN이 있는 책의 서지정보만 SHALL 보관하고, 운영자가 실행하는 서지정보 채움만 만든다. 기관 관리자와 키오스크가 쓰는 API에는 공식 서지를 만들거나 고치거나 지우는 경로를 MUST NOT 둔다. 기관의 파일 값과 입력 값은 공식 서지에 들어가지 않는다.
 
-#### Scenario: 기본값
-- **WHEN** 대상 구분 없이 도서를 등록하면
-- **THEN** 대상 구분 `general`, 근거 `default`로 저장된다
+#### Scenario: 도서 API 경로 없음
+- **WHEN** 관리자가 `POST /books`, `PATCH /books/{id}`, `DELETE /books/{id}`를 호출하면
+- **THEN** 404를 돌려주고 공식 서지는 바뀌지 않는다
 
-#### Scenario: 관리자 지정
-- **WHEN** 관리자가 `PATCH /books/{id}`로 대상 구분을 `children`으로 바꾸면
-- **THEN** 대상 구분은 `children`, 근거는 `manual`이 된다
-
-#### Scenario: 어린이 도서만 거르기
-- **WHEN** `GET /books?audience=children`을 호출하면
-- **THEN** 대상 구분이 `children`인 도서만 돌려준다
-
-#### Scenario: 허용되지 않은 구분
-- **WHEN** books에 대상 구분 `teen`으로 저장하려 하면
-- **THEN** 데이터베이스가 저장을 거부한다
-
-#### Scenario: 근거 우선순위
-- **WHEN** 근거가 `import_label`인 도서의 외부 분류가 어린이 근거이면
-- **THEN** 근거는 `import_label`로 남는다
+#### Scenario: 기관 도서 등록은 공식 서지를 만들지 않음
+- **WHEN** 관리자가 공식 서지에 없는 ISBN으로 기관 도서를 등록하면
+- **THEN** books 행은 늘어나지 않는다
