@@ -2,7 +2,7 @@
 
 사서가 없는 작은도서관을 위한 AI 사서 웹 서비스의 백엔드. 도서관 PC에 켜 둔 화면에서 이용자는 AI 사서에게 추천을 받고 대출하며, 관리자는 운영 에이전트로 장서·대출 현황을 다룬다. 배경과 전체 설계는 [docs/design.md](docs/design.md), 코딩 규칙은 [CLAUDE.md](CLAUDE.md)를 참고한다.
 
-현재 단계: 3주차 AI 사서 준비. 에이전트 기능은 아직 없다.
+현재 단계: 3주차 공통 실행기(`add-agent-runner`) 구현. 이용자가 쓸 수 있는 에이전트 기능은 아직 없다.
 
 ## 도메인
 
@@ -118,9 +118,14 @@ uv run python -m evals.holdings_import
 
 `features → library → central → core` 방향으로만 의존한다. `tests/platform/test_package_layers.py`가 강제한다.
 
+- `app/agent/`: 공통 실행기. `app/core`만 의존하고 세 층이 필요하면 import한다
 - `app/central/`: 운영자 층. 공식 서지와 외부 연동
 - `app/library/`: 기관 공통
 - `app/features/`: 기관 개별 기능. 공통은 훅(`app/library/hooks.py`)으로 사건만 알리고, 기능은 `app/main.py`에서 등록한다
+
+## 에이전트 실행기
+
+공통 실행기는 `app/agent/`에 있다. 이번 단계에는 HTTP 진입점이 없고 테스트로만 돈다. `.env`의 `OPENAI_API_KEY`가 없어도 서버는 시작하고, 실행만 고정 답으로 끝난다. 기본 모델은 `LLM_MODEL`이고, 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 규칙은 [app/agent/README.md](app/agent/README.md)를 참고한다.
 
 ## 서지정보 채움 (운영자)
 

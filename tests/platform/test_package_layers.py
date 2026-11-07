@@ -1,6 +1,8 @@
 """[platform/package-layers] 패키지 의존 방향과 경계."""
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,15 +10,29 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.models import RunStatus
 from app.library import hooks
+from tests.agent.fakes import (
+    FakeLlm,
+    answer_turn,
+    answers,
+    call,
+    collect,
+    done,
+    echo_tool,
+    profile,
+    tool_turn,
+)
 from tests.catalog.import_helpers import import_file
+from tests.conftest import Tenant
 from tests.helpers import VALID_ISBN, VALID_ISBN_2
 
 APP = Path(__file__).resolve().parents[2] / "app"
 
 # 패키지별로 import하면 안 되는 위 층
 FORBIDDEN = {
-    "core": ("app.central", "app.library", "app.features"),
+    "core": ("app.agent", "app.central", "app.library", "app.features"),
+    "agent": ("app.central", "app.library", "app.features"),
     "central": ("app.library", "app.features"),
     "library": ("app.features",),
 }
@@ -42,6 +58,54 @@ def test_no_upward_imports(package: str) -> None:
         if name.startswith(FORBIDDEN[package])
     ]
     assert wrong == []
+
+
+def test_agent_imports_only_core() -> None:
+    """[platform/package-layers] 패키지 의존 방향 / 실행기의 import 제한"""
+    names = {
+        name
+        for path in (APP / "agent").rglob("*.py")
+        for name in _imports(path)
+        if name.startswith("app.")
+    }
+    assert {name.split(".")[1] for name in names} <= {"agent", "core"}
+
+
+def test_runner_import_loads_no_library_packages() -> None:
+    """[platform/package-layers] 공통 실행기의 경계 / 실행기만 불러오기
+
+    정적 검사가 놓치는 간접 import까지 보려고 새 프로세스에서 불러 본다.
+    """
+    code = (
+        "import sys\n"
+        "import app.agent.runner, app.agent.openai_client\n"
+        "print([m for m in sys.modules if m.startswith(('app.central', 'app.library', "
+        "'app.features'))])\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=APP.parent,
+    )
+    assert result.stdout.strip() == "[]"
+
+
+async def test_runner_works_with_fakes_only(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/package-layers] 공통 실행기의 경계 / 가짜 tool로 실행"""
+    llm = FakeLlm([tool_turn(call("echo", {"keyword": "공룡"})), answer_turn("찾았어요")])
+    events = await collect(session, llm, profile(echo_tool()), library_a.id)
+    assert [a.message for a in answers(events)] == ["찾았어요"]
+    assert done(events).status == RunStatus.COMPLETED
+
+
+def test_runner_names_no_specific_tool() -> None:
+    """[platform/package-layers] 공통 실행기의 경계 / 가짜 tool로 실행 (특정 tool을 모른다)"""
+    for path in (APP / "agent").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for name in ("search_collection", "get_book_detail", "submit_answer", "children"):
+            assert name not in source, (path, name)
 
 
 def test_central_has_no_library_models() -> None:

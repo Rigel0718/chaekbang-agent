@@ -9,10 +9,11 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from app.core import clock
 from app.core.migrations import alembic_config
 from app.models import SHARED_TABLES, TENANT_TABLES, Base
 from tests.conftest import Tenant
-from tests.helpers import add_holding, add_library_book, add_member, assert_rejected
+from tests.helpers import add_holding, add_library_book, add_member, assert_rejected, insert
 
 ALL_TABLES = {
     "libraries",
@@ -25,6 +26,8 @@ ALL_TABLES = {
     "holding_imports",
     "members",
     "loans",
+    "agent_runs",
+    "agent_steps",
 }
 
 
@@ -40,7 +43,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 10
+    assert len(ALL_TABLES) == 12
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:
@@ -161,4 +164,29 @@ async def test_loan_rejects_member_of_other_library(
         loaned_on=date(2026, 11, 1),
         due_on=date(2026, 11, 15),
         match="fk_loans_library_id_member_id_members",
+    )
+
+
+async def test_step_rejects_run_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 실행으로 단계 직접 저장"""
+    run_b = await insert(
+        session,
+        "agent_runs",
+        library_id=library_b.id,
+        profile="p",
+        profile_version="v1",
+        model="m",
+        started_at=clock.now(),
+    )
+    await assert_rejected(
+        session,
+        "agent_steps",
+        library_id=library_a.id,
+        run_id=run_b["id"],
+        seq=1,
+        kind="llm",
+        duration_ms=1,
+        match="fk_agent_steps_library_id_run_id_agent_runs",
     )
