@@ -9,3 +9,5 @@ study/
 
 # YES24 카테고리 응답 원본. 재배포 금지 조건 때문에 저장소에 넣지 않는다
 yes24-open-api-guide/category.json
+# YES24 평가 표본. 같은 이유로 저장소에 넣지 않는다
+evals/librarian/data/
