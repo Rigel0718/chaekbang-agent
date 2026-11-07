@@ -5,9 +5,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.models.catalog import (
     BIBLIOGRAPHIC_FIELDS,
+    OFFICIAL_ONLY_FIELDS,
     AcquisitionType,
     Audience,
     AudienceSource,
+    EnrichmentStatus,
+    ExternalSource,
     HoldingSource,
     HoldingStatus,
     LibraryBook,
@@ -65,14 +68,28 @@ class LibraryBookRead(ReadModel):
     audience_source: AudienceSource
     cover_url: str | None
     description: str | None
+    enrichment_status: EnrichmentStatus
+    enrichment_checked_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # 공식 서지에만 있는 값. 연결이 없으면 비어 있다
+    subtitle: str | None
+    table_of_contents: str | None
+    series_name: str | None
+    external_source: ExternalSource | None
+    external_url: str | None
+    external_category: str | None
 
     @classmethod
     def of(cls, library_book: LibraryBook) -> dict[str, Any]:
         """기관 도서를 표시 값이 채워진 응답 값으로 바꾼다."""
-        values = {f: getattr(library_book, f) for f in LibraryBookRead.model_fields}
-        return values | {f: library_book.shown(f) for f in BIBLIOGRAPHIC_FIELDS}
+        book = library_book.book
+        own = set(LibraryBookRead.model_fields) - set(OFFICIAL_ONLY_FIELDS)
+        return (
+            {f: getattr(library_book, f) for f in own}
+            | {f: library_book.shown(f) for f in BIBLIOGRAPHIC_FIELDS}
+            | {f: getattr(book, f) if book is not None else None for f in OFFICIAL_ONLY_FIELDS}
+        )
 
 
 class LibraryBookWithHoldings(LibraryBookRead):
@@ -80,6 +97,20 @@ class LibraryBookWithHoldings(LibraryBookRead):
 
     holding_count: int
     available_count: int
+
+
+class AudienceRefreshResult(BaseModel):
+    updated: int  # 어린이 구분이 바뀐 건수
+
+
+class EnrichmentCounts(BaseModel):
+    """로그인한 기관의 소장 도서를 처리 상태별로 센 건수."""
+
+    pending: int = 0
+    enriched: int = 0
+    not_found: int = 0
+    mismatch: int = 0
+    no_isbn: int = 0
 
 
 # --- 소장 사본 (기관별) ---

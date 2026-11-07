@@ -6,6 +6,7 @@ from app.core.deps import AdminStaff, CurrentStaff, Session
 from app.core.isbn import InvalidIsbnError, normalize_isbn
 from app.models.catalog import Audience, LibraryBook
 from app.schemas.catalog import (
+    AudienceRefreshResult,
     LibraryBookCreate,
     LibraryBookRead,
     LibraryBookUpdate,
@@ -66,6 +67,13 @@ async def list_library_books(
     return Page[LibraryBookWithHoldings](
         items=[_view(r) for r in rows], total=total, limit=page.limit, offset=page.offset
     )
+
+
+@router.post("/audience/refresh", response_model=AudienceRefreshResult)
+async def refresh_audience(staff: AdminStaff, session: Session):
+    """공식 서지가 채워진 뒤 자기 기관의 어린이 구분을 갱신한다."""
+    updated = await library_books.refresh_audience(session, staff.library_id)
+    return AudienceRefreshResult(updated=updated)
 
 
 @router.get("/{library_book_id}", response_model=LibraryBookWithHoldings)

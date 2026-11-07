@@ -32,6 +32,15 @@ BIBLIOGRAPHIC_FIELDS = (
     "cover_url",
     "description",
 )
+# 공식 서지에만 있는 필드. 기관은 입력하지 않고, 연결되면 조회 응답에 나온다.
+OFFICIAL_ONLY_FIELDS = (
+    "subtitle",
+    "table_of_contents",
+    "series_name",
+    "external_source",
+    "external_url",
+    "external_category",
+)
 
 
 class Audience(StrEnum):
@@ -43,6 +52,18 @@ class AudienceSource(StrEnum):
     DEFAULT = "default"  # 근거 없음
     MANUAL = "manual"  # 관리자 지정
     IMPORT_LABEL = "import_label"  # 가져온 파일의 별치기호·자료실·부가기호
+    EXTERNAL_CATEGORY = "external_category"  # 연결된 공식 서지의 분류 원문
+
+
+class ExternalSource(StrEnum):
+    YES24 = "yes24"
+
+
+class EnrichmentStatus(StrEnum):
+    PENDING = "pending"  # 공식 서지 채움 대기
+    ENRICHED = "enriched"  # 공식 서지에 연결됨
+    NOT_FOUND = "not_found"  # 외부 API에서 찾지 못함
+    MISMATCH = "mismatch"  # 응답의 ISBN이 요청과 다름
 
 
 class HoldingStatus(StrEnum):
@@ -88,6 +109,14 @@ class Book(TimestampMixin, Base):
     kdc: Mapped[str | None] = mapped_column(String(20))
     cover_url: Mapped[str | None] = mapped_column(String(1000))
     description: Mapped[str | None] = mapped_column(Text)
+    subtitle: Mapped[str | None] = mapped_column(String(500))
+    table_of_contents: Mapped[str | None] = mapped_column(Text)
+    series_name: Mapped[str | None] = mapped_column(String(500))
+    external_source: Mapped[ExternalSource | None] = mapped_column(
+        str_enum(ExternalSource, "external_source")
+    )
+    external_url: Mapped[str | None] = mapped_column(String(1000))
+    external_category: Mapped[str | None] = mapped_column(String(100))  # 외부 분류 원문
 
 
 class LibraryBook(TimestampMixin, Base):
@@ -121,6 +150,11 @@ class LibraryBook(TimestampMixin, Base):
     )
     cover_url: Mapped[str | None] = mapped_column(String(1000))
     description: Mapped[str | None] = mapped_column(Text)
+    enrichment_status: Mapped[EnrichmentStatus] = mapped_column(
+        str_enum(EnrichmentStatus, "enrichment_status"),
+        server_default=EnrichmentStatus.PENDING.value,
+    )
+    enrichment_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     book: Mapped[Book | None] = relationship(lazy="joined")
 

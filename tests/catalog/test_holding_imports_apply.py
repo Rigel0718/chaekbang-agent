@@ -1,9 +1,11 @@
 """[catalog/holdings-import] 적용: 도서·사본 반영, 입수 구분, 제적, 어린이 분류."""
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.external.yes24.client import Yes24Client
 from tests.catalog.import_helpers import import_file, upload
 from tests.conftest import Tenant
 from tests.helpers import (
@@ -409,6 +411,82 @@ async def test_label_does_not_affect_other_library(
     assert await _audience(session, "EM1") == ("children", "import_label")
     after = await fetch(session, "library_books", theirs["id"])
     assert (after["audience"], after["audience_source"]) == ("general", "default")
+
+
+async def test_children_by_elementary_study_code(
+    admin_client_b: AsyncClient, session: AsyncSession
+) -> None:
+    """[catalog/holdings-import] 어린이 도서 분류 근거 / 초등 학습참고서 부가기호 (적용)"""
+    await import_file(admin_client_b, [*HEADER, "부가기호"], ["EM1", "수학", "저자", "63710"])
+    assert await _audience(session, "EM1") == ("children", "import_label")
+
+
+@pytest.mark.parametrize("code", ["43810", "53710"])
+async def test_secondary_code_is_not_label(
+    admin_client_b: AsyncClient, session: AsyncSession, code: str
+) -> None:
+    """[catalog/holdings-import] 어린이 도서 분류 근거 / 중·고등 부가기호 (적용)"""
+    await import_file(admin_client_b, [*HEADER, "부가기호"], ["EM1", "수학", "저자", code])
+    assert await _audience(session, "EM1") == ("general", "default")
+
+
+@pytest.mark.parametrize("mark", ["어", "c"])
+async def test_unsourced_mark_is_not_label(
+    admin_client_b: AsyncClient, session: AsyncSession, mark: str
+) -> None:
+    """[catalog/holdings-import] 어린이 도서 분류 근거 / 출처가 없는 별치기호 (적용)"""
+    await import_file(admin_client_b, [*HEADER, "별치기호"], ["EM1", "책", "저자", mark])
+    assert await _audience(session, "EM1") == ("general", "default")
+
+
+async def test_label_replaces_external_category(
+    library_b: Tenant, admin_client_b: AsyncClient, session: AsyncSession
+) -> None:
+    """[catalog/holdings-import] 어린이 도서 분류 근거 / 외부 분류 근거보다 우선"""
+    await add_library_book(
+        session,
+        library_b.id,
+        audience="children",
+        audience_source="external_category",
+    )
+    await import_file(
+        admin_client_b, [*HEADER, "ISBN", "별치기호"], ["EM1", "책", "저자", VALID_ISBN, "아"]
+    )
+    assert await _audience(session, "EM1") == ("children", "import_label")
+
+
+async def test_new_import_uses_external_category(
+    admin_client_b: AsyncClient, session: AsyncSession
+) -> None:
+    """[catalog/library-books] 외부 분류 근거 / 새로 가져오는 도서"""
+    await add_book(session, external_category="국내도서-어린이")
+    await import_file(admin_client_b, [*HEADER, "ISBN"], ["EM1", "책", "저자", VALID_ISBN])
+    assert await _audience(session, "EM1") == ("children", "external_category")
+
+
+async def test_new_import_label_beats_external_category(
+    admin_client_b: AsyncClient, session: AsyncSession
+) -> None:
+    """[catalog/holdings-import] 어린이 도서 분류 근거 / 외부 분류 근거보다 우선 (새 도서)"""
+    await add_book(session, external_category="국내도서-어린이")
+    await import_file(
+        admin_client_b, [*HEADER, "ISBN", "별치기호"], ["EM1", "책", "저자", VALID_ISBN, "아"]
+    )
+    assert await _audience(session, "EM1") == ("children", "import_label")
+
+
+async def test_import_never_calls_external_api(
+    admin_client_b: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[catalog/book-enrichment] 가져오기와 분리 / 가져오기로 만든 도서"""
+
+    async def fail(*args, **kwargs):
+        raise AssertionError("가져오기가 외부 API를 호출했다")
+
+    monkeypatch.setattr(Yes24Client, "get", fail)
+    await import_file(admin_client_b, [*HEADER, "ISBN"], ["EM1", "모모", "엔데", VALID_ISBN])
+    status = await session.scalar(text("SELECT enrichment_status FROM library_books"))
+    assert status == "pending"
 
 
 async def test_manual_audience_kept(

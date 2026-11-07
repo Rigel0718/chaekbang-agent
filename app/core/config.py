@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     # 시드 계정 비밀번호. 시드를 실행할 때만 필요하다.
     seed_admin_password: str | None = None
     seed_kiosk_password: str | None = None
+
+    # YES24 Open API. 키는 서지정보 채움 실행에만 쓴다.
+    yes24_api_key: SecretStr | None = None
+    yes24_base_url: str = "https://apis.yes24.com/v1"
 
 
 @lru_cache

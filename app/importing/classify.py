@@ -1,8 +1,8 @@
 """어린이 도서 분류 근거. 판단은 표 기반 코드로 하고, 불확실하면 근거 없음으로 둔다."""
 
-CHILDREN_MARKS = {"아", "아동", "어", "어린이", "유", "유아", "j", "c"}
+CHILDREN_MARKS = {"아", "아동", "어린이", "유", "유아", "j"}
 CHILDREN_SHELF_WORDS = ("어린이", "아동", "유아")
-CHILDREN_ADDITION_DIGIT = "7"  # 독자대상기호: 아동
+CHILDREN_ADDITION_DIGITS = ("6", "7")  # 독자대상기호: 초등 학습참고서, 아동
 
 
 def has_children_label(
@@ -14,4 +14,4 @@ def has_children_label(
     if shelf_location and any(word in shelf_location for word in CHILDREN_SHELF_WORDS):
         return True
     code = (addition_code or "").strip()
-    return len(code) == 5 and code.isdigit() and code[0] == CHILDREN_ADDITION_DIGIT
+    return len(code) == 5 and code.isdigit() and code[0] in CHILDREN_ADDITION_DIGITS
