@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**2주차: 서지정보 채움** (OpenSpec change: `add-book-enrichment`).
-YES24 연동, 공식 서지 채움, 외부 분류 근거(`external_category`). 응답 필드는 `yes24-open-api-guide/`의 문서와 실제 응답을 근거로 한다.
+**패키지 분리** (OpenSpec change: `refactor-layer-packages`, 아직 제안 전).
+`app/central/`(운영자), `app/library/`(기관 공통), `app/features/`(기관 개별)로 나눈다. `add-librarian-agent` 전에 끝낸다.
 에이전트(LLM 호출, tool 루프)는 아직 만들지 않는다.
 
 ## OpenSpec 작업 규칙
