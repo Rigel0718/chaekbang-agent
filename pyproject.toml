@@ -5,6 +5,7 @@ description = "사서 없는 작은도서관을 위한 AI 사서 웹 서비스 �
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",
+    "anyio>=4.16.0",
     "asyncpg>=0.32.0",
     "faker>=40.44.0",
     "fastapi>=0.162.0",
@@ -37,3 +38,4 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["sample: YES24 표본(evals/librarian/data/)이 있어야 도는 테스트. 없으면 건너뛴다"]

@@ -28,3 +28,7 @@ class InvalidRequestError(DomainError):
     def __init__(self, message: str, **extra: object) -> None:
         super().__init__(message)
         self.extra = extra
+
+
+class LimitExceededError(DomainError):
+    """사용 상한을 넘었다 (REST: 429)."""

@@ -1,6 +1,7 @@
 """platform/database-schema 스펙 테스트."""
 
 import asyncio
+import uuid
 from datetime import date
 
 from alembic import command
@@ -28,6 +29,9 @@ ALL_TABLES = {
     "loans",
     "agent_runs",
     "agent_steps",
+    "chat_sessions",
+    "chat_messages",
+    "recommendation_events",
 }
 
 
@@ -43,7 +47,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 12
+    assert len(ALL_TABLES) == 15
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:
@@ -189,4 +193,76 @@ async def test_step_rejects_run_of_other_library(
         kind="llm",
         duration_ms=1,
         match="fk_agent_steps_library_id_run_id_agent_runs",
+    )
+
+
+async def _run(session: AsyncSession, library_id: int):
+    return await insert(
+        session,
+        "agent_runs",
+        library_id=library_id,
+        profile="p",
+        profile_version="v1",
+        model="m",
+        started_at=clock.now(),
+    )
+
+
+async def test_message_rejects_session_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 세션으로 메시지 직접 저장"""
+    chat_b = await insert(
+        session,
+        "chat_sessions",
+        id=uuid.uuid4(),
+        library_id=library_b.id,
+        last_active_at=clock.now(),
+    )
+    await assert_rejected(
+        session,
+        "chat_messages",
+        library_id=library_a.id,
+        session_id=chat_b["id"],
+        role="user",
+        content="공룡 책",
+        match="fk_chat_messages_library_id_session_id_chat_sessions",
+    )
+
+
+async def test_event_rejects_library_book_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 도서로 노출 기록 직접 저장"""
+    theirs = await add_library_book(session, library_b.id)
+    run_a = await _run(session, library_a.id)
+    await assert_rejected(
+        session,
+        "recommendation_events",
+        library_id=library_a.id,
+        library_book_id=theirs["id"],
+        run_id=run_a["id"],
+        position=1,
+        was_available=True,
+        shown_at=clock.now(),
+        match="fk_recommendation_events_library_id_library_book_id",
+    )
+
+
+async def test_event_rejects_run_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 실행으로 노출 기록 직접 저장"""
+    ours = await add_library_book(session, library_a.id)
+    run_b = await _run(session, library_b.id)
+    await assert_rejected(
+        session,
+        "recommendation_events",
+        library_id=library_a.id,
+        library_book_id=ours["id"],
+        run_id=run_b["id"],
+        position=1,
+        was_available=True,
+        shown_at=clock.now(),
+        match="fk_recommendation_events_library_id_run_id_agent_runs",
     )

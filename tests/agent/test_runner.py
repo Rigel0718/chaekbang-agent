@@ -347,6 +347,26 @@ async def test_domain_error_goes_back_to_llm(session: AsyncSession, library_a: T
     assert done(events).status == RunStatus.COMPLETED
 
 
+async def test_domain_error_after_query(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] tool 오류 처리 / 도메인 오류 (tool이 DB를 읽은 뒤)
+
+    rollback이 실행 객체를 만료시켜도 단계 기록과 실행 종료가 돈다.
+    """
+
+    async def query_then_fail(ctx, data):
+        await ctx.session.execute(text("SELECT 1"))
+        raise NOT_FOUND
+
+    llm = FakeLlm([tool_turn(call("echo", {"keyword": "a"})), answer_turn("없어요")])
+    events = await collect(session, llm, profile(echo_tool(query_then_fail)), library_a.id)
+    assert llm.requests[1]["messages"][-1] == ToolResult("c1", NOT_FOUND.message, is_error=True)
+    assert done(events).status == RunStatus.COMPLETED
+    run_row = await _run_row(session, library_a.id, done(events).run_id)
+    assert run_row.status == RunStatus.COMPLETED
+    steps = await _steps(session, library_a.id, done(events).run_id)
+    assert [s.is_error for s in steps if s.kind == StepKind.TOOL] == [True]
+
+
 async def test_unexpected_error_fails_run(session: AsyncSession, library_a: Tenant) -> None:
     """[agent/runner] tool 오류 처리 / 예상하지 못한 예외"""
     boom = Recorder(error=RuntimeError("비밀 내용 01012345678"))

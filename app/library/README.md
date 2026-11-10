@@ -9,6 +9,7 @@
 - 사본(`holdings`), 회원, 대출
 - 엑셀·CSV 장서 가져오기
 - 서지 채움 처리 현황
+- AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
 
 ## 구성
 
@@ -22,6 +23,11 @@
 | `deps.py` | 현재 직원·기관, 역할 |
 | `hooks.py` | 기관 개별 기능의 접점 |
 | `enrichment_targets.py` | 운영자 층 접점 구현, 처리 현황 |
+| `recommendation/` | `search`(추천 가능 조건, 키워드 검색), `checks`(소장 검사), `cards`(카드), `events`(노출 기록) |
+| `tools.py` | AI 사서의 조회 tool: `search_collection`, `get_book_detail`, 범위를 좁힌 검색 tool을 만드는 `search_tool` |
+| `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
+| `privacy.py` | 개인정보 가리기 |
+| `services/chat.py` | 대화 순서: 확인, 가리기, 실행, 카드, 저장, 노출 기록, 끝난 세션 삭제 |
 
 ## 규칙
 
@@ -52,3 +58,12 @@
 가져오기는 새 도서의 `official_changed`를 먼저, 행마다 `row_applied`를 그다음에 부른다. 파일 근거가 외부 근거 위에 놓이게 하는 순서다.
 
 훅은 `app/main.py`에서 등록한다. 서버를 거치지 않고 이 패키지의 service를 직접 부르는 코드를 새로 만들면 훅 등록을 함께 챙겨야 한다.
+
+## AI 사서
+
+- 추천 가능한 책은 대출 가능이나 대출 중 사본이 있는 그 기관의 책이다(`recommendation/search.py`의 `recommendable_ids`). 검색과 소장 검사가 이 한 곳을 쓴다.
+- 검색은 표시 값의 서명(4), 부제·시리즈·저자(3), 소개(1)를 공백을 지운 부분 문자열로 찾고 가중치를 더한다. 최대 10권이다.
+- 기관 개별 기능은 `LibrarianExtension`(tool, 최종 검사, 프롬프트 문구)으로 끼운다. 이 패키지는 기능을 이름으로 부르지 않는다. 조립은 `app/main.py`가 하고, 평가도 같은 `build_librarian_profiles`를 부른다.
+- 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
+- `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
+- tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장 일부가 들어 있을 수 있어서다.

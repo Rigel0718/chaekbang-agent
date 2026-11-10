@@ -30,7 +30,8 @@ async def start_run(
 
 async def add_step(
     session: AsyncSession,
-    run: AgentRun,
+    library_id: int,
+    run_id: int,
     seq: int,
     kind: StepKind,
     *,
@@ -39,10 +40,11 @@ async def add_step(
     is_error: bool = False,
     detail: dict[str, Any] | None = None,
 ) -> None:
+    """실행은 id로 받는다. tool 오류 뒤의 rollback이 실행 객체를 만료시켜도 읽지 않게 한다."""
     session.add(
         AgentStep(
-            library_id=run.library_id,
-            run_id=run.id,
+            library_id=library_id,
+            run_id=run_id,
             seq=seq,
             kind=kind,
             name=name,

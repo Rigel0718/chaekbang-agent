@@ -13,7 +13,9 @@
 | 파일 | 내용 |
 | --- | --- |
 | `children/models.py` | `library_book_audiences`, `Audience`, `AudienceSource` |
-| `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호, 분류 원문 |
+| `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호, 분류 원문, 어린이 요청 판단 |
+| `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
+| `children/checks.py` | 어린이 최종 검사 |
 | `children/service.py` | 조회, 지정, 파일 근거, 외부 분류 근거, 갱신 |
 | `children/hook.py` | 기관 공통의 사건을 service로 잇는다 |
 | `children/api.py` | `/children` 라우터 |
@@ -31,6 +33,13 @@
 - 어린이 구분은 기관의 요청에서만 바뀐다. 운영자의 채움 실행은 바꾸지 않으므로, 채움 뒤에는 기관 관리자가 `POST /children/refresh`를 호출한다.
 - 분류 값은 카테고리 이름과 항상 같지 않아서 정확히 일치하는 값만 본다.
 - 애매하면 어린이 근거로 보지 않는다. 어린이 요청에 일반 도서가 나가는 쪽이 더 큰 실수다.
+
+**AI 사서의 어린이 요청**
+
+- 판단은 코드가 한다(`rules.is_children_request`). 13세 이하 나이나 어린이 표현이 있으면 어린이 요청이고, 14세 이상·청소년·부모가 읽을 책 표현은 근거로 보지 않는다. 판단은 대화 안에서 유지되고 `제가 읽을` 같은 어른 표현으로 풀린다. 문장 판단이 애매하면 어린이 쪽으로 간다.
+- 이번 실행에서 `search_children_books`를 썼어도 어린이 요청이다. LLM의 신호는 켜는 쪽으로만 쓴다.
+- 어린이 요청의 답에 그 기관의 어린이 도서가 아닌 책이 있으면 어린이 검사가 답을 막는다. 분류 행이 없는 책은 일반 도서다.
+- `app/main.py`에서 `children_extension()`을 빼면 tool, 검사, 프롬프트 문구가 함께 빠지고 AI 사서는 그대로 돈다.
 
 ## 규칙
 
