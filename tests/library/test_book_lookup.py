@@ -204,3 +204,74 @@ async def test_distance_over_limit_is_not_a_match(
     monkeypatch.setattr(lookup, "FOUND_THRESHOLD", threshold)
     await add_held_book(session, library_a.id, title="붙여도 붙여도 공룡 스티커왕")
     assert await found_in_text(session, library_a.id, "아무 책이나 추천해 주세요") == []
+
+
+# --- 판본·묶음 표기 무시 ---
+
+
+async def test_edition_marker_title(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 / 판본 표기가 붙은 서명"""
+    title = "진짜 진짜 재밌는 공룡 그림책 (완전판)"
+    await add_held_book(session, library_a.id, title=title)
+    [found] = await find_books(session, library_a.id, "진짜 진짜 재밌는 공룡 그림책")
+    assert found.stage == Stage.TITLE_EXACT
+    assert found.candidate.library_book.shown("title") == title  # 보이는 서명은 그대로
+
+
+async def test_leading_bracket_marker(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 / 앞에 붙은 대괄호 표기"""
+    await add_held_book(session, library_a.id, title="[예스리커버] 아는 만큼 보인다")
+    assert await _suggested(session, library_a.id, "아는 만큼") == ["[예스리커버] 아는 만큼 보인다"]
+
+
+async def test_bundle_marker(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 / 묶음 상품 표기"""
+    await add_held_book(
+        session, library_a.id, title="작고 귀엽고 사라지는 것들 (친필 사인본) + 엽서 3종"
+    )
+    [found] = await find_books(session, library_a.id, "작고 귀엽고 사라지는 것들")
+    assert found.stage == Stage.TITLE_EXACT
+
+
+async def test_unclosed_parenthesis(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 / 닫히지 않은 괄호"""
+    await add_held_book(
+        session, library_a.id, title="EBS 수능특강 사회·문화 (2026년) (2027 수능대비"
+    )
+    [found] = await find_books(session, library_a.id, "EBS 수능특강 사회·문화")
+    assert found.stage == Stage.TITLE_EXACT
+
+
+async def test_marker_only_title(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 / 표기만 있는 서명"""
+    await add_held_book(session, library_a.id, title="(주)")
+    assert await _found(session, library_a.id, "(주)") == ["(주)"]
+
+
+async def test_plus_without_spaces(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 / 공백 없는 더하기"""
+    await add_held_book(session, library_a.id, title="C++ 첫걸음")
+    assert await _found(session, library_a.id, "C++") == ["C++ 첫걸음"]
+
+
+async def test_query_with_marker(session: AsyncSession, library_a: Tenant) -> None:
+    """질의에 판본 표기를 쳐도 같은 규칙으로 맞는다."""
+    await add_held_book(session, library_a.id, title="데미안")
+    [found] = await find_books(session, library_a.id, "데미안 (리커버)")
+    assert found.stage == Stage.TITLE_EXACT
+
+
+async def test_title_as_typed_first_among_editions(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """판본 표기를 지우면 같아지는 책 중에서는 원래 서명이 질의와 같은 책이 먼저다."""
+    await add_held_book(session, library_a.id, title="공룡 그림책")
+    await add_held_book(session, library_a.id, title="공룡 그림책 (완전판)")
+    assert await _found(session, library_a.id, "공룡 그림책 (완전판)") == [
+        "공룡 그림책 (완전판)",
+        "공룡 그림책",
+    ]
+    assert await _found(session, library_a.id, "공룡 그림책") == [
+        "공룡 그림책",
+        "공룡 그림책 (완전판)",
+    ]

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.models import Book
 from app.core.errors import NotFoundError
-from app.core.text import compact_sql, jamo, jamo_starts
+from app.core.text import compact, compact_sql, jamo, jamo_starts, strip_edition
 from app.library.models.catalog import LibraryBook
 from app.library.recommendation.search import LABEL, Candidate, _counts, get_candidates
 
@@ -148,7 +148,7 @@ async def find_books(
     session: AsyncSession, library_id: int, query: str, *, limit: int = FIND_LIMIT
 ) -> list[Found]:
     """서명·저자로 찾는다. 서명 전체, 서명 앞부분, 서명 포함, 저자 포함, 오타 유사 순이다."""
-    q = jamo(query)
+    q = jamo(strip_edition(query))  # 이용자가 판본 표기까지 쳐도 키와 같은 규칙으로 맞춘다
     if not q:
         return []
     limit = min(limit, FIND_LIMIT)
@@ -162,10 +162,13 @@ async def find_books(
         (author.like(f"%{pattern}%", escape="\\"), Stage.AUTHOR_CONTAINS),
         else_=None,
     ).label("stage")
+    # 판본 표기를 지우면 같아지는 책(`… 그림책`, `… 그림책 (완전판)`) 중에서는 원래 서명이 질의와
+    # 그대로 같은 책이 더 닮았다. 같은 방식 안에서 먼저 둔다.
+    as_typed = compact_sql(books.c.title) == compact(query)
     exact = (
         select(books.c.id, stage, literal(1.0).label("score"))
         .where(stage.is_not(None))
-        .order_by(stage, books.c.has_available.desc(), books.c.title, books.c.id)
+        .order_by(stage, as_typed.desc(), books.c.has_available.desc(), books.c.title, books.c.id)
         .limit(limit)
     )
     rows = [(i, s, sc) for i, s, sc in (await session.execute(exact)).all()]
@@ -193,7 +196,7 @@ async def suggest_books(
     session: AsyncSession, library_id: int, query: str, *, limit: int = SUGGEST_LIMIT
 ) -> list[Suggestion]:
     """자동완성: 서명 앞부분, 서명 낱말 앞부분, 저자(낱말) 앞부분 순이다. 오타는 보지 않는다."""
-    q = jamo(query)
+    q = jamo(strip_edition(query))  # 이용자가 판본 표기까지 쳐도 키와 같은 규칙으로 맞춘다
     if not q:
         return []
     books = _keyed(library_id)

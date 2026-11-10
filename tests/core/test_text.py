@@ -13,6 +13,7 @@ from app.core.text import (
     jamo_sql,
     jamo_starts,
     jamo_starts_sql,
+    strip_edition,
 )
 
 # 공백 종류(일반, 탭, 줄바꿈, 줄바꿈 없는 공백, 전각, em, 폭 없는 공백, BOM)와 대소문자가 섞인 값
@@ -67,6 +68,16 @@ JAMO_SAMPLES = [
     "  앞뒤  공백\t2권 ",
     "공룡​백과",
     "",
+    # 판본·묶음 표기
+    "진짜 진짜 재밌는 공룡 그림책 (완전판)",
+    "[예스리커버] 아는 만큼 보인다",
+    "작고 귀엽고 사라지는 것들 (친필 사인본) + 엽서 3종",
+    "EBS 수능특강 사회·문화 (2026년) (2027 수능대비",
+    "어린이과학동아 (격주간) : 21호 (11/1) [2026]",
+    "(주)",
+    "[ ]",
+    "C++ 첫걸음",
+    "괄호)만 닫힘",
 ]
 
 
@@ -115,3 +126,19 @@ def test_jamo_starts() -> None:
     assert jamo_starts("  데미안 ") == [jamo("데미안")]
     assert jamo_starts("") == []
     assert jamo_starts("   ") == []
+
+
+def test_strip_edition() -> None:
+    """[catalog/book-lookup] 판본·묶음 표기 무시 (규칙)"""
+    assert strip_edition("진짜 진짜 재밌는 공룡 그림책 (완전판)") == "진짜 진짜 재밌는 공룡 그림책"
+    assert strip_edition("[예스리커버] 아는 만큼 보인다") == "아는 만큼 보인다"
+    assert strip_edition("작고 귀엽고 사라지는 것들 (친필 사인본) + 엽서 3종") == (
+        "작고 귀엽고 사라지는 것들"
+    )
+    assert (
+        strip_edition("EBS 수능특강 사회·문화 (2026년) (2027 수능대비") == "EBS 수능특강 사회·문화"
+    )
+    assert strip_edition("(주)") == "(주)"  # 지워서 비면 원래 서명
+    assert strip_edition("C++ 첫걸음") == "C++ 첫걸음"
+    assert strip_edition("  데미안 ") == "데미안"
+    assert jamo_starts("최소한의 한국사 (개정판)") == [jamo("최소한의한국사"), jamo("한국사")]

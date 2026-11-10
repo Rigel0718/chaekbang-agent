@@ -199,6 +199,16 @@ async def test_found_title_with_typo(kiosk_client: AsyncClient, fake_llm: LlmSlo
     assert [b["library_book_id"] for b in event(events, "found")["books"]] == [demian["id"]]
 
 
+async def test_found_title_with_edition_marker(
+    kiosk_client: AsyncClient, fake_llm: LlmSlot, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[agent/librarian] 찾은 책 카드 / 판본 표기가 붙은 서명을 말한 문장"""
+    book = await add_held_book(session, library_a.id, title="[예스리커버] 아는 만큼 보인다")
+    fake_llm.script(submit("네, 있어요."))
+    events = await talk(kiosk_client, "아는 만큼 보인다 있어요?")
+    assert [b["library_book_id"] for b in event(events, "found")["books"]] == [book["id"]]
+
+
 async def test_no_found_for_topic_request(
     kiosk_client: AsyncClient, fake_llm: LlmSlot, session: AsyncSession, library_a: Tenant
 ) -> None:

@@ -10,6 +10,8 @@ Python의 `\\s`와 PostgreSQL의 `\\s`는 다르다. PostgreSQL은 줄바꿈 없
 않는다. 그래서 두 쪽 모두 아래의 같은 문자 목록을 쓰고, `tests/core/test_text.py`가 DB에서 비교한다.
 대소문자도 PostgreSQL의 `lower`·`ILIKE`와 맞추려고 `casefold`가 아니라 `lower`를 쓴다.
 
+- `strip_edition`: 찾기용으로 서명의 판본·묶음 표기(`(완전판)`, `[예스리커버]`, `+ 엽서 3종`)를
+  지운다. 이용자는 이 표기를 말하지 않는다. 저장하지 않고 화면의 서명도 바꾸지 않는다.
 - `jamo`, `jamo_sql`, `jamo_starts`: 찾기와 자동완성의 비교용. 한글 음절을
   호환 자모로 풀어 조합 중인 입력(`데미ㅇ`)과 한 글자 오타(`데미얀`)를 비교할 수 있게 한다.
   겹받침과 이중 모음도 나눈다. 두벌식에서 `ㅘ`는 `ㅗ`, `ㅏ`를 차례로 쳐서 만들기 때문이다.
@@ -103,13 +105,30 @@ def jamo_sql(expr: ColumnElement) -> ColumnElement:
     return getattr(func, JAMO_FUNCTION)(compact_sql(expr))
 
 
-def jamo_starts(value: str) -> list[str]:
-    """낱말 시작 키: 낱말마다 그 낱말부터 끝까지를 공백 없이 이은 자모 키. 첫 값이 `jamo(value)`다.
+# 판본·묶음 표기: 닫힌 대괄호·괄호(모두), 남은 여는 괄호부터 끝까지, 공백을 둔 `+` 뒤.
+# 공백은 `clean_spaces`로 하나로 줄인 뒤라 보통 공백만 본다. SQL 쪽은 PostgreSQL 정규식 문법이다.
+EDITION_PATTERNS = (r"\[[^\]]*\]", r"\([^)]*\)", r"[(\[].*$", r" \+ .*$")
+EDITION_SQL_PATTERNS = (r"\[[^]]*\]", r"\([^)]*\)", r"[(\[].*$", r" \+ .*$")
+_EDITION = tuple(re.compile(pattern) for pattern in EDITION_PATTERNS)
 
-    `최소한의 한국사` → `[jamo("최소한의한국사"), jamo("한국사")]`. 찾기 키 생성 열의 규칙이고
-    SQL 쪽은 `ko_jamo_starts`다.
+
+def strip_edition(value: str) -> str:
+    """판본·묶음 표기를 지운 서명(`clean_spaces` 적용). 지워서 비면 원래 서명이다. `C++`는 둔다."""
+    cleaned = clean_spaces(value)
+    stripped = cleaned
+    for pattern in _EDITION:
+        stripped = pattern.sub(" ", stripped)
+    return clean_spaces(stripped) or cleaned
+
+
+def jamo_starts(value: str) -> list[str]:
+    """낱말 시작 키: 낱말마다 그 낱말부터 끝까지를 공백 없이 이은 자모 키.
+
+    판본·묶음 표기를 지운 서명으로 만든다(`strip_edition`). 첫 값은 `jamo(strip_edition(value))`다.
+    `최소한의 한국사 (개정판)` → `[jamo("최소한의한국사"), jamo("한국사")]`. 찾기 키 생성 열의
+    규칙이고 SQL 쪽은 `ko_jamo_starts`다.
     """
-    spaced = jamo_spaced(value)
+    spaced = jamo_spaced(strip_edition(value))
     if not spaced:
         return []
     words = spaced.split(" ")

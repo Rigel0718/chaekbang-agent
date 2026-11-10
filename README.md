@@ -132,6 +132,7 @@ uv run python -m evals.holdings_import
 | `GET /catalog/suggest?q=데미ㅇ` | 입력 중인 글자(조합 중 자모 포함)로 서명·저자 후보를 준다. 최대 8개 | 직원(키오스크 포함) |
 
 - LLM을 부르지 않고 질의를 저장하지 않는다. 그 기관의 대출 가능이나 대출 중 사본이 있는 책만 나온다. 어린이 구분으로 거르지 않는다(이용자가 직접 찾는 책이라서).
+- 서명의 판본·묶음 표기(`(완전판)`, `[예스리커버]`, `+ 엽서 3종`)는 무시하고 비교한다. 보이는 서명은 그대로다.
 - 결과 순서는 서명 전체 일치, 서명 앞부분, 서명 포함, 저자 포함, 오타 유사다. 한글은 자모로 풀어 비교하고, 오타는 자모 편집 거리(`fuzzystrmatch`)로 본다. 자모 키는 `books`·`library_books`의 생성 열이라 DB가 계산한다.
 - 평가: `uv run python -m evals.catalog_search` (표본 필요, LLM 없음). 결과와 문턱은 [evals/catalog_search/README.md](evals/catalog_search/README.md)에 있다.
 
