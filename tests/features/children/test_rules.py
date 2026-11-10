@@ -9,7 +9,9 @@ from app.features.children.rules import (
 )
 
 
-@pytest.mark.parametrize("mark", ["아", "아동", "어린이", "유", "유아", "J", "j"])
+@pytest.mark.parametrize(
+    "mark", ["아", "아동", "어린이", "유", "유아", "J", "j", "아 동", "아\u00a0동", "J\u200b"]
+)
 def test_children_marks(mark: str) -> None:
     """[features/children] 파일 근거 / 별치기호로 분류"""
     assert has_children_label(mark, None, None)

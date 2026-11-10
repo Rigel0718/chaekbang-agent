@@ -5,9 +5,9 @@ from datetime import date, datetime
 from typing import Any
 
 from app.core.isbn import InvalidIsbnError, isbn10_to_13, normalize_isbn
+from app.core.text import clean_spaces, compact
 from app.library.models.catalog import AcquisitionType, HoldingStatus
 
-_SPACES = re.compile(r"\s+")
 _NON_DIGIT = re.compile(r"[^\d]")
 _DATE = re.compile(r"^(\d{4})[-./년\s]*(\d{1,2})[-./월\s]*(\d{1,2})일?$")
 
@@ -47,7 +47,7 @@ def clean_text(value: Any) -> str | None:
         return None
     if isinstance(value, float) and value.is_integer():
         value = int(value)
-    text = _SPACES.sub(" ", str(value)).strip()
+    text = clean_spaces(str(value))
     return text or None
 
 
@@ -58,11 +58,11 @@ def normalize_cell_isbn(value: Any) -> tuple[str | None, bool]:
         return None, False
     if text.endswith(".0"):
         text = text[:-2]
-    compact = re.sub(r"[\s\-]", "", text)
+    digits = re.sub(r"[\s\-]", "", text)
     try:
-        if len(compact) == 10:
-            return isbn10_to_13(compact), False
-        return normalize_isbn(compact), False
+        if len(digits) == 10:
+            return isbn10_to_13(digits), False
+        return normalize_isbn(digits), False
     except InvalidIsbnError:
         return None, True
 
@@ -105,7 +105,7 @@ def parse_date(value: Any) -> date | None:
 
 
 def _label_key(value: str) -> str:
-    return _SPACES.sub("", value)
+    return compact(value)
 
 
 def parse_status(value: str | None) -> tuple[HoldingStatus | None, bool]:

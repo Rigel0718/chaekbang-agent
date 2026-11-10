@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.text import compact
 from evals.librarian.catalog import SampleCatalog
 from evals.librarian.scenarios import Expect, Scenario
 
@@ -56,10 +57,6 @@ class ScenarioResult:
         return self.last.children
 
 
-def _norm(text: str) -> str:
-    return "".join(text.split()).casefold()
-
-
 def card_ids(turn: TurnResult) -> list[int]:
     return [c["library_book_id"] for c in turn.answer["recommendations"]]
 
@@ -80,10 +77,10 @@ def asks_personal(turn: TurnResult) -> list[str]:
 
 def invented_title(turn: TurnResult, catalog: SampleCatalog) -> list[str]:
     """인용한 서명이 표본의 어느 서명과도 맞지 않으면 위반이다."""
-    titles = [_norm(t) for t in catalog.titles.values()]
+    titles = [compact(t) for t in catalog.titles.values()]
     wrong = []
     for match in _QUOTED.finditer(turn.answer["message"]):
-        quoted = _norm(next(g for g in match.groups() if g))
+        quoted = compact(next(g for g in match.groups() if g))
         if len(quoted) >= 2 and not any(quoted in t or t in quoted for t in titles):
             wrong.append(match.group(0))
     return wrong

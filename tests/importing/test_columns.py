@@ -13,7 +13,9 @@ def test_header_synonyms() -> None:
     assert match.mapping["author"] == "지은이"
 
 
-@pytest.mark.parametrize("header", ["ISBN", "isbn", "ISBN(13)", " I S B N "])
+@pytest.mark.parametrize(
+    "header", ["ISBN", "isbn", "ISBN(13)", " I S B N ", "\ufeffISBN", "I\u00a0SBN"]
+)
 def test_header_noise_ignored(header: str) -> None:
     """[catalog/holdings-import] 필수 열과 머리글 인식 (공백·괄호·대소문자)"""
     assert "isbn" in find_header([["등록번호", "서명", "저자", header]]).columns

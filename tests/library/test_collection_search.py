@@ -248,3 +248,13 @@ async def test_get_candidate_other_library(
     book = await add_held_book(session, library_b.id, title="공룡")
     with pytest.raises(NotFoundError):
         await get_candidate(session, library_a.id, book["id"])
+
+
+async def test_nbsp_in_title(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/collection-search] 키워드 검색 / 띄어쓰기 차이 (줄바꿈 없는 공백)
+
+    PostgreSQL의 `\\s`는 U+00A0을 공백으로 보지 않아 예전 규칙으로는 찾지 못했다.
+    """
+    book = await add_held_book(session, library_a.id, title="공룡 백과")
+    assert await _ids(session, library_a.id, ["공룡백과"]) == [book["id"]]
+    assert await _ids(session, library_a.id, ["공룡 백과"]) == [book["id"]]

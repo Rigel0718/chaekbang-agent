@@ -1,8 +1,8 @@
 """소장 도서 후보 검색. 추천 가능 조건을 한곳에 두고 검색과 소장 검사가 함께 쓴다.
 
-표시 값은 공식 서지를 먼저 쓴다(`coalesce(Book.x, LibraryBook.x)`). 비교는 양쪽의 공백을 모두 지운
-부분 문자열이다. 한국어는 조사가 붙고 띄어쓰기 표기가 자주 달라서다. 저자는 구조화하지 않고 원문을
-그대로 찾는다.
+표시 값은 공식 서지를 먼저 쓴다(`coalesce(Book.x, LibraryBook.x)`). 비교는 양쪽을
+`app/core/text.py`의 같은 규칙(공백 제거, 소문자)으로 맞춘 부분 문자열이다. 한국어는 조사가 붙고
+띄어쓰기 표기가 자주 달라서다. 저자는 구조화하지 않고 원문을 그대로 찾는다.
 """
 
 from collections.abc import Sequence
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.models import Book
 from app.core.tenancy import get_owned
+from app.core.text import compact, compact_sql
 from app.library.models.catalog import Holding, HoldingStatus, LibraryBook
 from app.library.models.library import Library, LoanMode
 
@@ -53,14 +54,6 @@ def recommendable_ids(library_id: int) -> Select:
     )
 
 
-def _squash(expr: ColumnElement) -> ColumnElement:
-    return func.regexp_replace(func.coalesce(expr, ""), r"\s", "", "g")
-
-
-def _squash_text(value: str) -> str:
-    return "".join(value.split())
-
-
 def _pattern(keyword: str) -> str:
     escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
@@ -77,7 +70,7 @@ def _score(keywords: Sequence[str]) -> ColumnElement:
     for keyword in keywords:
         pattern = _pattern(keyword)
         for field, weight in WEIGHTS:
-            matched = _squash(_shown(field)).ilike(pattern, escape="\\")
+            matched = compact_sql(_shown(field)).like(pattern, escape="\\")
             terms.append(case((matched, weight), else_=0))
     total: ColumnElement = literal(0)
     for term in terms:
@@ -107,12 +100,12 @@ async def _loan_mode(session: AsyncSession, library_id: int) -> LoanMode:
 
 
 def clean_keywords(keywords: Sequence[str]) -> list[str]:
-    """공백을 지우고 빈 값과 중복을 뺀다."""
+    """비교용으로 맞추고(`compact`) 빈 값과 중복을 뺀다."""
     seen: list[str] = []
     for keyword in keywords:
-        squashed = _squash_text(keyword)
-        if squashed and squashed.casefold() not in {k.casefold() for k in seen}:
-            seen.append(squashed)
+        compacted = compact(keyword)
+        if compacted and compacted not in seen:
+            seen.append(compacted)
     return seen
 
 

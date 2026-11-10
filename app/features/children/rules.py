@@ -7,6 +7,8 @@
 import re
 from collections.abc import Sequence
 
+from app.core.text import compact
+
 CHILDREN_CATEGORIES = frozenset({"국내도서-유아", "국내도서-어린이", "국내도서-초등학습서"})
 CHILDREN_MARKS = {"아", "아동", "어린이", "유", "유아", "j"}
 CHILDREN_SHELF_WORDS = ("어린이", "아동", "유아")
@@ -17,7 +19,7 @@ def has_children_label(
     separate_mark: str | None, shelf_location: str | None, addition_code: str | None
 ) -> bool:
     """별치기호(완전 일치), 자료실 이름, 부가기호 첫 자리 중 하나라도 아동이면 True."""
-    if separate_mark and separate_mark.replace(" ", "").casefold() in CHILDREN_MARKS:
+    if separate_mark and compact(separate_mark) in CHILDREN_MARKS:
         return True
     if shelf_location and any(word in shelf_location for word in CHILDREN_SHELF_WORDS):
         return True

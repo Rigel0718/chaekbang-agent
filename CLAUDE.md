@@ -101,7 +101,7 @@ app/
 ├── main.py       # 조립: 라우터 포함, 기관 개별 기능 등록
 ├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
 ├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘),
-│                 # isbn(정규화·검증), migrations, model_base, errors, tenancy, schemas(페이지)
+│                 # isbn(정규화·검증), text(공백·대소문자 규칙, 저장용과 비교용), migrations, model_base, errors, tenancy, schemas(페이지)
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
 │   ├── models.py     # Book
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)

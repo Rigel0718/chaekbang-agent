@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.text import compact
 from app.library.importing.errors import ImportFileError
 
 REQUIRED = ("accession_number", "title", "author")
@@ -49,7 +50,8 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
     "addition_code": ("부가기호", "isbn부가기호"),
 }
 
-_HEADER_NOISE = re.compile(r"[\s()\[\]{}·_\-/.:]")
+# 공백은 `compact`가 지운다. 여기에는 머리글에 붙는 기호만 둔다.
+_HEADER_NOISE = re.compile(r"[()\[\]{}·_\-/.:]")
 _BY_HEADER = {name: field for field, names in SYNONYMS.items() for name in names}
 HEADER_SEARCH_ROWS = 20
 
@@ -62,7 +64,7 @@ class HeaderMatch:
 
 
 def clean_header(value: Any) -> str:
-    return _HEADER_NOISE.sub("", str(value or "")).casefold()
+    return compact(_HEADER_NOISE.sub("", str(value or "")))
 
 
 def _match(row: list[Any], overrides: dict[str, str]) -> tuple[dict[str, int], dict[str, str]]:

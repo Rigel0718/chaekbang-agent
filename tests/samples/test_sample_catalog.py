@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools import ToolContext
+from app.core.text import compact
 from app.features.children.rules import is_children_category
 from app.features.children.tools import SEARCH_CHILDREN_BOOKS, children_extension
 from app.library.librarian import LibrarianAnswer, Recommendation, build_librarian_profiles
@@ -23,10 +24,6 @@ from tests.agent.fakes import FakeLlm
 from tests.library.librarian_helpers import search, submit
 
 ROLE_WORDS = re.compile(r"\s*(글그림|글,\s*그림|원저|원작|기획|감수|그림|글|저|역|외)\s*$")
-
-
-def _squash(text: str) -> str:
-    return "".join(text.split()).casefold()
 
 
 def _scenario(scenario_id: str):
@@ -93,7 +90,7 @@ async def test_dinosaur_search(session: AsyncSession, catalog: SampleCatalog) ->
     assert ids
     assert all("공룡" in catalog.texts[i] for i in ids)
     assert set(ids) <= catalog.recommendable
-    titled = {i for i in catalog.recommendable if "공룡" in _squash(catalog.titles[i])}
+    titled = {i for i in catalog.recommendable if "공룡" in compact(catalog.titles[i])}
     if len(titled) <= SEARCH_LIMIT:
         assert titled <= set(ids)
     # 서명에 든 책이 소개에만 든 책보다 앞이다.
@@ -118,8 +115,8 @@ async def test_author_substring(
     checked = 0
     for book_id in sorted(catalog.recommendable):
         name = _first_name(by_title[catalog.titles[book_id]]["author"])
-        matches = [i for i in catalog.recommendable if _squash(name) in _squash(catalog.texts[i])]
-        if len(_squash(name)) < 2 or len(matches) > SEARCH_LIMIT:
+        matches = [i for i in catalog.recommendable if compact(name) in compact(catalog.texts[i])]
+        if len(compact(name)) < 2 or len(matches) > SEARCH_LIMIT:
             continue
         found = await search_collection(session, catalog.library_id, [name])
         assert book_id in [c.library_book.id for c in found], (name, catalog.titles[book_id])
