@@ -40,6 +40,13 @@
 - [x] 8.1 일회용 DB에서 실제 서버로 확인한다: 키오스크 토큰으로 `GET /catalog/suggest?q=데미ㅇ`, `GET /catalog/search?q=데미얀`, 고른 책만 보낸 대화, `데미안 있어요?` 대화의 `found` 사건을 본다. LLM이 필요한 마지막 확인은 승인받고, 쓴 모델과 토큰 수를 알린다
 - [x] 8.2 `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `alembic check`가 모두 통과하는지 확인하고, 이번 change의 모든 delta 시나리오가 테스트 docstring에 연결돼 있는지 스크립트로 점검한다
 
+## 9. 판본·묶음 표기 무시 (구현 뒤 사람 요청으로 추가)
+
+검색 평가에서 찾은 책이 놓친 27건이 모두 판본·묶음 표기(`[예스리커버]`, `(완전판)`, `(2026년)`, `+ 엽서 3종`)가 붙은 서명이었다.
+
+- [x] 9.1 `app/core/text.py`에 판본·묶음 표기 지우기 규칙을 더하고 `jamo_starts`에 적용한다. 질의에도 적용한다. 새 리비전으로 `ko_jamo_starts`를 같은 규칙으로 바꾸고 이미 저장된 찾기 키를 다시 계산한다(되돌리면 이전 규칙과 키). 개발 DB를 백업한 뒤 `&&`로 `upgrade` → `downgrade -1` → `upgrade`, `alembic check`를 확인하고, 코드와 SQL 규칙이 같은지 DB에서 테스트한다. [catalog/book-lookup] 판본·묶음 표기 무시와 [agent/librarian] 판본 표기가 붙은 서명을 말한 문장 시나리오를 통과시킨다
+- [x] 9.2 `uv run python -m evals.catalog_search`를 다시 돌려 찾은 책 비율과 다른 종류가 나빠지지 않았는지 알리고, `evals/catalog_search/README.md`와 design 2·8절을 고친다. 전체 테스트, ruff, `alembic check`가 통과하는지 확인한다
+
 ## Workflow follow-up
 
 - 사람이 결과를 확인한 뒤 `/opsx:archive`로 change를 archive한다.

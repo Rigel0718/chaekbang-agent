@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**4주차: 검색** (진행 중 change: `add-catalog-search`).
-AI 사서 v1(`add-librarian-agent`)은 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 다음은 도서관 안내(`add-library-guide`), 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
+**4주차: 검색과 안내** (다음 change: `add-library-guide`, 제안 전).
+AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 다음은 도서관 안내(`add-library-guide`), 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
 
 ## OpenSpec 작업 규칙
 
