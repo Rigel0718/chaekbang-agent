@@ -2,7 +2,7 @@
 
 사서가 없는 작은도서관을 위한 AI 사서 웹 서비스의 백엔드. 도서관 PC에 켜 둔 화면에서 이용자는 AI 사서에게 추천을 받고 대출하며, 관리자는 운영 에이전트로 장서·대출 현황을 다룬다. 배경과 전체 설계는 [docs/design.md](docs/design.md), 코딩 규칙은 [CLAUDE.md](CLAUDE.md)를 참고한다.
 
-현재 단계: 3주차 AI 사서 v1. 이용자는 `POST /librarian/messages`로 AI 사서에게 소장 도서 추천을 받는다. 대출·반납·희망도서 신청은 아직 대화로 처리하지 않는다.
+현재 단계: AI 사서 v1 완료, 다음은 추천 평가(`add-recommendation-evals`). 이용자는 `POST /librarian/messages`로 AI 사서에게 소장 도서 추천을 받는다. 대출·반납·희망도서 신청은 아직 대화로 처리하지 않는다.
 
 ## 도메인
 
