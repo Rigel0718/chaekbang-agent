@@ -122,3 +122,14 @@ def test_clean_text() -> None:
     assert clean_text("  마을   이야기 ") == "마을 이야기"
     assert clean_text(12345.0) == "12345"
     assert clean_text("  ") is None
+
+
+def test_clean_text_spaces() -> None:
+    """[catalog/holdings-import] 셀 값 정리 (줄바꿈 없는 공백, 보이지 않는 글자)"""
+    assert clean_text("  공룡\u00a0 백과\u200b ") == "공룡 백과"
+    assert clean_text("\ufeff") is None
+
+
+def test_status_label_spaces() -> None:
+    """[catalog/holdings-import] 대출 상태 표기 (공백 종류와 상관없이 인식)"""
+    assert parse_status("대출\u00a0가능") == (HoldingStatus.AVAILABLE, False)

@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 25000  # 추론과 출력을 합친 상한
     llm_timeout_seconds: float = 60.0
 
+    # AI 사서 대화. 무입력 시간이 지나면 세션이 끝나고 메시지를 지운다.
+    librarian_session_idle_minutes: int = 5
+    librarian_max_turns: int = 20  # 한 세션의 턴 수
+    librarian_daily_run_limit: int = 500  # 기관별 하루 실행 수 (기관 시간대 기준)
+
 
 @lru_cache
 def get_settings() -> Settings:

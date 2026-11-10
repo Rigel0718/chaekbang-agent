@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.agent.models import RunStatus
 from app.library import hooks
+from app.library.librarian import build_librarian_profiles
+from app.main import app
 from tests.agent.fakes import (
     FakeLlm,
     answer_turn,
@@ -26,6 +28,13 @@ from tests.agent.fakes import (
 from tests.catalog.import_helpers import import_file
 from tests.conftest import Tenant
 from tests.helpers import VALID_ISBN, VALID_ISBN_2
+from tests.library.librarian_helpers import (
+    add_held_book,
+    librarian,
+    run_librarian,
+    search,
+    submit,
+)
 
 APP = Path(__file__).resolve().parents[2] / "app"
 
@@ -149,3 +158,53 @@ async def test_common_response_has_no_audience(admin_client: AsyncClient) -> Non
     )
     body = (await admin_client.get(f"/library-books/{created.json()['id']}")).json()
     assert "audience" not in body and "audience_source" not in body
+
+
+# --- 기관 개별 기능 없는 AI 사서 ---
+
+
+def test_librarian_profile_without_features() -> None:
+    """[platform/package-layers] 기관 개별 기능 없는 AI 사서 / 기능 없는 프로필"""
+    for prof in build_librarian_profiles().values():
+        assert [t.name for t in prof.tools] == ["search_collection", "get_book_detail"]
+        assert [c.name for c in prof.final_checks] == ["holdings"]
+        assert "어린이" not in prof.system_prompt
+        assert "children" not in prof.system_prompt
+
+
+def test_library_names_no_feature() -> None:
+    """[platform/package-layers] 기관 개별 기능 없는 AI 사서 / 공통은 기능 이름을 모름"""
+    for path in (APP / "library").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for name in ("search_children_books", "children", "audience"):
+            assert name not in source, (path, name)
+
+
+async def test_librarian_without_features(
+    session: AsyncSession, library_a: Tenant, engine: AsyncEngine
+) -> None:
+    """[platform/package-layers] 기관 개별 기능 없는 AI 사서 / 기능 없이 대화"""
+    general = await add_held_book(session, library_a.id, title="공룡 대백과")
+    statements: list[str] = []
+
+    def capture(conn, cursor, statement, *args) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        llm = FakeLlm([search("공룡"), submit("이 책요", general["id"])])
+        events = await run_librarian(session, llm, library_a.id, "7살 공룡 책", prof=librarian())
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+    assert done(events).status == RunStatus.COMPLETED
+    assert answers(events)[0].recommendations[0].library_book_id == general["id"]
+    assert statements
+    assert not [s for s in statements if "library_book_audiences" in s]
+
+
+def test_server_assembles_children() -> None:
+    """[platform/package-layers] 기관 개별 기능 없는 AI 사서 / 서버 조립"""
+    for prof in app.state.librarian_profiles.values():
+        assert "search_children_books" in [t.name for t in prof.tools]
+        assert "children" in [c.name for c in prof.final_checks]
+        assert "search_children_books" in prof.system_prompt

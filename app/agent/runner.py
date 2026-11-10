@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import anyio
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,12 +106,13 @@ class _Execution:
         self.cache_write_tokens = 0
         self.output_tokens = 0
         self.record: AgentRun | None = None
+        self.record_id: int | None = None  # rollback으로 record가 만료돼도 읽을 수 있게 둔다
         self.finished = False
 
     @property
     def run_id(self) -> int:
-        assert self.record is not None
-        return self.record.id
+        assert self.record_id is not None
+        return self.record_id
 
     async def start(self) -> None:
         self.record = await records.start_run(
@@ -120,13 +122,14 @@ class _Execution:
             profile_version=self.profile.version,
             model=self.llm.model,
         )
+        self.record_id = self.record.id
 
     async def step(self, kind: StepKind, started: float, **values: Any) -> None:
-        assert self.record is not None
         self.seq += 1
         await records.add_step(
             self.session,
-            self.record,
+            self.library_id,
+            self.run_id,
             self.seq,
             kind,
             duration_ms=_elapsed_ms(started),
@@ -335,4 +338,7 @@ async def run(
                 yield event
     finally:
         if not execution.finished:
-            await asyncio.shield(execution.finish(RunStatus.CANCELLED))
+            # 서버(anyio)의 취소는 await마다 다시 걸리므로 막아서 기록을 끝낸 뒤에 넘긴다.
+            # 부르는 쪽이 같은 세션으로 이어서 정리할 수 있게 한다.
+            with anyio.CancelScope(shield=True):
+                await asyncio.shield(execution.finish(RunStatus.CANCELLED))

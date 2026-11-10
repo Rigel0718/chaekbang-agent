@@ -13,9 +13,11 @@ class Endpoint:
 
 
 GOODS_ITEM_DETAIL = Endpoint("/goods/itemDetail")
+GOODS_ITEM_LIST = Endpoint("/goods/itemList")
 
 API_KEY_HEADER = "X-Api-Key"
 SEARCH_TYPE_ISBN13 = "ISBN13"
+SEARCH_CATEGORY_BOOK = "BOOK"
 DETAIL_ALL = "Y"
 REQUEST_TIMEOUT_SECONDS = 10.0
 MIN_CALL_INTERVAL_SECONDS = 0.2  # 공식 한도 초당 10회의 절반

@@ -3,9 +3,9 @@
 import httpx
 import pytest
 
-from app.central.external.yes24.client import RateLimiter, StopReason, Yes24Stopped
+from app.central.external.yes24.client import RateLimiter, StopReason, Yes24Client, Yes24Stopped
 from app.central.external.yes24.definitions import MIN_CALL_INTERVAL_SECONDS
-from app.central.external.yes24.goods import get_items_by_isbn
+from app.central.external.yes24.goods import get_items_by_isbn, search_items
 from tests.helpers import VALID_ISBN, VALID_ISBN_2
 from tests.yes24_helpers import TEST_API_KEY, FakeYes24, error, item, ok
 
@@ -106,3 +106,26 @@ async def test_stop_error_has_no_key() -> None:
         await _call(httpx.ConnectError(f"연결 실패 {TEST_API_KEY}"))
     assert TEST_API_KEY not in str(caught.value)
     assert caught.value.__cause__ is None
+
+
+async def test_search_items_requests_books_only() -> None:
+    """상품 검색: 도서 범위로 상세 정보를 요청하고 응답을 해석한다 (평가 표본 전용)"""
+    seen: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return ok(item(VALID_ISBN))
+
+    async with httpx.AsyncClient(
+        base_url="https://yes24.test", transport=httpx.MockTransport(handler)
+    ) as http:
+        client = Yes24Client(http, TEST_API_KEY, RateLimiter(0))
+        items = await search_items(client, "공룡", 10)
+    assert [i.isbn13 for i in items] == [VALID_ISBN]
+    assert seen[0].path == "/goods/itemList"
+    assert dict(seen[0].params) == {
+        "query": "공룡",
+        "category": "BOOK",
+        "pageSize": "10",
+        "detail": "Y",
+    }

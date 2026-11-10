@@ -2,10 +2,16 @@
 
 import pytest
 
-from app.features.children.rules import has_children_label, is_children_category
+from app.features.children.rules import (
+    has_children_label,
+    is_children_category,
+    is_children_request,
+)
 
 
-@pytest.mark.parametrize("mark", ["아", "아동", "어린이", "유", "유아", "J", "j"])
+@pytest.mark.parametrize(
+    "mark", ["아", "아동", "어린이", "유", "유아", "J", "j", "아 동", "아\u00a0동", "J\u200b"]
+)
 def test_children_marks(mark: str) -> None:
     """[features/children] 파일 근거 / 별치기호로 분류"""
     assert has_children_label(mark, None, None)
@@ -79,3 +85,67 @@ def test_children_categories(category: str) -> None:
 def test_other_categories(category: str | None) -> None:
     """[features/children] 외부 분류 근거 / 어린이 근거가 아닌 분류 (값 표, 완전 일치만)"""
     assert not is_children_category(category)
+
+
+# --- 어린이 요청 판단 ---
+
+
+def test_request_age() -> None:
+    """[features/children] 어린이 요청 판단 / 나이"""
+    assert is_children_request(["7살 아이 공룡 책"])
+    assert is_children_request(["일곱 살 공룡 책"])
+    assert is_children_request(["18개월 아기 책"])
+    assert is_children_request(["13세 추천 도서"])
+
+
+@pytest.mark.parametrize(
+    "text", ["손주와 같이 읽을 그림책", "초등 3학년 과학책", "어린이 공룡 책", "우리 애가 볼 책"]
+)
+def test_request_children_words(text: str) -> None:
+    """[features/children] 어린이 요청 판단 / 대상 표현"""
+    assert is_children_request([text])
+
+
+@pytest.mark.parametrize(
+    "text", ["아이디어 책", "딸기 요리책", "아들러 심리학 책", "아이돌 에세이", "아이폰 사용법"]
+)
+def test_request_similar_words(text: str) -> None:
+    """[features/children] 어린이 요청 판단 / 비슷한 낱말"""
+    assert not is_children_request([text])
+
+
+@pytest.mark.parametrize("text", ["아이 훈육 방법 책", "육아 책 추천", "엄마가 읽을 아이 심리 책"])
+def test_request_parent_books(text: str) -> None:
+    """[features/children] 어린이 요청 판단 / 부모가 읽을 책"""
+    assert not is_children_request([text])
+
+
+@pytest.mark.parametrize("text", ["20살 아들이 읽을 소설", "15세 딸 선물", "중학생 아들 책"])
+def test_request_teen_or_older(text: str) -> None:
+    """[features/children] 어린이 요청 판단 / 14세 이상"""
+    assert not is_children_request([text])
+
+
+def test_request_other_texts() -> None:
+    """[features/children] 어린이 요청 판단 (어린이 표현이 없으면 아님)"""
+    assert not is_children_request(["공룡 책 추천해줘"])
+    assert not is_children_request(["20세기 역사책"])
+    assert not is_children_request([])
+
+
+def test_request_kept_in_conversation() -> None:
+    """[features/children] 대화 안에서 유지 / 이어지는 질문"""
+    assert is_children_request(["7살 책", "다른 건요?"])
+    assert is_children_request(["7살 책", "공룡은요?", "더 보여 줘"])
+
+
+def test_request_released_by_adult() -> None:
+    """[features/children] 대화 안에서 유지 / 어른 책으로 전환"""
+    assert not is_children_request(["7살 책", "이제 제가 읽을 소설요"])
+    assert is_children_request(["7살 책", "이제 제가 읽을 소설요", "다시 아이 책요"])
+
+
+def test_request_reading_together() -> None:
+    """[features/children] 대화 안에서 유지 / 함께 읽기"""
+    assert is_children_request(["제가 아이랑 같이 읽을 책"])
+    assert is_children_request(["어른이 아이와 함께 읽을 그림책"])

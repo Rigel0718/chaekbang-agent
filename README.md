@@ -2,7 +2,7 @@
 
 사서가 없는 작은도서관을 위한 AI 사서 웹 서비스의 백엔드. 도서관 PC에 켜 둔 화면에서 이용자는 AI 사서에게 추천을 받고 대출하며, 관리자는 운영 에이전트로 장서·대출 현황을 다룬다. 배경과 전체 설계는 [docs/design.md](docs/design.md), 코딩 규칙은 [CLAUDE.md](CLAUDE.md)를 참고한다.
 
-현재 단계: 3주차 AI 사서 준비. 공통 실행기(`app/agent/`)는 있고, 이용자가 쓸 수 있는 에이전트 기능은 아직 없다.
+현재 단계: AI 사서 v1 완료, 다음은 추천 평가(`add-recommendation-evals`). 이용자는 `POST /librarian/messages`로 AI 사서에게 소장 도서 추천을 받는다. 대출·반납·희망도서 신청은 아직 대화로 처리하지 않는다.
 
 ## 도메인
 
@@ -12,6 +12,7 @@
 | 장서 | books(공식 서지, 기관 공통), library_books(기관 도서), holdings(소장 사본), holding_imports(가져오기 기록) | `/library-books`, `/holdings`, `/holding-imports`, `/book-enrichment` |
 | 어린이 구분 (기관 개별 기능) | library_book_audiences | `/children` |
 | 대출 | members, loans | `/members`, `/loans` |
+| AI 사서 | agent_runs, agent_steps(실행 기록), chat_sessions, chat_messages(진행 중 대화), recommendation_events(추천 노출) | `/librarian` |
 
 - **기관 분리**: books·libraries를 뺀 모든 테이블은 `library_id`를 가진다. 기관은 로그인 토큰으로 정해지고, 다른 기관의 데이터는 404로 응답한다.
 - **공식 서지**: `books`는 ISBN이 있는 책의 공식 서지다. 기관 API로는 쓸 수 없다.
@@ -66,7 +67,7 @@ uv run uvicorn app.main:app --reload
 
 1. `POST /auth/login`에 `{"login_id": "sunny-kiosk", "password": "..."}`를 보내 토큰을 받는다.
 2. 이후 요청에 `Authorization: Bearer <토큰>` 헤더를 붙인다. Swagger에서는 오른쪽 위 **Authorize**에 토큰을 넣는다.
-3. 키오스크(도서관 PC)는 기관 정보·기관 도서·사본 조회와 대출·반납만 할 수 있다. 나머지는 관리자만 할 수 있고, 키오스크가 부르면 403이다.
+3. 키오스크(도서관 PC)는 기관 정보·기관 도서·사본 조회, 대출·반납, AI 사서 대화만 할 수 있다. 나머지는 관리자만 할 수 있고, 키오스크가 부르면 403이다.
 4. 토큰 만료: 관리자 12시간, 키오스크 30일 (`ADMIN_TOKEN_HOURS`, `KIOSK_TOKEN_HOURS`). `POST /auth/logout`으로 끊고, 비밀번호를 바꾸면 그 계정의 기존 토큰이 모두 끊긴다.
 
 ### 이전 스키마(무인 서점)에서 넘어올 때
@@ -123,9 +124,22 @@ uv run python -m evals.holdings_import
 - `app/library/`: 기관 공통
 - `app/features/`: 기관 개별 기능. 공통은 훅(`app/library/hooks.py`)으로 사건만 알리고, 기능은 `app/main.py`에서 등록한다
 
+## AI 사서
+
+| API | 하는 일 | 권한 |
+| --- | --- | --- |
+| `POST /librarian/messages` | `{"session_id": null, "message": "공룡 책 추천해줘"}`를 보내면 SSE로 답한다 | 직원(키오스크 포함) |
+| `DELETE /librarian/sessions/{id}` | 대화를 바로 끝내고 메시지를 지운다 | 직원 |
+
+- SSE 사건은 `session`(세션 id), `status`(진행 문구), `answer`(문장, 추천 카드, 희망도서 안내 표시, 운영 방식), `done`(실행 id, 상태) 순서다. 답은 검사를 통과한 뒤 한 번에 나가고, 카드는 코드가 DB 값으로 만든다.
+- 추천은 그 기관의 추천 가능한 책(대출 가능이나 대출 중 사본이 있는 책)만이다. 어린이 요청(코드가 문장으로 판단)에는 그 기관의 어린이 도서만 나간다. 둘 다 최종 검사가 코드로 막는다.
+- 전화번호, 이메일, 주민등록번호, 그 기관의 회원번호는 LLM과 저장 전에 `[개인정보]`로 가린다. 이름은 가리지 못한다.
+- 대화는 마지막 입력에서 `LIBRARIAN_SESSION_IDLE_MINUTES`(5분)가 지나면 끝나고, 서버가 1분마다 지운다. 세션당 `LIBRARIAN_MAX_TURNS`(20턴), 기관당 하루 `LIBRARIAN_DAILY_RUN_LIMIT`(500회), 문장 500자가 상한이다. 넘으면 409, 429, 422다. 같은 세션에 답을 기다리는 중 다시 보내면 409다.
+- 보인 추천은 `recommendation_events`에 남는다. 회원, 세션, 문장은 남기지 않는다.
+
 ## 에이전트 실행기
 
-공통 실행기는 `app/agent/`에 있다. 이번 단계에는 HTTP 진입점이 없고 테스트로만 돈다. `.env`의 `OPENAI_API_KEY`가 없어도 서버는 시작하고, 실행만 고정 답으로 끝난다. 기본 모델은 `LLM_MODEL`이고, 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 규칙은 [app/agent/README.md](app/agent/README.md)를 참고한다.
+공통 실행기는 `app/agent/`에 있다. `.env`의 `OPENAI_API_KEY`가 없어도 서버는 시작하고, 실행만 고정 답으로 끝난다. 기본 모델은 `LLM_MODEL`이고, 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 규칙은 [app/agent/README.md](app/agent/README.md)를 참고한다.
 
 ## 서지정보 채움 (운영자)
 
@@ -145,12 +159,30 @@ uv run python scripts/enrich_books.py --limit 100
 - 기관 관리자는 `GET /book-enrichment`로 자기 기관의 처리 현황을 본다.
 - YES24 이용 조건에 따라 소장 도서의 ISBN만 조회하고, 판매가와 판매 상태는 저장하지 않는다. 표지는 원본 URL만 저장한다.
 
+### AI 사서 평가
+
+YES24 상품 검색으로 받은 표본 약 100권(`evals/librarian/data/yes24_sample.json`)을 테스트 DB의 가상 기관에 적재해 시나리오를 실제 LLM으로 돌리고, 규칙 검사 표를 낸다. 표본은 YES24 이용 조건(축적·재배포 금지) 때문에 저장소에 없고, 다시 받지 않는다. 실제 LLM 비용이 든다.
+
+```bash
+uv run python -m evals.librarian --only dinosaur,not-held
+```
+
+- 테스트 DB 트랜잭션 안에서 돌고 되돌린다. 개발 DB는 쓰지 않는다.
+- 규칙 검사: 추천 가능하지 않은 책 추천, 어린이 요청의 일반 도서, 이름·연락처를 묻는 문장, 문장 속 소장하지 않은 서명. 고정 답 비율도 낸다. 위반이나 기대 불일치가 있으면 종료 코드 1이다.
+- 서지는 실제 값이지만 기관과 사본 상태는 가상이다. 수치를 실제 서비스 성능으로 쓰지 않는다.
+
 ## 테스트와 린트
 
 테스트는 실제 PostgreSQL(`TEST_DATABASE_URL`)에서 돈다. DB 컨테이너가 떠 있어야 한다.
 
 ```bash
 uv run pytest
+```
+
+`tests/samples/`의 표본 테스트(`sample` 표시)는 표본 파일이 있을 때만 돌고, 없으면 건너뛴다. 스펙 시나리오는 표본 없이도 도는 시나리오 테스트가 맡는다. 표본 테스트만 빼려면 다음을 쓴다.
+
+```bash
+uv run pytest -m "not sample"
 ```
 
 ```bash

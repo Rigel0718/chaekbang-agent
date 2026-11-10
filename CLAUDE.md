@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**3주차: AI 사서** (OpenSpec change: `add-librarian-agent`, 아직 제안 전).
-공통 실행기(`app/agent/`)는 끝났다. 패키지별 `tools.py`와 프로필로 AI 사서를 올린다. 정한 내용은 `docs/design.md`의 '에이전트 구조'에 있다. 저자 구조화는 하지 않고 원문을 부분 문자열로 검색한다.
+**4주차: 추천 평가** (다음 change: `add-recommendation-evals`, 제안 전).
+AI 사서 v1(`add-librarian-agent`)은 끝났다. 평가 세트를 늘리고, 어린이 지표를 책 분류와 요청 판단으로 나누고, 임베딩 검색과 비교한다. 넘겨받은 항목은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
 
 ## OpenSpec 작업 규칙
 
@@ -101,7 +101,7 @@ app/
 ├── main.py       # 조립: 라우터 포함, 기관 개별 기능 등록
 ├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
 ├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘),
-│                 # isbn(정규화·검증), migrations, model_base, errors, tenancy, schemas(페이지)
+│                 # isbn(정규화·검증), text(공백·대소문자 규칙, 저장용과 비교용), migrations, model_base, errors, tenancy, schemas(페이지)
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
 │   ├── models.py     # Book
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
@@ -153,7 +153,7 @@ openspec/
 - 상태 값은 `StrEnum`으로 정의한다.
 - 외부 API 키, DB URL은 `.env`에서 읽고 코드에 하드코딩하지 않는다. `.env.example`을 함께 관리한다.
 - 외부 도서 API의 표지 이미지는 저장하지 않고 원본 URL로만 표시하며, 출처를 함께 보여준다.
-- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다.
+- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 평가 표본 약 100권(`evals/librarian/data/`)만 예외이고 저장소에 넣지 않는다.
 - 에이전트는 공통 실행기 하나에 프로필(프롬프트, tool 묶음, 권한)만 바꿔 쓴다. tool은 같은 프로세스에서 service를 감싸고, 이름·설명·JSON Schema로 정의한다. `library_id`는 실행기가 코드로 주입하고 LLM이 정하지 않는다.
 - 기관 개별 기능의 값은 공통 테이블과 공통 API에 넣지 않는다. 기능은 `app/main.py`에서 등록하고, 서버를 거치지 않는 새 진입점을 만들면 등록을 함께 챙긴다.
 - 새 service 함수에는 테스트를 같이 작성한다. 기관 분리(다른 기관 데이터가 보이지 않는지) 테스트를 빠뜨리지 않는다.
