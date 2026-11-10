@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import (
     CHAR,
     CheckConstraint,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -16,11 +17,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.central.models import Book
 from app.core.model_base import ISBN_PATTERN, Base, TimestampMixin, str_enum
+from app.core.text import JAMO_STARTS_FUNCTION
 
 # 공식 서지와 기관 도서가 함께 가진 서지 필드. 연결된 도서는 공식 값을 먼저 보여 준다.
 BIBLIOGRAPHIC_FIELDS = (
@@ -94,6 +96,13 @@ class LibraryBook(TimestampMixin, Base):
     isbn: Mapped[str | None] = mapped_column(CHAR(13))
     title: Mapped[str] = mapped_column(String(500))
     author: Mapped[str] = mapped_column(String(300))
+    # 서명·저자 찾기 키(`app/core/text.py`의 `jamo_starts`). DB가 계산하고 코드는 쓰지 않는다
+    title_jamo_starts: Mapped[list[str] | None] = mapped_column(
+        ARRAY(Text), Computed(f"{JAMO_STARTS_FUNCTION}(title)", persisted=True)
+    )
+    author_jamo_starts: Mapped[list[str] | None] = mapped_column(
+        ARRAY(Text), Computed(f"{JAMO_STARTS_FUNCTION}(author)", persisted=True)
+    )
     publisher: Mapped[str | None] = mapped_column(String(200))
     published_date: Mapped[date | None] = mapped_column(Date)
     list_price: Mapped[int | None] = mapped_column(Integer)

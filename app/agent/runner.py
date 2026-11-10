@@ -89,7 +89,7 @@ class _Execution:
         profile: Profile,
         library_id: int,
         user_text: str,
-        history: Sequence[UserMessage | AssistantMessage],
+        history: Sequence[UserMessage | AssistantMessage | Instruction],
     ) -> None:
         self.session = session
         self.llm = llm
@@ -321,9 +321,13 @@ async def run(
     profile: Profile,
     library_id: int,
     user_text: str,
-    history: Sequence[UserMessage | AssistantMessage] = (),
+    history: Sequence[UserMessage | AssistantMessage | Instruction] = (),
 ) -> AsyncIterator[RunEvent]:
-    """library_id는 인증한 코드가 정한다. history는 이전 턴의 이용자 문장과 최종 답 글이다."""
+    """library_id는 인증한 코드가 정한다. history는 이전 턴의 이용자 문장과 최종 답 글이다.
+
+    history에는 코드의 안내(`Instruction`)도 넣을 수 있다. 안내는 이용자 문장이 아니므로 검사가 받는
+    `user_texts`에 들어가지 않는다.
+    """
     execution = _Execution(session, llm, profile, library_id, user_text, history)
     await execution.start()
     try:

@@ -11,6 +11,7 @@ from pydantic import Field
 from sqlalchemy import Select
 
 from app.agent.tools import Tool, ToolContext, ToolInput
+from app.library.recommendation.lookup import find_books
 from app.library.recommendation.search import Candidate, get_candidate, search_collection
 
 DESCRIPTION_LIMIT = 200
@@ -24,6 +25,12 @@ class SearchInput(ToolInput):
         description=(
             "서명, 부제, 저자, 시리즈, 소개에서 찾을 낱말. 비우면 대출 가능한 책을 둘러본다"
         ),
+    )
+
+
+class FindInput(ToolInput):
+    query: str = Field(
+        max_length=100, description="이용자가 말한 서명이나 저자. 띄어쓰기와 한 글자 오타는 괜찮다"
     )
 
 
@@ -94,6 +101,11 @@ def search_tool(
     return Tool(name, description, SearchInput, handler, status_label)
 
 
+async def _find(ctx: ToolContext, data: FindInput) -> list[dict[str, Any]]:
+    found = await find_books(ctx.session, ctx.library_id, data.query)
+    return [search_result(f.candidate) for f in found]
+
+
 async def _detail(ctx: ToolContext, data: DetailInput) -> dict[str, Any]:
     return detail_result(await get_candidate(ctx.session, ctx.library_id, data.library_book_id))
 
@@ -103,6 +115,15 @@ SEARCH_COLLECTION = search_tool(
     "이 도서관의 소장 도서에서 추천할 수 있는 책을 찾는다. 대출 가능이나 대출 중 사본이 있는 책만 "
     "나오고 최대 10권이다. 소개는 앞부분만 나온다.",
     "소장 도서를 찾고 있어요",
+)
+
+FIND_BOOK = Tool(
+    "find_book",
+    "이 도서관 소장 도서를 서명이나 저자로 찾는다. 이용자가 책 이름이나 작가를 말할 때 쓴다. "
+    "검색창과 같은 찾기이고 어린이 구분으로 거르지 않는다. 최대 10권이다.",
+    FindInput,
+    _find,
+    "책을 찾고 있어요",
 )
 
 GET_BOOK_DETAIL = Tool(

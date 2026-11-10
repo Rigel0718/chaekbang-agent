@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.central.models import ExternalSource
 from app.library.models.catalog import Holding, HoldingStatus
 from app.library.recommendation.search import RECOMMENDABLE_STATUSES, Candidate, get_candidates
+from app.library.schemas.catalog import BookSummary
 from app.library.schemas.librarian import BookCard
 
 COVER_SOURCES = {ExternalSource.YES24: "YES24"}
@@ -48,26 +49,35 @@ async def _shelf(
     return shelf
 
 
-def _card(candidate: Candidate, reason: str, shelf: tuple[str | None, str | None]) -> BookCard:
+def _summary(candidate: Candidate, shelf: tuple[str | None, str | None]) -> dict[str, Any]:
     book = candidate.library_book
     official = book.book
-    return BookCard(
-        library_book_id=book.id,
-        title=book.shown("title"),
-        author=book.shown("author"),
-        publisher=book.shown("publisher"),
-        available_count=candidate.available_count,
-        on_loan_count=candidate.on_loan_count,
-        shelf_location=shelf[0],
-        call_number=shelf[1],
-        reason=reason,
-        cover_url=book.shown("cover_url"),
-        cover_source=COVER_SOURCES.get(official.external_source)
+    return {
+        "library_book_id": book.id,
+        "title": book.shown("title"),
+        "author": book.shown("author"),
+        "publisher": book.shown("publisher"),
+        "available_count": candidate.available_count,
+        "on_loan_count": candidate.on_loan_count,
+        "shelf_location": shelf[0],
+        "call_number": shelf[1],
+        "cover_url": book.shown("cover_url"),
+        "cover_source": COVER_SOURCES.get(official.external_source)
         if official is not None and official.external_source is not None
         else None,
-        product_url=official.external_url if official is not None else None,
-        status_synced_at=candidate.status_synced_at,
-    )
+        "product_url": official.external_url if official is not None else None,
+        "status_synced_at": candidate.status_synced_at,
+    }
+
+
+async def build_summaries(
+    session: AsyncSession, library_id: int, candidates: Sequence[Candidate]
+) -> list[BookSummary]:
+    """찾기 결과의 요약. 카드와 같은 서지·대출 상태이고 추천 이유는 없다."""
+    shelf = await _shelf(session, library_id, [c.library_book.id for c in candidates])
+    return [
+        BookSummary(**_summary(c, shelf.get(c.library_book.id, (None, None)))) for c in candidates
+    ]
 
 
 async def build_cards(session: AsyncSession, library_id: int, answer: Any) -> list[BookCard]:
@@ -77,10 +87,11 @@ async def build_cards(session: AsyncSession, library_id: int, answer: Any) -> li
     candidates = await get_candidates(session, library_id, ids)
     shelf = await _shelf(session, library_id, ids)
     return [
-        _card(
-            candidates[item.library_book_id],
-            item.reason,
-            shelf.get(item.library_book_id, (None, None)),
+        BookCard(
+            **_summary(
+                candidates[item.library_book_id], shelf.get(item.library_book_id, (None, None))
+            ),
+            reason=item.reason,
         )
         for item in items
         if item.library_book_id in candidates

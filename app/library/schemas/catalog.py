@@ -182,3 +182,31 @@ class HoldingRead(ReadModel):
     author: str
     # 매입 사본에 빠진 정보 (isbn, purchase_price). 저장하지 않고 조회할 때 계산한다
     missing_fields: list[str]
+
+
+# --- 서명·저자 찾기 ---
+
+
+class BookSummary(BaseModel):
+    """찾기 결과와 카드의 공통 값. 서지와 사본 정보는 코드가 DB 값으로 채운다."""
+
+    library_book_id: int
+    title: str
+    author: str
+    publisher: str | None
+    available_count: int
+    on_loan_count: int
+    shelf_location: str | None
+    call_number: str | None
+    cover_url: str | None  # 원본 URL. 저장하지 않는다
+    cover_source: str | None  # 표지 출처
+    product_url: str | None  # 출처의 상품 링크
+    status_synced_at: datetime | None  # 가져오기 기관의 대출 상태 갱신 시각
+
+
+class BookSuggestion(BaseModel):
+    """자동완성 항목. 입력할 때마다 부르므로 가볍게 둔다."""
+
+    library_book_id: int
+    title: str
+    author: str

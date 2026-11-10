@@ -14,10 +14,10 @@ from app.agent.profile import FinalCheck, Profile, Violation
 from app.agent.tools import AnswerTool, Tool, ToolInput
 from app.library.models.library import LoanMode
 from app.library.recommendation.checks import HoldingCheck
-from app.library.tools import GET_BOOK_DETAIL, SEARCH_COLLECTION
+from app.library.tools import FIND_BOOK, GET_BOOK_DETAIL, SEARCH_COLLECTION
 
 PROFILE_NAME = "librarian"
-PROFILE_VERSION = "v1"
+PROFILE_VERSION = "v2"
 MESSAGE_LIMIT = 300
 REASON_LIMIT = 120
 MAX_RECOMMENDATIONS = 5
@@ -67,8 +67,9 @@ BASE_PROMPT = """\
 너는 사서가 없는 작은도서관의 AI 사서다. 도서관 PC에서 이용자와 한국어로 짧고 친절하게 이야기한다.
 
 원칙
-- 추천은 이 도서관의 소장 도서로만 한다. 먼저 search_collection으로 찾고, 결과에 나온 \
-library_book_id만 submit_answer의 recommendations에 넣는다.
+- 추천은 이 도서관의 소장 도서로만 한다. 먼저 검색 tool로 찾고, 결과에 나온 library_book_id만 \
+submit_answer의 recommendations에 넣는다.
+- 서명이나 저자를 말하면 find_book으로, 주제나 분위기를 말하면 search_collection으로 찾는다.
 - 키워드는 요청의 핵심 낱말 1~5개로 짧게 쓴다. 결과가 없으면 다른 낱말로 한두 번 더 찾는다.
 - 책 내용, 줄거리, 저자 정보는 tool 결과의 소개와 목차에만 근거한다. 없는 내용, 인용문을 지어내지 \
 않는다. 소개가 없는 책은 소개 정보가 없다고 말한다.
@@ -79,6 +80,8 @@ library_book_id만 submit_answer의 recommendations에 넣는다.
 - 책 정보 카드(서명, 저자, 대출 상태, 서가 위치)는 화면이 따로 보여 준다. message에 반복하지 않는다.
 - 최종 답은 반드시 submit_answer로 낸다. 다른 tool과 함께 부르지 않는다.
 - 이전 답의 [추천한 책: #번호 서명]은 그때 추천한 책이다. "두 번째 책"처럼 물으면 이 번호를 쓴다.
+- [고른 책: …], [찾은 책: …] 안내는 이용자가 직접 찾은 책이다. 화면에 카드가 이미 있으니 \
+recommendations에 다시 넣지 않는다. "이거", "비슷한 거"는 이 책을 가리킨다.
 """
 
 LOAN_NOTES = {
@@ -117,7 +120,12 @@ def build_librarian_profiles(
     extensions: Sequence[LibrarianExtension] = (),
 ) -> dict[LoanMode, Profile]:
     """운영 방식별 프로필. 평가도 이 함수를 부른다."""
-    tools = (SEARCH_COLLECTION, GET_BOOK_DETAIL, *(t for e in extensions for t in e.tools))
+    tools = (
+        SEARCH_COLLECTION,
+        FIND_BOOK,
+        GET_BOOK_DETAIL,
+        *(t for e in extensions for t in e.tools),
+    )
     checks = (HoldingCheck(), *(c for e in extensions for c in e.final_checks))
     notes = [e.prompt_note for e in extensions if e.prompt_note]
     return {
