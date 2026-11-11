@@ -1,8 +1,9 @@
 #!/bin/sh
 # 임베딩 서버(TEI) 시작 스크립트.
 #
-# TEI_MODEL_ID      내려받아 띄울 모델 저장소. ONNX 변환본이면 ONNX(ort) 실행기로,
-#                   safetensors만 있으면 Candle 실행기로 뜬다.
+# TEI_MODEL_ID      내려받아 띄울 모델 저장소. ONNX 변환본(`onnx/model.onnx`)이어야 하고
+#                   ONNX(ort) 실행기로 뜬다. ONNX가 없으면 멈춘다. Candle 실행기는 같은 장비에서
+#                   적재가 1.7배쯤 느려서 쓰지 않는다. 다른 모델은 먼저 ONNX로 변환해 올린다.
 # EMBEDDING_MODEL   서버가 알리는 모델 이름(--served-model-name). 앱이 벡터와 함께 저장하는 이름이다.
 #                   같은 가중치의 변환본이면 원본 이름을 그대로 둔다.
 # EMBEDDING_MAX_TOKENS  입력 길이 한도.
@@ -28,20 +29,23 @@ fetch() {  # fetch <저장소 경로> [저장 이름]
     mv "$target.part" "$target"
 }
 
+# ONNX 변환본만 쓴다. 다른 파일을 받기 전에 먼저 확인한다.
+if [ ! -s "$DIR/onnx/model.onnx" ] && ! curl -sfIL -o /dev/null "$BASE/onnx/model.onnx"; then
+    echo "ONNX 변환본이 필요합니다: $SOURCE 에 onnx/model.onnx가 없습니다." >&2
+    echo "TEI_MODEL_ID에 ONNX로 변환한 저장소를 지정하세요." >&2
+    exit 1
+fi
+
 for file in config.json tokenizer.json tokenizer_config.json modules.json \
     config_sentence_transformers.json 1_Pooling/config.json; do
     fetch "$file"
 done
 fetch sentence_bert_config.json sentence_bert_config.json.orig
 
-# 가중치: ONNX 변환본이 있으면 그것을, 없으면 safetensors를 받는다.
-if [ -s "$DIR/onnx/model.onnx" ] || curl -sfIL -o /dev/null "$BASE/onnx/model.onnx"; then
-    fetch onnx/model.onnx
-    if [ -s "$DIR/onnx/model.onnx_data" ] || curl -sfIL -o /dev/null "$BASE/onnx/model.onnx_data"; then
-        fetch onnx/model.onnx_data
-    fi
-else
-    fetch model.safetensors
+# 가중치. 2GB가 넘는 가중치는 `model.onnx_data`에 따로 있다.
+fetch onnx/model.onnx
+if [ -s "$DIR/onnx/model.onnx_data" ] || curl -sfIL -o /dev/null "$BASE/onnx/model.onnx_data"; then
+    fetch onnx/model.onnx_data
 fi
 
 sed -E "s/\"max_seq_length\": *[0-9]+/\"max_seq_length\": $MAX_TOKENS/" \

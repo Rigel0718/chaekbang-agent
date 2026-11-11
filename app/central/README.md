@@ -42,10 +42,9 @@
 
 ### 실행 방식: ONNX 변환본
 
-- 서버는 같은 가중치의 ONNX 변환본(`TEI_MODEL_ID`, 기본 `Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx`)을 ONNX(ort) 실행기로 띄운다. 원본 저장소에는 ONNX 파일이 없어 느린 Candle 실행기로만 돌았다.
+- **서버는 ONNX 변환본으로만 띄운다.** 같은 가중치의 변환본(`TEI_MODEL_ID`, 기본 `Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx`)을 ONNX(ort) 실행기로 띄운다. 저장소에 `onnx/model.onnx`가 없으면 시작 스크립트가 이유를 출력하고 멈춘다. 원본 저장소에는 ONNX 파일이 없어 Candle 실행기로만 돌았고, 적재가 1.7배쯤 느렸다(아래 표). 설정을 잘못 넣어 모르는 사이에 느린 실행기로 도는 일을 막으려고 Candle로 띄우는 길은 두지 않는다.
 - 벡터와 함께 저장하는 이름은 원본 이름(`EMBEDDING_MODEL`, `dragonkue/snowflake-arctic-embed-l-v2.0-ko`) 그대로다. 같은 벡터가 나오므로(아래) 이미 만든 벡터를 다시 만들지 않는다. 시작 스크립트가 이 이름을 `--served-model-name`으로 넘기고 `check()`가 비교한다.
 - **같은 벡터인지는 `tests/embedding_live/test_reference_vectors.py`가 지킨다.** 원본(Candle)으로 만든 기준 벡터(`tests/embedding_live/data/reference_vectors.json`, 직접 쓴 문서 5개와 질의 2개)와 지금 서버의 벡터가 모두 코사인 0.999 이상이어야 한다. 2026-11-11 ONNX 변환본은 0.99998 이상이었다. 실행 방식이나 TEI 버전을 바꾸면 임베딩 서버를 띄우고 `uv run pytest tests/embedding_live`를 돌린다. 미달이면 같은 모델이 아니므로 `EMBEDDING_MODEL`을 새 이름으로 두고 다시 적재한다.
-- 원본으로 되돌리기: `.env`에 `TEI_MODEL_ID=dragonkue/snowflake-arctic-embed-l-v2.0-ko`를 두고 `docker compose --profile embedding up -d --force-recreate embedder`. 가중치(약 2.3GB)를 다시 받는다.
 
 **ONNX 실행기로 떴는지 확인하는 방법.** TEI 1.9.4는 시작 로그에 실행기 이름을 찍지 않는다(디버그 로그로도 안 나온다). 아래 셋으로 본다.
 
@@ -57,7 +56,7 @@
 2. 시작 로그에 `Could not start ORT backend` 오류와 Candle의 `Starting Bert model on Cpu`가 없다.
 3. 시작 로그의 묶음 한도가 `Backend does not support a batch size > 8`이다(Candle은 `> 4`). `/info`의 `max_batch_requests`도 8이다.
 
-**교체 전후 측정** (2026-11-11, CPU 8개·메모리 7.7GB, 입력 한도 512토큰, 표본 87권의 임베딩 텍스트 v1)
+**교체 전후 측정** (교체를 정할 때 잰 값. 2026-11-11, CPU 8개·메모리 7.7GB, 입력 한도 512토큰, 표본 87권의 임베딩 텍스트 v1)
 
 | | Candle (원본) | ONNX (변환본) |
 | --- | --- | --- |
@@ -76,11 +75,13 @@
 
 ### 모델 바꾸기
 
-1. `.env`의 `EMBEDDING_MODEL`(필요하면 `EMBEDDING_MAX_TOKENS`)을 바꾸고 임베딩 서버를 다시 띄운다.
-2. 질의 접두어가 있는 모델이면 `external/tei.py`의 `QUERY_PREFIXES`에 더한다. 모델 저장소 `config_sentence_transformers.json`의 `prompts`를 확인한다.
-3. `book_embeddings`의 벡터 열은 1024차원이다. 차원이 다른 모델은 마이그레이션이 먼저다.
-4. `scripts/embed_books.py --incremental`을 돌린다. 모델 이름이 다르면 새 벡터가 따로 저장되고 이전 모델의 벡터는 남는다.
-5. TEI가 아닌 서버나 API를 쓰려면 `Embedder`를 구현한 어댑터를 `external/`에 더한다.
+1. 모델을 ONNX로 변환해 Hugging Face에 올린다. 서버는 ONNX 변환본만 띄운다. 저장소에 `onnx/model.onnx`(2GB가 넘으면 `onnx/model.onnx_data`도), 토크나이저, `1_Pooling/config.json`, `sentence_bert_config.json`, `config_sentence_transformers.json`이 있어야 한다.
+2. `.env`의 `TEI_MODEL_ID`(변환본 저장소)와 `EMBEDDING_MODEL`(벡터와 함께 저장할 이름, 보통 원본 모델 이름), 필요하면 `EMBEDDING_MAX_TOKENS`를 바꾸고 `docker compose --profile embedding up -d --force-recreate embedder`로 다시 띄운다.
+3. 기준 벡터를 새 모델로 다시 만든다(`uv run python -m tests.embedding_live.reference --write`). 원본 실행기로 만들 수 없으면 변환할 때 sentence-transformers로 원본 벡터와 비교해 둔다.
+4. 질의 접두어가 있는 모델이면 `external/tei.py`의 `QUERY_PREFIXES`에 더한다. 모델 저장소 `config_sentence_transformers.json`의 `prompts`를 확인한다.
+5. `book_embeddings`의 벡터 열은 1024차원이다. 차원이 다른 모델은 마이그레이션이 먼저다.
+6. `scripts/embed_books.py --incremental`을 돌린다. 모델 이름이 다르면 새 벡터가 따로 저장되고 이전 모델의 벡터는 남는다.
+7. TEI가 아닌 서버나 API를 쓰려면 `Embedder`를 구현한 어댑터를 `external/`에 더한다.
 
 ## YES24 이용 조건
 
