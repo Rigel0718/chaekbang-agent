@@ -7,6 +7,8 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
+from app.library.schemas.guide import ClosureCreate
+from app.library.services import guide
 from tests.conftest import Tenant
 from tests.helpers import (
     add_holding,
@@ -63,6 +65,21 @@ async def test_borrow(kiosk_client: AsyncClient, session: AsyncSession, shelf: d
     )
     assert body["overdue"] is False
     assert (await fetch(session, "holdings", shelf["holding"]["id"]))["status"] == "on_loan"
+
+
+async def test_due_date_skips_closed_day(
+    kiosk_client: AsyncClient, session: AsyncSession, library_a: Tenant, shelf: dict
+) -> None:
+    """[circulation/loans] 대출하기 / 휴관일로 떨어진 반납 예정일
+
+    14일 뒤(11-19)가 임시 휴관이고 규칙은 기본값 next_open_day다. 운영 시간이 없어 11-20은 휴관이
+    아니다.
+    """
+    await guide.add_closure(session, library_a.id, ClosureCreate(closed_on=date(2026, 11, 19)))
+    body = (await _borrow(kiosk_client)).json()
+    assert body["due_on"] == "2026-11-20"
+    shown = (await guide.get_guide(session, library_a.id)).today.due_if_borrowed
+    assert shown is not None and shown.due_on.isoformat() == body["due_on"]
 
 
 async def test_due_date_uses_library_loan_days(

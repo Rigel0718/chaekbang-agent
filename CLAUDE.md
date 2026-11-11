@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**4주차: 검색과 안내** (다음 change: `add-library-guide`, 제안 전).
-AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 다음은 도서관 안내(`add-library-guide`), 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
+**4주차: 검색과 안내** (진행 중 change: `add-library-guide`, 구현 중).
+AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 지금은 도서관 안내(`add-library-guide`: 운영 시간·휴관일·대표 연락처·시설·이용 규칙, 코드가 계산하는 반납 예정일, `get_library_guide` tool)를 하고 있고, 다음은 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
 
 ## OpenSpec 작업 규칙
 
@@ -104,18 +104,18 @@ uv run ruff check . && uv run ruff format .  # 린트·포맷
 app/
 ├── main.py       # 조립: 라우터 포함, 기관 개별 기능 등록
 ├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
-├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘),
+├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘), holidays(공휴일),
 │                 # isbn(정규화·검증), text(공백·대소문자·자모 규칙, 저장용과 비교용), migrations, model_base, errors, tenancy, schemas(페이지)
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
 │   ├── models.py     # Book
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
 │   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에), (이후) 도서관 정보나루
 ├── library/      # 기관 공통
-│   ├── api/      # 라우터: auth, library, staff, library_books, catalog(찾기·자동완성), holdings, members,
-│   │             # loans, librarian
+│   ├── api/      # 라우터: auth, library, guide(안내·휴관일), staff, library_books, catalog(찾기·자동완성),
+│   │             # holdings, members, loans, librarian
 │   │             # (이후 curations, requests ...)
 │   ├── services/ # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용)
-│   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출)
+│   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출), guide(안내)
 │   ├── schemas/  # Pydantic 스키마
 │   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
 │   ├── recommendation/ # 서명·저자 찾기와 자동완성(lookup), 주제 검색(search), 소장 검사, 카드, 노출 기록.

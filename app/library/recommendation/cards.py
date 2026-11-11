@@ -26,10 +26,11 @@ def unique_recommendations(answer: Any) -> list[Any]:
     return kept
 
 
-async def _shelf(
-    session: AsyncSession, library_id: int, ids: Sequence[int]
-) -> dict[int, tuple[str | None, str | None]]:
-    """책마다 대출 가능한 사본을 먼저 고른 서가 위치와 청구기호."""
+Shelf = tuple[str | None, str | None]  # 서가 위치, 청구기호
+
+
+async def shelf_of(session: AsyncSession, library_id: int, ids: Sequence[int]) -> dict[int, Shelf]:
+    """책마다 대출 가능한 사본을 먼저 고른 서가 위치와 청구기호. 카드와 AI 사서 tool이 함께 쓴다."""
     rows = await session.execute(
         select(Holding.library_book_id, Holding.shelf_location, Holding.call_number)
         .where(
@@ -43,13 +44,13 @@ async def _shelf(
             Holding.accession_number,
         )
     )
-    shelf: dict[int, tuple[str | None, str | None]] = {}
+    shelf: dict[int, Shelf] = {}
     for book_id, location, call_number in rows:
         shelf.setdefault(book_id, (location, call_number))
     return shelf
 
 
-def _summary(candidate: Candidate, shelf: tuple[str | None, str | None]) -> dict[str, Any]:
+def _summary(candidate: Candidate, shelf: Shelf) -> dict[str, Any]:
     book = candidate.library_book
     official = book.book
     return {
@@ -74,7 +75,7 @@ async def build_summaries(
     session: AsyncSession, library_id: int, candidates: Sequence[Candidate]
 ) -> list[BookSummary]:
     """찾기 결과의 요약. 카드와 같은 서지·대출 상태이고 추천 이유는 없다."""
-    shelf = await _shelf(session, library_id, [c.library_book.id for c in candidates])
+    shelf = await shelf_of(session, library_id, [c.library_book.id for c in candidates])
     return [
         BookSummary(**_summary(c, shelf.get(c.library_book.id, (None, None)))) for c in candidates
     ]
@@ -85,7 +86,7 @@ async def build_cards(session: AsyncSession, library_id: int, answer: Any) -> li
     items = unique_recommendations(answer)
     ids = [item.library_book_id for item in items]
     candidates = await get_candidates(session, library_id, ids)
-    shelf = await _shelf(session, library_id, ids)
+    shelf = await shelf_of(session, library_id, ids)
     return [
         BookCard(
             **_summary(

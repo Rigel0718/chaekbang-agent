@@ -74,6 +74,7 @@ class SampleCatalog:
     children: set[int] = field(default_factory=set)
     official: set[int] = field(default_factory=set)  # 공식 서지에 이은 책
     barcode_only: set[int] = field(default_factory=set)  # 표본의 ISBN이 ISBN이 아닌 책
+    shelved: int | None = None  # 서가 위치를 따로 둔 책(안내 평가의 책 위치 시나리오)
 
     @property
     def recommendable(self) -> set[int]:

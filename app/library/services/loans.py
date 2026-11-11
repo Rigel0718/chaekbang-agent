@@ -3,7 +3,7 @@
 키오스크(이용자)와 관리자가 함께 쓰고, 이후 AI 사서의 create_loan·return_loan tool도 이 함수를 쓴다.
 """
 
-from datetime import date, timedelta
+from datetime import date
 from enum import StrEnum
 
 from sqlalchemy import Select, func, select
@@ -15,6 +15,7 @@ from app.core.errors import ConflictError, NotFoundError
 from app.library.models.catalog import Holding, HoldingStatus
 from app.library.models.circulation import Loan, Member
 from app.library.models.library import Library, LoanMode
+from app.library.services.guide import compute_due_date
 
 DESK_ONLY = "이 도서관의 대출·반납은 데스크에서 해 주세요"
 
@@ -48,7 +49,7 @@ async def _lock_holding(session: AsyncSession, library_id: int, accession_number
 async def create_loan(
     session: AsyncSession, library_id: int, accession_number: str, member_number: str
 ) -> Loan:
-    library = await _library_for_circulation(session, library_id)
+    await _library_for_circulation(session, library_id)
     holding = await _lock_holding(session, library_id, accession_number)
     member = await session.scalar(
         select(Member).where(Member.library_id == library_id, Member.member_number == member_number)
@@ -59,12 +60,14 @@ async def create_loan(
         raise ConflictError(f"지금 빌릴 수 없는 책입니다 (상태: {holding.status})")
 
     today = clock.today()
+    # 안내와 같은 계산: 기본 대출 기간을 더하고, 휴관일이면 기관의 반납일 규칙을 따른다
+    due = await compute_due_date(session, library_id, today)
     loan = Loan(
         library_id=library_id,
         holding_id=holding.id,
         member_id=member.id,
         loaned_on=today,
-        due_on=today + timedelta(days=library.default_loan_days),
+        due_on=due.due_on,
     )
     holding.status = HoldingStatus.ON_LOAN
     session.add(loan)
