@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**4주차: 검색과 안내** (진행 중 change: `add-library-guide`, 구현 중).
-AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 지금은 도서관 안내(`add-library-guide`: 운영 시간·휴관일·대표 연락처·시설·이용 규칙, 코드가 계산하는 반납 예정일, `get_library_guide` tool)를 하고 있고, 다음은 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
+**4주차: 검색과 안내** (진행 중 change 없음. 다음은 `add-related-books`).
+AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`), 도서관 안내(`add-library-guide`), 도서 임베딩 파이프라인(`add-book-embeddings`)은 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 다음은 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. `add-related-books`에서 임베딩 텍스트 구성(다 넣기 / 저자 빼기 / 소개만)을 버전별로 적재해 비교하고 기본 버전을 정한다. 근거 수치와 남은 질문(CPU 적재 속도)은 `openspec/changes/archive/2026-11-11-add-book-embeddings/design.md`의 Open Questions에 있다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
 
 ## OpenSpec 작업 규칙
 
@@ -52,13 +52,14 @@ AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search
 7. `add-librarian-agent` – AI 사서 v1, 조회 tool, 어린이 검사, 대화 API와 SSE, 추천 노출 기록
 8. `add-catalog-search` – 서명·저자 찾기(오타 허용)와 자동완성, 검색 API, 대화와 잇기(고른 책, 찾은 책 카드), 검색 평가
 9. `add-library-guide` – 도서관 안내 정보(운영 시간, 휴관일, 대표 연락처, 시설 위치, 이용 규칙), 반납 예정일 계산, 안내 tool
-10. `add-related-books` – 찾은 책과 비슷한 책(같은 저자, 분류, 소개 임베딩의 하이브리드 점수), 저자 구조화, pgvector
-11. `add-recommendation-evals` – 대화 추천 평가: 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서
-12. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
-13. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
-14. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
-15. `add-web-ui` – 이용자·관리자 화면
-16. `add-observability-deploy` – Langfuse, 배포, README, 데모
+10. `add-book-embeddings` – 도서 임베딩 파이프라인: pgvector, 로컬 임베딩 서버(TEI), 인코더 접점, 임베딩 텍스트, `book_embeddings`, 전체·증분 적재 CLI
+11. `add-related-books` – 찾은 책과 비슷한 책(같은 저자, 분류, 소개 임베딩의 하이브리드 점수), 저자 구조화
+12. `add-recommendation-evals` – 대화 추천 평가: 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서
+13. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
+14. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
+15. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
+16. `add-web-ui` – 이용자·관리자 화면
+17. `add-observability-deploy` – Langfuse, 배포, README, 데모
 
 **스펙 작성 규칙**
 
@@ -78,7 +79,8 @@ AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search
 ## 기술 스택
 
 - Python 3.12, FastAPI, Pydantic v2
-- PostgreSQL (+ fuzzystrmatch, 이후 pgvector), SQLAlchemy 2.0 (async), Alembic
+- PostgreSQL 16 (+ fuzzystrmatch, pgvector. 이미지 `pgvector/pgvector`), SQLAlchemy 2.0 (async), Alembic
+- 임베딩: 로컬 Text Embeddings Inference(TEI) 컨테이너, 기본 모델 `dragonkue/snowflake-arctic-embed-l-v2.0-ko`(1024차원, 입력 512토큰). 앱에는 torch를 넣지 않고 `httpx`로 부른다
 - 패키지 관리: uv / 린트·포맷: ruff / 테스트: pytest, pytest-asyncio, httpx
 - 로컬 실행: Docker Compose
 - LLM: OpenAI Responses API (기본 `gpt-6-luna`, 모델별 가격은 `app/core/config.py`의 `LLM_PRICES`)
@@ -93,6 +95,9 @@ uv run alembic revision --autogenerate -m "" # 마이그레이션 생성
 uv run python scripts/seed.py                # 시드 데이터
 uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움 (--limit, --retry-failed)
 uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표본 필요, LLM 없음)
+docker compose --profile embedding up -d embedder      # 임베딩 서버 (메모리 약 4GB, 처음에 모델 2.3GB 내려받기)
+uv run python scripts/embed_books.py --incremental     # 운영자: 도서 임베딩 적재 (--full, --library-id, --batch-size)
+uv run python scripts/embedding_search.py "질의" --sample  # 임베딩 확인: 표본 적재 후 상위 5권 (--library-id N)
 uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
@@ -109,17 +114,20 @@ app/
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
 │   ├── models.py     # Book
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
-│   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에), (이후) 도서관 정보나루
+│   ├── embedding.py  # 임베딩 인코더 접점(Embedder: 문서·질의 인코딩)
+│   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에), tei(임베딩 서버 어댑터), (이후) 도서관 정보나루
 ├── library/      # 기관 공통
 │   ├── api/      # 라우터: auth, library, guide(안내·휴관일), staff, library_books, catalog(찾기·자동완성),
 │   │             # holdings, members, loans, librarian
 │   │             # (이후 curations, requests ...)
 │   ├── services/ # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용)
-│   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출), guide(안내)
+│   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출), guide(안내),
+│   │             # embedding(기관 도서 임베딩)
 │   ├── schemas/  # Pydantic 스키마
 │   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
 │   ├── recommendation/ # 서명·저자 찾기와 자동완성(lookup), 주제 검색(search), 소장 검사, 카드, 노출 기록.
-│   │                   # 어린이 필터는 기능에 둔다. (이후) 비슷한 책, 임베딩
+│   │                   # 임베딩 텍스트(embedding_text)와 적재·유사도 조회(embeddings).
+│   │                   # 어린이 필터는 기능에 둔다. (이후) 비슷한 책
 │   ├── deps.py   # 현재 직원·기관, 역할
 │   ├── hooks.py  # 기관 개별 기능 접점
 │   └── enrichment_targets.py # 운영자 접점 구현, 처리 현황
@@ -131,6 +139,9 @@ app/
 migrations/       # Alembic
 scripts/seed.py   # 더미 데이터 (Faker)
 scripts/enrich_books.py  # 운영자용 공식 서지 채움
+scripts/embed_books.py   # 운영자용 도서 임베딩 적재
+scripts/embedding_search.py  # 임베딩 확인용 유사도 조회
+docker/embedder/start.sh # 임베딩 서버 시작(모델 받기, 입력 한도 낮추기)
 evals/            # 장서 가져오기 평가, (이후 단계) 추천·에이전트 평가 시나리오와 채점
 tests/
 docs/design.md

@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16
+    image: pgvector/pgvector:0.8.6-pg16-trixie
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-chaekbang}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chaekbang}
@@ -16,5 +16,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # 로컬 임베딩 서버(TEI). `docker compose --profile embedding up -d embedder`로만 뜬다.
+  # 처음 띄울 때 모델(약 2.3GB)을 볼륨에 내려받는다. 메모리를 약 4GB 쓴다.
+  embedder:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4
+    profiles: ["embedding"]
+    entrypoint: ["sh", "/start.sh"]
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-dragonkue/snowflake-arctic-embed-l-v2.0-ko}
+      EMBEDDING_MAX_TOKENS: ${EMBEDDING_MAX_TOKENS:-512}
+    ports:
+      - "127.0.0.1:${EMBEDDING_PORT:-8090}:80"
+    volumes:
+      - tei-data:/data
+      - ./docker/embedder/start.sh:/start.sh:ro
+
 volumes:
   pgdata:
+  tei-data:

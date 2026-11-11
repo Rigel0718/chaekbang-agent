@@ -29,6 +29,9 @@
 | `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest` |
 | `api/guide.py`, `services/guide.py` | `GET/PUT /library/guide`, `/library/closures`. 개관 여부(`day_status`), 반납 예정일(`due_date`, `compute_due_date`) |
 | `recommendation/kdc.py` | 청구기호 → KDC 주류 이름 |
+| `recommendation/embedding_text.py` | 임베딩 텍스트 `build_embedding_text`, `TEXT_VERSION`, 해시 |
+| `recommendation/embeddings.py` | 임베딩 적재 `run_embedding`(전체·증분), 기관 범위 유사도 조회 `similar_books` |
+| `models/embedding.py` | `BookEmbedding`(기관 도서·모델·텍스트 버전마다 벡터 하나) |
 | `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 검색 tool을 만드는 `search_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
 | `privacy.py` | 개인정보 가리기 |
@@ -74,6 +77,19 @@
 - 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
 - `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
 - tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장 일부가 들어 있을 수 있어서다.
+
+## 도서 임베딩
+
+- 벡터는 기관 도서 기준이다(`book_embeddings`). ISBN 없는 책도 대상이고, 다른 기관 데이터 테이블처럼 `library_id`와 복합 외래 키로 나눈다. 기관 도서를 지우면 벡터도 지워진다(다시 만들 수 있는 값).
+- 대상은 추천 가능한 책이다(`search.py`의 추천 가능 조건). 제적·분실·파손 사본만 남은 책은 인코딩하지 않는다.
+- 임베딩 텍스트는 `embedding_text.py` 한 곳에서 만든다. 표시 값의 서명(부제), 저자, 분류(외부 분류 원문, KDC 주류 이름), 소개 순이고 빈 값은 건너뛴다. 소개가 마지막인 것은 입력 한도에서 잘릴 때 앞의 값이 남게 하기 위해서다. **구성을 바꾸면 `TEXT_VERSION`을 올린다.** 이 모듈은 DB, 인코더, 설정을 import하지 않는다.
+- 텍스트 원문은 저장하지 않는다. 벡터, 모델 이름, 텍스트 버전, 텍스트의 SHA-256만 둔다.
+- 증분 적재는 현재 모델·텍스트 버전의 벡터가 없거나 해시가 다른 책만 인코딩한다. 공식 서지 채움으로 소개가 생기면 해시가 달라져 다음 증분이 잡는다. 해시는 자르기 전 전체 텍스트의 값이라, `EMBEDDING_MAX_TOKENS`를 바꾼 뒤에는 `--full`로 다시 적재한다.
+- 인코딩 호출 동안 트랜잭션을 잡지 않고 배치마다 커밋한다. 중간에 멈추면 끝난 배치는 남고 증분으로 이어 한다.
+- 적재는 운영자가 `scripts/embed_books.py`로 돌린다. 서버 실행 중 자동 적재는 없다. 파생 값만 쓰고 기관이 정한 값은 바꾸지 않으며 훅을 부르지 않는다.
+- `similar_books`는 그 기관의 추천 가능한 책 중에서, 조회에 쓴 인코더의 모델 이름과 현재 텍스트 버전의 벡터만 비교한다. 옛 버전이나 제적된 책의 벡터가 남아 있어도 결과에 섞이지 않는다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
+- 벡터 인덱스는 없다. 5,000권 순차 탐색이 약 50ms다.
+- CPU에서 한 권에 약 2.6초가 걸린다(표본 79권 206초). 전체 적재는 드물게, 평소에는 증분으로 돌린다.
 
 ## 도서관 안내
 

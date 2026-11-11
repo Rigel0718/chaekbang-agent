@@ -8,6 +8,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import clock
@@ -21,6 +22,7 @@ from tests.helpers import (
     add_library_book,
     add_member,
     assert_rejected,
+    assert_sql_rejected,
     insert,
     make_isbn,
 )
@@ -45,6 +47,7 @@ ALL_TABLES = {
     "library_opening_hours",
     "library_closures",
     "library_guide_entries",
+    "book_embeddings",
 }
 
 
@@ -60,11 +63,12 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 19
+    assert len(ALL_TABLES) == 20
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
     assert "fuzzystrmatch" in extensions
+    assert "vector" in extensions
     assert JAMO_FUNCTION in functions
 
 
@@ -331,4 +335,59 @@ async def test_guide_tables_reject_bad_rows(session: AsyncSession, library_a: Te
         library_id=library_a.id,
         closed_on=date(2026, 11, 20),
         match="uq_library_closures_library_id",
+    )
+
+
+_EMBEDDING_INSERT = (
+    "INSERT INTO book_embeddings"
+    " (library_id, library_book_id, model_name, text_version, embedding, content_hash)"
+    " VALUES (:library_id, :library_book_id, :model_name, 1, (:embedding)::text::vector, :hash)"
+)
+
+
+def _vector_text(dim: int) -> str:
+    return "[" + ",".join(["0.5"] * dim) + "]"
+
+
+async def test_embedding_table_rejects_bad_rows(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 임베딩 테이블의 저장 계층 규칙"""
+    mine = await add_library_book(session, library_a.id)
+    row = {
+        "library_id": library_a.id,
+        "library_book_id": mine["id"],
+        "model_name": "fake",
+        "hash": "0" * 64,
+    }
+    await session.execute(text(_EMBEDDING_INSERT), {**row, "embedding": _vector_text(1024)})
+    await assert_sql_rejected(
+        session,
+        _EMBEDDING_INSERT,
+        match="uq_book_embeddings_library_book_model_version",
+        **row,
+        embedding=_vector_text(1024),
+    )
+    await assert_sql_rejected(
+        session,
+        _EMBEDDING_INSERT,
+        match="expected 1024 dimensions",
+        error=DBAPIError,
+        **{**row, "model_name": "other"},
+        embedding=_vector_text(3),
+    )
+
+
+async def test_embedding_rejects_library_book_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 도서로 임베딩 직접 저장"""
+    theirs = await add_library_book(session, library_b.id)
+    await assert_sql_rejected(
+        session,
+        _EMBEDDING_INSERT,
+        match="fk_book_embeddings_library_id_library_book_id",
+        library_id=library_a.id,
+        library_book_id=theirs["id"],
+        model_name="fake",
+        hash="0" * 64,
+        embedding=_vector_text(1024),
     )
