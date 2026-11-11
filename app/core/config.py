@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     librarian_max_turns: int = 20  # 한 세션의 턴 수
     librarian_daily_run_limit: int = 500  # 기관별 하루 실행 수 (기관 시간대 기준)
 
+    # 로컬 임베딩 서버(TEI). 꺼져 있어도 서버와 테스트는 돌고, 임베딩 적재만 멈춘다.
+    embedding_base_url: str = "http://localhost:8090"
+    embedding_model: str = "dragonkue/snowflake-arctic-embed-l-v2.0-ko"
+    embedding_dim: int = 1024  # book_embeddings의 벡터 열 차원과 같아야 한다
+    embedding_max_tokens: int = 512  # 넘는 입력은 앞부분만 인코딩한다. 바꾸면 --full로 다시 적재
+    embedding_batch_size: int = 32  # TEI의 클라이언트 배치 한도(기본 32)를 넘지 않게 둔다
+    embedding_timeout_seconds: float = 600.0  # CPU에서 512토큰 32권에 2분쯤 걸린다
+
 
 @lru_cache
 def get_settings() -> Settings:

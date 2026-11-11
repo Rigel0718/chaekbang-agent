@@ -2,6 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -54,6 +55,8 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    # autogenerate가 DB의 vector 열을 알아보게 한다
+    connection.dialect.ischema_names["vector"] = Vector
     context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():

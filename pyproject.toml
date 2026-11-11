@@ -10,8 +10,10 @@ dependencies = [
     "faker>=40.44.0",
     "fastapi>=0.162.0",
     "holidays==0.107",
+    "httpx==0.28.1",
     "openai>=3.46.0",
     "openpyxl>=3.1.5",
+    "pgvector==0.5.1",
     "pydantic-settings>=2.16.2",
     "python-multipart>=0.0.33",
     "sqlalchemy[asyncio]>=2.1.6",
@@ -39,4 +41,7 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = ["sample: YES24 표본(evals/librarian/data/)이 있어야 도는 테스트. 없으면 건너뛴다"]
+markers = [
+    "sample: YES24 표본(evals/librarian/data/)이 있어야 도는 테스트. 없으면 건너뛴다",
+    "tei: 로컬 임베딩 서버가 떠 있어야 도는 테스트. 없으면 건너뛴다",
+]
