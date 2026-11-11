@@ -19,6 +19,7 @@ from app.features.children.tools import children_extension
 from app.library.api import (
     auth,
     book_enrichment,
+    catalog,
     holding_imports,
     holdings,
     librarian,
@@ -55,6 +56,7 @@ app.include_router(auth.router)
 app.include_router(library.router)
 app.include_router(staff.router)
 app.include_router(library_books.router)
+app.include_router(catalog.router)
 app.include_router(children_router)
 app.include_router(book_enrichment.router)
 app.include_router(holdings.router)

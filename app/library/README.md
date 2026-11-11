@@ -9,6 +9,7 @@
 - 사본(`holdings`), 회원, 대출
 - 엑셀·CSV 장서 가져오기
 - 서지 채움 처리 현황
+- 서명·저자 찾기와 자동완성(LLM 없음)
 - AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
 
 ## 구성
@@ -23,11 +24,12 @@
 | `deps.py` | 현재 직원·기관, 역할 |
 | `hooks.py` | 기관 개별 기능의 접점 |
 | `enrichment_targets.py` | 운영자 층 접점 구현, 처리 현황 |
-| `recommendation/` | `search`(추천 가능 조건, 키워드 검색), `checks`(소장 검사), `cards`(카드), `events`(노출 기록) |
-| `tools.py` | AI 사서의 조회 tool: `search_collection`, `get_book_detail`, 범위를 좁힌 검색 tool을 만드는 `search_tool` |
+| `recommendation/` | `search`(추천 가능 조건, 키워드 검색), `lookup`(서명·저자 찾기, 자동완성, 문장 속 서명, 고른 책 확인), `checks`(소장 검사), `cards`(요약과 카드), `events`(노출 기록) |
+| `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest` |
+| `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, 범위를 좁힌 검색 tool을 만드는 `search_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
 | `privacy.py` | 개인정보 가리기 |
-| `services/chat.py` | 대화 순서: 확인, 가리기, 실행, 카드, 저장, 노출 기록, 끝난 세션 삭제 |
+| `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장, 노출 기록, 끝난 세션 삭제 |
 
 ## 규칙
 
@@ -36,6 +38,8 @@
 - 기관은 요청 값이 아니라 인증 토큰으로 정한다. 다른 기관의 데이터는 404다 (`app/core/tenancy.py`의 `get_owned`).
 - 표시 값은 `LibraryBook.shown`으로 읽는다. 공식 값이 먼저이고, 비어 있으면 기관 값이다.
 - 공식 서지에 연결된 기관 도서는 ISBN만 고칠 수 있다.
+- 서명·저자 찾기 키(`title_jamo_starts`, `author_jamo_starts`)는 DB가 계산하는 생성 열이다. 코드에서 쓰지 않는다. 규칙은 `app/core/text.py`의 `jamo_starts`이고 SQL 함수 `ko_jamo_starts`와 같아야 한다.
+- 대화의 책 표시(`[고른 책: …]`, `[찾은 책: …]`)는 `chat_messages.note`에 두고 LLM에게는 안내(`Instruction`)로 보낸다. 이용자 문장에 섞으면 어린이 요청 판단이 서명의 낱말을 읽는다.
 
 ## 공식 서지 연결
 

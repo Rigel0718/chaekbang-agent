@@ -281,6 +281,24 @@ async def test_check_context(session: AsyncSession, library_a: Tenant) -> None:
     assert ctx.tool_names == ("echo",)
 
 
+async def test_instruction_history_is_not_user_text(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """history의 코드 안내는 LLM에 가지만 검사의 이용자 문장에는 들어가지 않는다."""
+    check = RejectIds(set())
+    llm = FakeLlm([answer_turn()])
+    await collect(
+        session,
+        llm,
+        profile(final_checks=(check,)),
+        library_a.id,
+        user_text="비슷한 거 있어요?",
+        history=[Instruction("[고른 책: #5 법 만드는 아이들]")],
+    )
+    assert check.seen[0].user_texts == ("비슷한 거 있어요?",)
+    assert Instruction("[고른 책: #5 법 만드는 아이들]") in llm.requests[0]["messages"]
+
+
 async def test_failing_check_never_lets_answer_out(
     session: AsyncSession, library_a: Tenant
 ) -> None:

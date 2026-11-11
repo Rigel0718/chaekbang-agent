@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**4주차: 추천 평가** (다음 change: `add-recommendation-evals`, 제안 전).
-AI 사서 v1(`add-librarian-agent`)은 끝났다. 평가 세트를 늘리고, 어린이 지표를 책 분류와 요청 판단으로 나누고, 임베딩 검색과 비교한다. 넘겨받은 항목은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
+**4주차: 검색과 안내** (다음 change: `add-library-guide`, 제안 전).
+AI 사서 v1(`add-librarian-agent`)과 서명·저자 찾기(`add-catalog-search`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 다음은 도서관 안내(`add-library-guide`), 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
 
 ## OpenSpec 작업 규칙
 
@@ -50,12 +50,15 @@ AI 사서 v1(`add-librarian-agent`)은 끝났다. 평가 세트를 늘리고, �
 5. `refactor-layer-packages` – 운영자·기관 공통·기관 개별 패키지 분리, 어린이 기능 분리
 6. `add-agent-runner` – 공통 실행기, tool 계약, 프로필, LLM 접점, 실행 기록, 최종 검사 자리
 7. `add-librarian-agent` – AI 사서 v1, 조회 tool, 어린이 검사, 대화 API와 SSE, 추천 노출 기록
-8. `add-recommendation-evals` – 평가 세트, 규칙 검사, LLM 채점, 임베딩 검색 비교
-9. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
-10. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
-11. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
-12. `add-web-ui` – 이용자·관리자 화면
-13. `add-observability-deploy` – Langfuse, 배포, README, 데모
+8. `add-catalog-search` – 서명·저자 찾기(오타 허용)와 자동완성, 검색 API, 대화와 잇기(고른 책, 찾은 책 카드), 검색 평가
+9. `add-library-guide` – 도서관 안내 정보(운영 시간, 휴관일, 대표 연락처, 시설 위치, 이용 규칙), 반납 예정일 계산, 안내 tool
+10. `add-related-books` – 찾은 책과 비슷한 책(같은 저자, 분류, 소개 임베딩의 하이브리드 점수), 저자 구조화, pgvector
+11. `add-recommendation-evals` – 대화 추천 평가: 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서
+12. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
+13. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
+14. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
+15. `add-web-ui` – 이용자·관리자 화면
+16. `add-observability-deploy` – Langfuse, 배포, README, 데모
 
 **스펙 작성 규칙**
 
@@ -75,7 +78,7 @@ AI 사서 v1(`add-librarian-agent`)은 끝났다. 평가 세트를 늘리고, �
 ## 기술 스택
 
 - Python 3.12, FastAPI, Pydantic v2
-- PostgreSQL (+ pgvector), SQLAlchemy 2.0 (async), Alembic
+- PostgreSQL (+ fuzzystrmatch, 이후 pgvector), SQLAlchemy 2.0 (async), Alembic
 - 패키지 관리: uv / 린트·포맷: ruff / 테스트: pytest, pytest-asyncio, httpx
 - 로컬 실행: Docker Compose
 - LLM: OpenAI Responses API (기본 `gpt-6-luna`, 모델별 가격은 `app/core/config.py`의 `LLM_PRICES`)
@@ -89,6 +92,7 @@ uv run alembic upgrade head                  # 마이그레이션 적용
 uv run alembic revision --autogenerate -m "" # 마이그레이션 생성
 uv run python scripts/seed.py                # 시드 데이터
 uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움 (--limit, --retry-failed)
+uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표본 필요, LLM 없음)
 uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
@@ -101,19 +105,21 @@ app/
 ├── main.py       # 조립: 라우터 포함, 기관 개별 기능 등록
 ├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
 ├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘),
-│                 # isbn(정규화·검증), text(공백·대소문자 규칙, 저장용과 비교용), migrations, model_base, errors, tenancy, schemas(페이지)
+│                 # isbn(정규화·검증), text(공백·대소문자·자모 규칙, 저장용과 비교용), migrations, model_base, errors, tenancy, schemas(페이지)
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
 │   ├── models.py     # Book
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
 │   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에), (이후) 도서관 정보나루
 ├── library/      # 기관 공통
-│   ├── api/      # 라우터: auth, library, staff, library_books, holdings, members, loans
+│   ├── api/      # 라우터: auth, library, staff, library_books, catalog(찾기·자동완성), holdings, members,
+│   │             # loans, librarian
 │   │             # (이후 curations, requests ...)
 │   ├── services/ # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용)
 │   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출)
 │   ├── schemas/  # Pydantic 스키마
 │   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
-│   ├── recommendation/ # (이후 단계) 후보 검색(키워드·임베딩), 소장 검사, 노출 기록. 어린이 필터는 기능에 둔다
+│   ├── recommendation/ # 서명·저자 찾기와 자동완성(lookup), 주제 검색(search), 소장 검사, 카드, 노출 기록.
+│   │                   # 어린이 필터는 기능에 둔다. (이후) 비슷한 책, 임베딩
 │   ├── deps.py   # 현재 직원·기관, 역할
 │   ├── hooks.py  # 기관 개별 기능 접점
 │   └── enrichment_targets.py # 운영자 접점 구현, 처리 현황

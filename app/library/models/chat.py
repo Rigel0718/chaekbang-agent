@@ -57,6 +57,8 @@ class ChatMessage(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     role: Mapped[ChatRole] = mapped_column(str_enum(ChatRole, "chat_role"))
     content: Mapped[str] = mapped_column(Text)
+    # 코드가 쓰는 책 표시(`[고른 책: #12 데미안]`). 이용자 문장과 따로 두어 판단 규칙에 섞지 않는다
+    note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

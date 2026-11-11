@@ -7,14 +7,23 @@ from datetime import date
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import clock
 from app.core.migrations import alembic_config
+from app.core.text import JAMO_FUNCTION, jamo_starts
 from app.models import SHARED_TABLES, TENANT_TABLES, Base
 from tests.conftest import Tenant
-from tests.helpers import add_holding, add_library_book, add_member, assert_rejected, insert
+from tests.helpers import (
+    add_book,
+    add_holding,
+    add_library_book,
+    add_member,
+    assert_rejected,
+    insert,
+    make_isbn,
+)
 
 ALL_TABLES = {
     "libraries",
@@ -48,6 +57,38 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     """
     assert await _table_names(engine) == ALL_TABLES
     assert len(ALL_TABLES) == 15
+    async with engine.connect() as conn:
+        extensions = set(await conn.scalars(text("select extname from pg_extension")))
+        functions = set(await conn.scalars(text("select proname from pg_proc")))
+    assert "fuzzystrmatch" in extensions
+    assert JAMO_FUNCTION in functions
+
+
+async def test_lookup_keys_follow_title(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 찾기 키 열의 자동 계산"""
+    book = await add_library_book(session, library_a.id, None, title="데미안", author="헤세")
+    assert book["title_jamo_starts"] == jamo_starts("데미안")
+    await session.execute(
+        text("UPDATE library_books SET title = '최소한의 한국사' WHERE id = :id"),
+        {"id": book["id"]},
+    )
+    changed = await session.scalar(
+        text("SELECT title_jamo_starts FROM library_books WHERE id = :id"), {"id": book["id"]}
+    )
+    assert changed == jamo_starts("최소한의 한국사")
+    official = await add_book(session, make_isbn(77), title="싯다르타", author="헤르만 헤세")
+    assert official["author_jamo_starts"] == jamo_starts("헤르만 헤세")
+
+
+async def test_chat_messages_note_column(engine: AsyncEngine) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 대화 메시지의 책 표시 칸"""
+
+    def columns(sync_conn):
+        return {c["name"]: c for c in inspect(sync_conn).get_columns("chat_messages")}
+
+    async with engine.connect() as conn:
+        found = await conn.run_sync(columns)
+    assert found["note"]["nullable"] is True
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:

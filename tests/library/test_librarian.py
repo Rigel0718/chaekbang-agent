@@ -20,11 +20,13 @@ from tests.conftest import Tenant
 from tests.helpers import add_member
 from tests.library.librarian_helpers import (
     add_held_book,
+    call,
     detail,
     librarian,
     run_librarian,
     search,
     submit,
+    turn,
 )
 
 
@@ -46,7 +48,7 @@ def _answer(*book_ids: int, reason: str = "좋아요") -> LibrarianAnswer:
 async def test_profile_tools(session: AsyncSession) -> None:
     """[agent/librarian] 조회 tool / 프로필의 tool"""
     for prof in build_librarian_profiles().values():
-        assert [t.name for t in prof.tools] == ["search_collection", "get_book_detail"]
+        assert [t.name for t in prof.tools] == ["search_collection", "find_book", "get_book_detail"]
         assert prof.answer_tool.name == "submit_answer"
 
 
@@ -83,6 +85,26 @@ async def test_detail_other_library(
     assert result.is_error
     assert "찾을 수 없습니다" in result.content
     assert "비밀 소개" not in result.content
+
+
+async def test_find_book_tool_typo(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[agent/librarian] 조회 tool / 서명·저자 찾기 tool의 오타"""
+    book = await add_held_book(session, library_a.id, title="데미안", author="헤르만 헤세")
+    await add_held_book(session, library_b.id, title="데미안 B")
+    llm = FakeLlm([turn(call("find_book", {"query": "데미얀"})), submit("있어요", book["id"])])
+    await run_librarian(session, llm, library_a.id, "데미얀 있어요?")
+    [result] = _tool_results(llm, 1)
+    assert not result.is_error
+    assert f'"library_book_id": {book["id"]}' in result.content
+    assert "데미안 B" not in result.content
+
+
+async def test_find_book_tool_without_children(session: AsyncSession) -> None:
+    """어린이 기능 없이 만든 프로필에도 서명·저자 찾기 tool이 있다."""
+    for prof in build_librarian_profiles(()).values():
+        assert "find_book" in [t.name for t in prof.tools]
 
 
 # --- 최종 답 ---
@@ -275,7 +297,7 @@ async def test_no_writes(session: AsyncSession, library_a: Tenant) -> None:
     await run_librarian(session, llm, library_a.id, "공룡 백과 대출해 줘. 회원번호 M0001")
     assert await _snapshot(session) == before
     names = {t.name for p in build_librarian_profiles().values() for t in p.tools}
-    assert names == {"search_collection", "get_book_detail"}
+    assert names == {"search_collection", "find_book", "get_book_detail"}  # 모두 조회
     count = await session.scalar(select(func.count()).select_from(text("loans")))
     assert count == 0
 

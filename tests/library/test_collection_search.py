@@ -1,7 +1,6 @@
 """[catalog/collection-search] 소장 도서 후보 검색."""
 
 from datetime import timedelta
-from itertools import count
 
 import pytest
 from sqlalchemy import select
@@ -16,41 +15,7 @@ from app.library.recommendation.search import (
     search_collection,
 )
 from tests.conftest import Tenant
-from tests.helpers import add_book, add_holding, add_library_book, make_isbn
-
-_numbers = count(1)
-
-
-async def add_held_book(
-    session: AsyncSession,
-    library_id: int,
-    *statuses: str,
-    isbn: str | None = None,
-    official: dict | None = None,
-    synced: list | None = None,
-    **values,
-):
-    """기관 도서와 상태별 사본을 만든다. official을 주면 공식 서지를 만들어 연결한다."""
-    book_id = None
-    if official is not None:
-        isbn = isbn or make_isbn(next(_numbers) + 500)
-        book = await add_book(session, isbn, **{"title": values.get("title", "공식"), **official})
-        book_id = book["id"]
-    values.setdefault("title", "테스트 도서")
-    library_book = await add_library_book(session, library_id, isbn, book_id=book_id, **values)
-    for i, status in enumerate(statuses or ("available",)):
-        extra = {}
-        if synced is not None:
-            extra["last_synced_at"] = synced[i]
-        await add_holding(
-            session,
-            library_id,
-            library_book["id"],
-            f"AC{next(_numbers):05d}",
-            status=status,
-            **extra,
-        )
-    return library_book
+from tests.helpers import add_held_book, add_library_book
 
 
 async def _ids(session: AsyncSession, library_id: int, keywords, **kw) -> list[int]:

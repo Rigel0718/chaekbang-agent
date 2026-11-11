@@ -49,9 +49,18 @@ async def _encode(events: AsyncIterator[chat.ServerEvent]) -> AsyncIterator[str]
 async def post_message(
     data: MessageRequest, staff: CurrentStaff, session: Session, request: Request, llm: Llm
 ) -> StreamingResponse:
-    """SSE로 `session`, `status`, `answer`, `done` 사건을 보낸다. 세션 id가 없으면 새 대화다."""
+    """SSE로 `session`, `found`(있으면), `status`, `answer`, `done` 사건을 보낸다.
+
+    세션 id가 없으면 새 대화다. 고른 책만 보내면 `session`, `found`, `done`만 나가고
+    LLM을 부르지 않는다.
+    """
     prepared = await chat.prepare_turn(
-        session, staff.library_id, data.session_id, data.message, profile_name=PROFILE_NAME
+        session,
+        staff.library_id,
+        data.session_id,
+        data.message,
+        profile_name=PROFILE_NAME,
+        selected_id=data.selected_library_book_id,
     )
     profile = request.app.state.librarian_profiles[prepared.loan_mode]
     return StreamingResponse(

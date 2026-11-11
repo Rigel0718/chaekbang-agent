@@ -5,6 +5,11 @@
 
 대화는 진행 중에만 둔다. 끝난 세션은 서버의 주기 작업과 요청 처리 때 지운다. `chat_messages`에는
 가린 이용자 문장과 최종 답만 두고, tool 입력과 결과, 검사를 통과하지 못한 답은 저장하지 않는다.
+
+검색과 잇기: 자동완성에서 고른 책(`selected_library_book_id`)이나 문장 속 서명으로 찾은 책은
+LLM보다 먼저 `found` 사건으로 보낸다. 고른 책만 보낸 턴은 LLM을 부르지 않는다. 책 표시
+(`[고른 책: #12 데미안]`)는 이용자 문장과 따로 `note`에 두고 LLM에게는 코드의 안내로 보낸다.
+서명의 "아이" 같은 낱말이 어린이 요청 판단에 섞이지 않게 하기 위해서다.
 """
 
 import asyncio
@@ -21,7 +26,7 @@ import anyio
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.llm import AssistantMessage, LlmClient, UserMessage
+from app.agent.llm import AssistantMessage, Instruction, LlmClient, UserMessage
 from app.agent.models import AgentRun
 from app.agent.profile import Profile
 from app.agent.runner import AnswerEvent, DoneEvent, StatusEvent, run
@@ -31,8 +36,11 @@ from app.core.errors import ConflictError, LimitExceededError, NotFoundError
 from app.library.models.chat import ChatMessage, ChatRole, ChatSession
 from app.library.models.library import Library, LoanMode
 from app.library.privacy import mask_personal
-from app.library.recommendation.cards import build_cards
+from app.library.recommendation.cards import build_cards, build_summaries
 from app.library.recommendation.events import add_events
+from app.library.recommendation.lookup import found_in_text, get_findable
+from app.library.recommendation.search import Candidate
+from app.library.schemas.catalog import BookSummary
 from app.library.schemas.librarian import AnswerPayload, BookCard
 
 logger = logging.getLogger(__name__)
@@ -40,11 +48,16 @@ logger = logging.getLogger(__name__)
 # 서버가 죽어 처리 중 표시가 남아도 이 시간이 지나면 다시 쓸 수 있다.
 BUSY_TIMEOUT = timedelta(minutes=3)
 BOOKS_NOTE = "[추천한 책: {books}]"
+SELECTED_NOTE = "[고른 책: {books}]"
+FOUND_NOTE = "[찾은 책: {books}]"
+SELECTED_STATUS = "selected"  # 고른 책만 보낸 턴의 done 상태. 실행이 없어 run_id는 null이다
+
+History = tuple[UserMessage | AssistantMessage | Instruction, ...]
 
 
 @dataclass(frozen=True)
 class ServerEvent:
-    name: str  # session, status, answer, done
+    name: str  # session, found, status, answer, done
     data: dict[str, Any]
 
 
@@ -53,8 +66,10 @@ class PreparedTurn:
     library_id: int
     session_id: uuid.UUID
     loan_mode: LoanMode
-    user_text: str  # 가린 문장
-    history: tuple[UserMessage | AssistantMessage, ...]
+    user_text: str | None  # 가린 문장. 고른 책만 보낸 턴은 None이고 LLM을 부르지 않는다
+    history: History
+    note: str | None = None  # 이번 턴의 책 표시. LLM에게는 이용자 문장 바로 앞의 안내로 간다
+    found: tuple[BookSummary, ...] = ()  # 고른 책이나 문장 속 서명으로 찾은 책
 
 
 def _idle() -> timedelta:
@@ -142,31 +157,45 @@ async def _claim(session: AsyncSession, library_id: int, session_id: uuid.UUID) 
         raise ConflictError("이전 질문에 답하는 중입니다. 답이 나온 뒤에 다시 보내 주세요")
 
 
-async def _history(
-    session: AsyncSession, library_id: int, session_id: uuid.UUID
-) -> tuple[UserMessage | AssistantMessage, ...]:
+async def _history(session: AsyncSession, library_id: int, session_id: uuid.UUID) -> History:
+    """이전 대화. 책 표시는 이용자 문장 앞의 안내(`Instruction`)가 된다."""
     rows = await session.execute(
-        select(ChatMessage.role, ChatMessage.content)
+        select(ChatMessage.role, ChatMessage.content, ChatMessage.note)
         .where(ChatMessage.library_id == library_id, ChatMessage.session_id == session_id)
         .order_by(ChatMessage.id)
     )
-    return tuple(
-        UserMessage(content) if role == ChatRole.USER else AssistantMessage(content)
-        for role, content in rows
-    )
+    messages: list[UserMessage | AssistantMessage | Instruction] = []
+    for role, content, note in rows:
+        if note:
+            messages.append(Instruction(note))
+        if role == ChatRole.ASSISTANT:
+            messages.append(AssistantMessage(content))
+        elif content:
+            messages.append(UserMessage(content))
+    return tuple(messages)
+
+
+def _books_note(template: str, books: Sequence[Candidate]) -> str:
+    listed = ", ".join(f"#{c.library_book.id} {c.library_book.shown('title')}" for c in books)
+    return template.format(books=listed)
 
 
 async def prepare_turn(
     session: AsyncSession,
     library_id: int,
     session_id: uuid.UUID | None,
-    text: str,
+    text: str | None,
     *,
     profile_name: str,
+    selected_id: int | None = None,
 ) -> PreparedTurn:
-    """응답을 시작하기 전의 확인. 실패하면 LLM은 호출되지 않는다."""
+    """응답을 시작하기 전의 확인. 실패하면 LLM은 호출되지 않고 세션과 메시지도 만들지 않는다."""
+    if text is None and selected_id is None:
+        raise ValueError("문장이나 고른 책이 있어야 한다")
     await purge_expired(session, library_id)
-    await _check_daily_limit(session, library_id, profile_name)
+    selected = await get_findable(session, library_id, selected_id) if selected_id else None
+    if text is not None:
+        await _check_daily_limit(session, library_id, profile_name)
     loan_mode = await session.scalar(select(Library.loan_mode).where(Library.id == library_id))
     assert loan_mode is not None
     if session_id is None:
@@ -179,12 +208,24 @@ async def prepare_turn(
             raise ConflictError("이 대화의 질문 수 한도에 이르렀습니다. 새 대화를 시작하세요")
     await _claim(session, library_id, chat.id)
     history = await _history(session, library_id, chat.id)
-    masked = await mask_personal(session, library_id, text)
+    masked = await mask_personal(session, library_id, text) if text is not None else None
+    if selected is not None:
+        books, note = [selected], _books_note(SELECTED_NOTE, [selected])
+    else:
+        books = await found_in_text(session, library_id, masked or "")
+        note = _books_note(FOUND_NOTE, books) if books else None
+    found = tuple(await build_summaries(session, library_id, books))
     session.add(
-        ChatMessage(library_id=library_id, session_id=chat.id, role=ChatRole.USER, content=masked)
+        ChatMessage(
+            library_id=library_id,
+            session_id=chat.id,
+            role=ChatRole.USER,
+            content=masked or "",
+            note=note,
+        )
     )
     await session.commit()
-    return PreparedTurn(library_id, chat.id, loan_mode, masked, history)
+    return PreparedTurn(library_id, chat.id, loan_mode, masked, history, note, found)
 
 
 def _answer_text(message: str, cards: Sequence[BookCard]) -> str:
@@ -214,7 +255,13 @@ async def _release(session: AsyncSession, prepared: PreparedTurn) -> None:
 async def _finish(
     session: AsyncSession, prepared: PreparedTurn, answer: Any, done: DoneEvent
 ) -> list[ServerEvent]:
-    cards = await build_cards(session, prepared.library_id, answer)
+    shown = {book.library_book_id for book in prepared.found}
+    # 찾은 책은 화면에 이미 있다. 답에 다시 넣었으면 카드와 노출 기록에서 뺀다(위반이 아니라 중복)
+    cards = [
+        c
+        for c in await build_cards(session, prepared.library_id, answer)
+        if c.library_book_id not in shown
+    ]
     session.add(
         ChatMessage(
             library_id=prepared.library_id,
@@ -237,20 +284,36 @@ async def _finish(
     ]
 
 
+def _found_event(prepared: PreparedTurn) -> ServerEvent:
+    return ServerEvent("found", {"books": [b.model_dump(mode="json") for b in prepared.found]})
+
+
 async def stream_turn(
     session: AsyncSession, llm: LlmClient, profile: Profile, prepared: PreparedTurn
 ) -> AsyncIterator[ServerEvent]:
     """진행 사건은 바로 보내고, 답은 검사 뒤에 카드와 함께 보낸다. 끝나거나 끊기면 표시를 푼다."""
+    if prepared.user_text is None:
+        try:
+            yield ServerEvent("session", {"session_id": str(prepared.session_id)})
+            yield _found_event(prepared)
+            yield ServerEvent("done", {"run_id": None, "status": SELECTED_STATUS})
+        finally:
+            with anyio.CancelScope(shield=True):
+                await asyncio.shield(_release(session, prepared))
+        return
+    note = (Instruction(prepared.note),) if prepared.note else ()
     events = run(
         session=session,
         llm=llm,
         profile=profile,
         library_id=prepared.library_id,
         user_text=prepared.user_text,
-        history=prepared.history,
+        history=(*prepared.history, *note),
     )
     try:
         yield ServerEvent("session", {"session_id": str(prepared.session_id)})
+        if prepared.found:
+            yield _found_event(prepared)
         answer: Any = None
         async for event in events:
             if isinstance(event, StatusEvent):

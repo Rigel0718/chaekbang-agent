@@ -11,3 +11,4 @@ study/
 yes24-open-api-guide/category.json
 # YES24 평가 표본. 같은 이유로 저장소에 넣지 않는다
 evals/librarian/data/
+evals/catalog_search/data/

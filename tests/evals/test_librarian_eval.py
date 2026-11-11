@@ -17,7 +17,17 @@ from evals.librarian.checks import (
 )
 from evals.librarian.scenarios import SCENARIOS, Expect, Scenario
 
-CHANGE = Path(__file__).resolve().parents[2] / "openspec" / "changes" / "add-librarian-agent"
+OPENSPEC = Path(__file__).resolve().parents[2] / "openspec"
+
+
+def _spec_roots(openspec: Path = OPENSPEC) -> list[Path]:
+    """현재 스펙과 archive되지 않은 change의 delta. 진행 중인 change의 평가 시나리오도 본다."""
+    changes = sorted(
+        p / "specs"
+        for p in (openspec / "changes").iterdir()
+        if p.is_dir() and p.name != "archive" and (p / "specs").is_dir()
+    )
+    return [openspec / "specs", *changes]
 
 
 def _catalog() -> SampleCatalog:
@@ -98,36 +108,68 @@ def test_fallback_ratio() -> None:
     assert fallback_ratio([result]) == 0.5
 
 
-def _eval_traces() -> set[str]:
-    """delta 스펙에서 평가로 확인하는 시나리오 (요구사항이 '평가로 확인'이거나 '평가 시나리오')."""
-    traces: set[str] = set()
-    for path in (CHANGE / "specs").rglob("spec.md"):
-        capability = str(path.parent.relative_to(CHANGE / "specs"))
-        requirement, by_eval = None, False
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if line.startswith("### Requirement: "):
-                requirement = line.removeprefix("### Requirement: ")
-                body = []
-                for following in lines[i + 1 :]:
-                    if following.startswith("#"):
-                        break
-                    body.append(following)
-                by_eval = "평가로 확인" in " ".join(body)
-            elif line.startswith("#### Scenario: "):
-                name = line.removeprefix("#### Scenario: ")
-                block = " ".join(lines[i + 1 : i + 3])
-                if by_eval or re.search(r"평가 시나리오", block):
-                    traces.add(f"[{capability}] {requirement} / {name}")
-    return traces
+def _spec_scenarios(roots: list[Path]) -> tuple[set[str], set[str]]:
+    """(모든 스펙 시나리오, 평가로 확인하는 시나리오).
+
+    평가로 확인하는 시나리오: 요구사항 본문에 '평가로 확인'이나 시나리오에 '평가 시나리오'가 있다.
+    """
+    every: set[str] = set()
+    by_eval_traces: set[str] = set()
+    for root in roots:
+        for path in root.rglob("spec.md"):
+            capability = str(path.parent.relative_to(root))
+            requirement, by_eval = None, False
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith("### Requirement: "):
+                    requirement = line.removeprefix("### Requirement: ")
+                    body = []
+                    for following in lines[i + 1 :]:
+                        if following.startswith("#"):
+                            break
+                        body.append(following)
+                    by_eval = "평가로 확인" in " ".join(body)
+                elif line.startswith("#### Scenario: "):
+                    name = line.removeprefix("#### Scenario: ")
+                    trace = f"[{capability}] {requirement} / {name}"
+                    every.add(trace)
+                    block = " ".join(lines[i + 1 : i + 3])
+                    if by_eval or re.search(r"평가 시나리오", block):
+                        by_eval_traces.add(trace)
+    return every, by_eval_traces
+
+
+def _missing_traces(traces: set[str], roots: list[Path]) -> set[str]:
+    every, _ = _spec_scenarios(roots)
+    return traces - every
 
 
 def test_scenarios_cover_eval_requirements() -> None:
-    """이번 change에서 평가로 확인하는 시나리오가 모두 평가 시나리오에 적혀 있다."""
-    expected = _eval_traces()
+    """현재 스펙과 진행 중인 change의 평가로 확인하는 시나리오가 모두 평가 시나리오에 있다."""
+    _, expected = _spec_scenarios(_spec_roots())
     assert len(expected) >= 5
     covered = {trace for s in SCENARIOS for trace in s.traces}
     assert expected <= covered, expected - covered
+
+
+def test_traces_exist_in_specs() -> None:
+    """평가 시나리오가 적은 추적은 현재 스펙이나 진행 중인 change에 있는 시나리오다."""
+    covered = {trace for s in SCENARIOS for trace in s.traces}
+    assert _missing_traces(covered, _spec_roots()) == set()
+
+
+def test_unknown_trace_fails(tmp_path: Path) -> None:
+    """없는 스펙 시나리오를 적은 추적은 걸린다."""
+    spec = tmp_path / "specs" / "agent" / "x" / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(
+        "### Requirement: 요구\n본문\n\n#### Scenario: 있음\n- **WHEN** a\n- **THEN** b\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "changes").mkdir()
+    roots = _spec_roots(tmp_path)
+    assert _missing_traces({"[agent/x] 요구 / 있음"}, roots) == set()
+    assert _missing_traces({"[agent/x] 요구 / 없음"}, roots) == {"[agent/x] 요구 / 없음"}
 
 
 def test_scenario_ids_unique() -> None:

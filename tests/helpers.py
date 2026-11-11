@@ -4,6 +4,7 @@ API·service를 거치지 않고 데이터를 준비하거나 저장 계층 제�
 """
 
 from datetime import date, timedelta
+from itertools import count
 from typing import Any
 
 import pytest
@@ -217,3 +218,38 @@ async def add_loan(
             text("UPDATE holdings SET status = 'on_loan' WHERE id = :id"), {"id": holding["id"]}
         )
     return loan
+
+
+_numbers = count(1)
+
+
+async def add_held_book(
+    session: AsyncSession,
+    library_id: int,
+    *statuses: str,
+    isbn: str | None = None,
+    official: dict | None = None,
+    synced: list | None = None,
+    **values,
+):
+    """기관 도서와 상태별 사본을 만든다. official을 주면 공식 서지를 만들어 연결한다."""
+    book_id = None
+    if official is not None:
+        isbn = isbn or make_isbn(next(_numbers) + 500)
+        book = await add_book(session, isbn, **{"title": values.get("title", "공식"), **official})
+        book_id = book["id"]
+    values.setdefault("title", "테스트 도서")
+    library_book = await add_library_book(session, library_id, isbn, book_id=book_id, **values)
+    for i, status in enumerate(statuses or ("available",)):
+        extra = {}
+        if synced is not None:
+            extra["last_synced_at"] = synced[i]
+        await add_holding(
+            session,
+            library_id,
+            library_book["id"],
+            f"AC{next(_numbers):05d}",
+            status=status,
+            **extra,
+        )
+    return library_book

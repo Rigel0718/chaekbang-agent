@@ -142,7 +142,7 @@ async def test_imported_answer(
     """[agent/librarian] 운영 방식별 안내 / 가져오기 기관의 카드"""
     synced = clock.now() - timedelta(days=1)
     book = await add_held_book(
-        session, library_b.id, title="공룡", holding={"last_synced_at": synced}
+        session, library_b.id, title="공룡 백과", holding={"last_synced_at": synced}
     )
     fake_llm.script(submit("이 책요", book["id"]))
     answer = event(await talk(kiosk_client_b, "공룡 책"), "answer")

@@ -2,7 +2,7 @@
 
 사서가 없는 작은도서관을 위한 AI 사서 웹 서비스의 백엔드. 도서관 PC에 켜 둔 화면에서 이용자는 AI 사서에게 추천을 받고 대출하며, 관리자는 운영 에이전트로 장서·대출 현황을 다룬다. 배경과 전체 설계는 [docs/design.md](docs/design.md), 코딩 규칙은 [CLAUDE.md](CLAUDE.md)를 참고한다.
 
-현재 단계: AI 사서 v1 완료, 다음은 추천 평가(`add-recommendation-evals`). 이용자는 `POST /librarian/messages`로 AI 사서에게 소장 도서 추천을 받는다. 대출·반납·희망도서 신청은 아직 대화로 처리하지 않는다.
+현재 단계: 서명·저자 찾기(`add-catalog-search`). 이용자는 `GET /catalog/search`, `GET /catalog/suggest`로 아는 책을 LLM 없이 찾고, `POST /librarian/messages`로 AI 사서에게 소장 도서 추천을 받는다. 대출·반납·희망도서 신청은 아직 대화로 처리하지 않는다.
 
 ## 도메인
 
@@ -124,14 +124,28 @@ uv run python -m evals.holdings_import
 - `app/library/`: 기관 공통
 - `app/features/`: 기관 개별 기능. 공통은 훅(`app/library/hooks.py`)으로 사건만 알리고, 기능은 `app/main.py`에서 등록한다
 
+## 서명·저자 찾기
+
+| API | 하는 일 | 권한 |
+| --- | --- | --- |
+| `GET /catalog/search?q=데미얀` | 서명·저자로 찾는다. 띄어쓰기, 대소문자, 한 글자 안팎의 오타를 허용한다. 최대 10권 | 직원(키오스크 포함) |
+| `GET /catalog/suggest?q=데미ㅇ` | 입력 중인 글자(조합 중 자모 포함)로 서명·저자 후보를 준다. 최대 8개 | 직원(키오스크 포함) |
+
+- LLM을 부르지 않고 질의를 저장하지 않는다. 그 기관의 대출 가능이나 대출 중 사본이 있는 책만 나온다. 어린이 구분으로 거르지 않는다(이용자가 직접 찾는 책이라서).
+- 서명의 판본·묶음 표기(`(완전판)`, `[예스리커버]`, `+ 엽서 3종`)는 무시하고 비교한다. 보이는 서명은 그대로다.
+- 결과 순서는 서명 전체 일치, 서명 앞부분, 서명 포함, 저자 포함, 오타 유사다. 한글은 자모로 풀어 비교하고, 오타는 자모 편집 거리(`fuzzystrmatch`)로 본다. 자모 키는 `books`·`library_books`의 생성 열이라 DB가 계산한다.
+- 평가: `uv run python -m evals.catalog_search` (표본 필요, LLM 없음). 결과와 문턱은 [evals/catalog_search/README.md](evals/catalog_search/README.md)에 있다.
+
 ## AI 사서
 
 | API | 하는 일 | 권한 |
 | --- | --- | --- |
-| `POST /librarian/messages` | `{"session_id": null, "message": "공룡 책 추천해줘"}`를 보내면 SSE로 답한다 | 직원(키오스크 포함) |
+| `POST /librarian/messages` | `{"session_id": null, "message": "공룡 책 추천해줘"}`를 보내면 SSE로 답한다. 자동완성에서 고른 책은 `selected_library_book_id`로 보낸다 | 직원(키오스크 포함) |
 | `DELETE /librarian/sessions/{id}` | 대화를 바로 끝내고 메시지를 지운다 | 직원 |
 
-- SSE 사건은 `session`(세션 id), `status`(진행 문구), `answer`(문장, 추천 카드, 희망도서 안내 표시, 운영 방식), `done`(실행 id, 상태) 순서다. 답은 검사를 통과한 뒤 한 번에 나가고, 카드는 코드가 DB 값으로 만든다.
+- SSE 사건은 `session`(세션 id), `found`(고른 책·찾은 책 카드, 있을 때), `status`(진행 문구), `answer`(문장, 추천 카드, 희망도서 안내 표시, 운영 방식), `done`(실행 id, 상태) 순서다. 답은 검사를 통과한 뒤 한 번에 나가고, 카드는 코드가 DB 값으로 만든다.
+- 고른 책만 보내면(`message` 없이) LLM을 부르지 않고 `session`, `found`, `done`(실행 id null, 상태 `selected`)만 나간다. 일일 실행 상한에 들어가지 않고 턴 상한에는 들어간다. 다음 턴부터 그 책이 대화 문맥이 된다.
+- 문장에 서명이 들어 있으면(한 글자 오타 포함) 코드가 찾은 책 카드를 LLM 답보다 먼저 보낸다. 찾은 책은 추천이 아니라서 노출 기록에 남지 않고, LLM이 답에 다시 넣으면 답 카드에서 빠진다.
 - 추천은 그 기관의 추천 가능한 책(대출 가능이나 대출 중 사본이 있는 책)만이다. 어린이 요청(코드가 문장으로 판단)에는 그 기관의 어린이 도서만 나간다. 둘 다 최종 검사가 코드로 막는다.
 - 전화번호, 이메일, 주민등록번호, 그 기관의 회원번호는 LLM과 저장 전에 `[개인정보]`로 가린다. 이름은 가리지 못한다.
 - 대화는 마지막 입력에서 `LIBRARIAN_SESSION_IDLE_MINUTES`(5분)가 지나면 끝나고, 서버가 1분마다 지운다. 세션당 `LIBRARIAN_MAX_TURNS`(20턴), 기관당 하루 `LIBRARIAN_DAILY_RUN_LIMIT`(500회), 문장 500자가 상한이다. 넘으면 409, 429, 422다. 같은 세션에 답을 기다리는 중 다시 보내면 409다.
