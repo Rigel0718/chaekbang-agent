@@ -20,6 +20,7 @@ from app.library.api import (
     auth,
     book_enrichment,
     catalog,
+    guide,
     holding_imports,
     holdings,
     librarian,
@@ -54,6 +55,7 @@ app = FastAPI(title="chaekbang-agent", lifespan=lifespan)
 app.state.librarian_profiles = build_librarian_profiles(LIBRARIAN_EXTENSIONS)
 app.include_router(auth.router)
 app.include_router(library.router)
+app.include_router(guide.router)
 app.include_router(staff.router)
 app.include_router(library_books.router)
 app.include_router(catalog.router)

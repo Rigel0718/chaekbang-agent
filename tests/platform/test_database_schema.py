@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from datetime import date
+from datetime import date, time
 
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -41,6 +41,10 @@ ALL_TABLES = {
     "chat_sessions",
     "chat_messages",
     "recommendation_events",
+    "library_guides",
+    "library_opening_hours",
+    "library_closures",
+    "library_guide_entries",
 }
 
 
@@ -56,7 +60,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 15
+    assert len(ALL_TABLES) == 19
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -306,4 +310,25 @@ async def test_event_rejects_run_of_other_library(
         was_available=True,
         shown_at=clock.now(),
         match="fk_recommendation_events_library_id_run_id_agent_runs",
+    )
+
+
+async def test_guide_tables_reject_bad_rows(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 안내 테이블의 저장 계층 규칙"""
+    await assert_rejected(
+        session,
+        "library_opening_hours",
+        library_id=library_a.id,
+        weekday=1,
+        opens_at=time(18),
+        closes_at=time(9),
+        match="ck_library_opening_hours_opens_before_closes",
+    )
+    await insert(session, "library_closures", library_id=library_a.id, closed_on=date(2026, 11, 20))
+    await assert_rejected(
+        session,
+        "library_closures",
+        library_id=library_a.id,
+        closed_on=date(2026, 11, 20),
+        match="uq_library_closures_library_id",
     )

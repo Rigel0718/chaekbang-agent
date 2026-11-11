@@ -166,7 +166,12 @@ async def test_common_response_has_no_audience(admin_client: AsyncClient) -> Non
 def test_librarian_profile_without_features() -> None:
     """[platform/package-layers] 기관 개별 기능 없는 AI 사서 / 기능 없는 프로필"""
     for prof in build_librarian_profiles().values():
-        assert [t.name for t in prof.tools] == ["search_collection", "find_book", "get_book_detail"]
+        assert [t.name for t in prof.tools] == [
+            "search_collection",
+            "find_book",
+            "get_book_detail",
+            "get_library_guide",
+        ]
         assert [c.name for c in prof.final_checks] == ["holdings"]
         assert "어린이" not in prof.system_prompt
         assert "children" not in prof.system_prompt

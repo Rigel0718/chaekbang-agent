@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.migrations import head_revision
 from app.seed.catalog import seed_catalog
 from app.seed.circulation import seed_loans, seed_members
+from app.seed.guide import seed_guide
 from app.seed.library import seed_libraries
 
 DEFAULT_SEED = 20261102
@@ -65,6 +66,7 @@ async def seed_database(conn: AsyncConnection, seed: int = DEFAULT_SEED) -> Repo
     report |= await seed_catalog(session, seed, library_ids)
     report |= await seed_members(session, seed, library_ids)
     report |= await seed_loans(session, seed, library_ids, clock.today())
+    report |= await seed_guide(session, library_ids, clock.today())
     await session.flush()
     return report
 

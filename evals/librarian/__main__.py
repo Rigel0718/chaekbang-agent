@@ -31,12 +31,13 @@ from app.core.migrations import alembic_config
 from app.features.children.tools import children_extension
 from app.library.librarian import build_librarian_profiles
 from evals.librarian.catalog import DATA_FILE, SampleMissingError, load_catalog, load_sample
-from evals.librarian.checks import ScenarioResult, card_ids, fallback_ratio
+from evals.librarian.checks import ScenarioResult, card_ids, fallback_ratio, guide_metrics
+from evals.librarian.guide import fixed_clock, shelve_one
 from evals.librarian.runner import run_scenario
 from evals.librarian.scenarios import SCENARIOS
 
 RUNS_DIR = DATA_FILE.parent / "runs"
-CHECKS = ("not_held", "children_general", "asks_personal", "invented_title")
+CHECKS = ("not_held", "children_general", "asks_personal", "invented_title", "invented_guide")
 HEADER = "| 시나리오 | 상태 | 추천 | 어린이 판단 | 기대 | " + " | ".join(CHECKS) + " |"
 
 
@@ -57,6 +58,13 @@ async def rollback_session(url: str) -> AsyncIterator[AsyncSession]:
                 await trans.rollback()
     finally:
         await engine.dispose()
+
+
+@asynccontextmanager
+async def _clock() -> AsyncIterator[None]:
+    """안내 평가의 날짜 고정(evals/librarian/guide.py). 평가 전체에 건다."""
+    with fixed_clock():
+        yield
 
 
 def _line(result: ScenarioResult) -> str:
@@ -82,6 +90,7 @@ def _record(index: int, result: ScenarioResult) -> dict:
         "expectation_met": result.expectation_met,
         "violations": result.violations,
         "turns": [asdict(turn) for turn in result.turns],
+        "guide_basis": result.guide_basis,  # 안내 판정의 기준값(가상 평가 안내와 계산된 일정)
     }
 
 
@@ -120,8 +129,9 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
     out.mkdir(parents=True, exist_ok=True)
     print(f"모델: {llm.model}, 시나리오 {len(scenarios)}개, 결과: {out}", flush=True)
     results: list[ScenarioResult] = []
-    async with rollback_session(settings.test_database_url) as session:
+    async with rollback_session(settings.test_database_url) as session, _clock():
         catalog = await load_catalog(session, sample)
+        await shelve_one(session, catalog)
         profile = build_librarian_profiles((children_extension(),))[catalog.loan_mode]
         for index, scenario in enumerate(scenarios, start=1):
             result = await run_scenario(session, llm, profile, catalog, scenario)
@@ -136,6 +146,7 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
     turns = [t for r in results for t in r.turns]
     violations = sum(len(v) for r in results for v in r.violations.values())
     missed = [r.scenario.id for r in results if not r.expectation_met]
+    metrics = guide_metrics(results)
     lines = [
         f"표본: {len(sample.books)}권 (받은 날 {sample.fetched_on}), 모델: {llm.model}",
         f"어린이 도서: {len(catalog.children)}권, 추천 가능: {len(catalog.recommendable)}권",
@@ -149,6 +160,12 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
         f"출력 토큰 {sum(t.output_tokens for t in turns)}, "
         f"고정 답 비율 {fallback_ratio(results) * 100:.1f}%",
         f"규칙 위반 {violations}건, 기대 불일치 {len(missed)}건 {missed if missed else ''}",
+        f"안내 질문 {metrics['guide_questions']}개: 안내 tool 사용률 "
+        f"{metrics['guide_tool_rate'] * 100:.0f}%, 책 tool 호출 "
+        f"{metrics['book_tool_calls_in_guide_questions']}번",
+        f"찾은 책 카드 턴 {metrics['found_turns']}개 중 find_book 다시 부름 "
+        f"{metrics['find_book_after_found']}번",
+        "날짜는 2026-11-11 14:00(기관 시간대)으로 고정했다. 안내는 가상이다.",
     ]
     (out / "summary.md").write_text(_summary(lines), encoding="utf-8")
     print(_summary(lines))

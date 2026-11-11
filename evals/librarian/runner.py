@@ -18,15 +18,19 @@ from app.library.librarian import PROFILE_NAME
 from app.library.services import chat
 from evals.librarian.catalog import BookState, SampleCatalog
 from evals.librarian.checks import ScenarioResult, TurnResult, score
+from evals.librarian.guide import guide_basis, setup_guide
 from evals.librarian.scenarios import Scenario
 
 
 def fill(text: str, catalog: SampleCatalog) -> str:
-    """`{no_description_title}`을 소개를 지운 책의 서명으로 바꾼다."""
-    if "{no_description_title}" not in text:
-        return text
-    [first, *_] = catalog.with_state(BookState.NO_DESCRIPTION)
-    return text.replace("{no_description_title}", catalog.titles[first])
+    """`{no_description_title}`은 소개를 지운 책, `{shelved_title}`은 서가 위치를 둔 책의 서명."""
+    if "{no_description_title}" in text:
+        [first, *_] = catalog.with_state(BookState.NO_DESCRIPTION)
+        text = text.replace("{no_description_title}", catalog.titles[first])
+    if "{shelved_title}" in text:
+        assert catalog.shelved is not None, "shelve_one()을 먼저 부른다"
+        text = text.replace("{shelved_title}", catalog.titles[catalog.shelved])
+    return text
 
 
 async def _run_facts(
@@ -68,6 +72,8 @@ async def run_scenario(
     catalog: SampleCatalog,
     scenario: Scenario,
 ) -> ScenarioResult:
+    await setup_guide(session, catalog.library_id, scenario.guide)
+    basis = await guide_basis(session, catalog.library_id, scenario.guide)
     session_id = None
     texts: list[str] = []
     turns: list[TurnResult] = []
@@ -96,11 +102,12 @@ async def run_scenario(
                 output_tokens=output_tokens,
                 steps=steps,
                 progress=[e.data["text"] for e in stream if e.name == "status"],
+                found=tuple(b["library_book_id"] for b in events.get("found", {}).get("books", [])),
             )
         )
     if session_id is not None:
         await chat.end_session(session, catalog.library_id, session_id)
-    return score(ScenarioResult(scenario, turns), catalog)
+    return score(ScenarioResult(scenario, turns, guide_basis=basis), catalog)
 
 
 async def run_scenarios(

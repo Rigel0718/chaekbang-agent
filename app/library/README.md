@@ -10,6 +10,7 @@
 - 엑셀·CSV 장서 가져오기
 - 서지 채움 처리 현황
 - 서명·저자 찾기와 자동완성(LLM 없음)
+- 도서관 안내: 대표 연락처, 운영 시간, 휴관일, 이용 규칙, 자유 항목, 개관 여부와 반납 예정일 계산
 - AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
 
 ## 구성
@@ -18,7 +19,7 @@
 | --- | --- |
 | `api/` | 라우터. 로직을 넣지 않는다 |
 | `services/` | 비즈니스 로직. REST API와 이후 에이전트 tool이 함께 쓴다 |
-| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출) |
+| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `guide`(안내) |
 | `schemas/` | Pydantic 스키마 |
 | `importing/` | 파일 읽기, 머리글 인식, 정규화. DB와 HTTP를 모른다 |
 | `deps.py` | 현재 직원·기관, 역할 |
@@ -26,7 +27,9 @@
 | `enrichment_targets.py` | 운영자 층 접점 구현, 처리 현황 |
 | `recommendation/` | `search`(추천 가능 조건, 키워드 검색), `lookup`(서명·저자 찾기, 자동완성, 문장 속 서명, 고른 책 확인), `checks`(소장 검사), `cards`(요약과 카드), `events`(노출 기록) |
 | `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest` |
-| `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, 범위를 좁힌 검색 tool을 만드는 `search_tool` |
+| `api/guide.py`, `services/guide.py` | `GET/PUT /library/guide`, `/library/closures`. 개관 여부(`day_status`), 반납 예정일(`due_date`, `compute_due_date`) |
+| `recommendation/kdc.py` | 청구기호 → KDC 주류 이름 |
+| `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 검색 tool을 만드는 `search_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
 | `privacy.py` | 개인정보 가리기 |
 | `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장, 노출 기록, 끝난 세션 삭제 |
@@ -71,3 +74,12 @@
 - 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
 - `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
 - tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장 일부가 들어 있을 수 있어서다.
+
+## 도서관 안내
+
+- 계산에 쓰는 값(운영 시간, 휴관일, 반납일 규칙)은 칸으로 나누고, 말로만 전하는 값(시설 위치, 이용 규칙, 알림)은 자유 항목(`library_guide_entries`)으로 둔다. 정기 휴관은 저장하지 않는다. 운영 시간 구간이 없는 요일이 정기 휴관이다.
+- `library_guides` 행이 없으면 안내를 등록하지 않은 기관이다. 조회는 200이고 `registered`가 false다.
+- **대표 연락처는 기관 대표 번호만 둔다.** 개인 번호를 넣지 않도록 API 설명에 적었다. 코드로 막지는 않는다(대표 번호가 휴대폰인 기관이 있다).
+- 반납 예정일은 `services/guide.py`의 한 함수가 정한다. REST, `get_library_guide` tool, 자체 대출(`create_loan`)이 같은 값을 쓴다. 이미 만든 대출의 `due_on`은 나중에 휴관일을 등록해도 바꾸지 않는다.
+- 공휴일은 `app/core/holidays.py`(`holidays` 패키지, 오프라인)다. 임시공휴일은 기관이 임시 휴관으로 등록한다.
+- 날짜·요일·시각은 코드가 계산해 tool 결과에 넣는다. LLM은 날짜를 세지 않는다.

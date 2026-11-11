@@ -14,7 +14,10 @@ from app.library.librarian import (
 )
 from app.library.models.library import LoanMode
 from app.library.recommendation.cards import build_cards
-from app.library.tools import NO_DESCRIPTION
+from app.library.recommendation.kdc import kdc_class_name
+from app.library.schemas.guide import ClosureCreate, GuideUpdate
+from app.library.services import guide as guide_service
+from app.library.tools import GUIDE_NOTE_EMPTY, NO_DESCRIPTION
 from tests.agent.fakes import FakeLlm, answers, done
 from tests.conftest import Tenant
 from tests.helpers import add_member
@@ -48,7 +51,12 @@ def _answer(*book_ids: int, reason: str = "좋아요") -> LibrarianAnswer:
 async def test_profile_tools(session: AsyncSession) -> None:
     """[agent/librarian] 조회 tool / 프로필의 tool"""
     for prof in build_librarian_profiles().values():
-        assert [t.name for t in prof.tools] == ["search_collection", "find_book", "get_book_detail"]
+        assert [t.name for t in prof.tools] == [
+            "search_collection",
+            "find_book",
+            "get_book_detail",
+            "get_library_guide",
+        ]
         assert prof.answer_tool.name == "submit_answer"
 
 
@@ -99,6 +107,95 @@ async def test_find_book_tool_typo(
     assert not result.is_error
     assert f'"library_book_id": {book["id"]}' in result.content
     assert "데미안 B" not in result.content
+
+
+async def test_search_result_shelf(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/librarian] 조회 tool / 결과의 서가 위치"""
+    book = await add_held_book(
+        session,
+        library_a.id,
+        title="공룡 백과",
+        holding={"shelf_location": "2층 문학", "call_number": "813.7-한232ㅊ"},
+    )
+    llm = FakeLlm(
+        [
+            search("공룡"),
+            turn(call("find_book", {"query": "공룡 백과"})),
+            detail(book["id"]),
+            submit("2층 문학 서가에 있어요."),
+        ]
+    )
+    await run_librarian(session, llm, library_a.id, "공룡 백과 어디 있어요?")
+    for request in (1, 2, 3):  # 검색, 찾기, 상세. 요청마다 앞선 결과가 쌓이므로 마지막 것을 본다
+        result = _tool_results(llm, request)[-1]
+        assert '"shelf_location": "2층 문학"' in result.content
+        assert '"call_number": "813.7-한232ㅊ"' in result.content
+        assert '"call_number_class": "문학"' in result.content
+
+
+async def test_search_result_non_kdc(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/librarian] 조회 tool / KDC가 아닌 청구기호"""
+    await add_held_book(
+        session, library_a.id, title="공룡 그림책", holding={"call_number": "아 813"}
+    )
+    await add_held_book(session, library_a.id, title="공룡 화석")
+    llm = FakeLlm([search("공룡"), submit("있어요.")])
+    await run_librarian(session, llm, library_a.id)
+    [result] = _tool_results(llm, 1)
+    assert result.content.count('"call_number_class": null') == 2
+    assert kdc_class_name("911.05-ㄱ") == "역사"
+    assert kdc_class_name("8137") is None
+
+
+def _guide_turn() -> list:
+    return [turn(call("get_library_guide", {})), submit("안내해요.")]
+
+
+async def test_guide_tool_scope(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[agent/librarian] 도서관 안내 tool / 안내 tool의 기관 범위"""
+    await guide_service.replace_guide(
+        session, library_a.id, GuideUpdate(contact_phone="031-000-0000")
+    )
+    await guide_service.replace_guide(
+        session, library_b.id, GuideUpdate(contact_phone="02-111-2222")
+    )
+    llm = FakeLlm(_guide_turn())
+    await run_librarian(session, llm, library_a.id, "연락처 알려 주세요")
+    [result] = _tool_results(llm, 1)
+    assert not result.is_error
+    assert "031-000-0000" in result.content
+    assert "02-111-2222" not in result.content
+
+
+async def test_guide_tool_due_date(session: AsyncSession, library_a: Tenant, monkeypatch) -> None:
+    """[agent/librarian] 도서관 안내 tool / 안내 tool의 반납 예정일"""
+    from datetime import date
+
+    from app.core import clock
+
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 11, 11))
+    await guide_service.replace_guide(
+        session, library_a.id, GuideUpdate(contact_phone="031-000-0000")
+    )
+    await guide_service.add_closure(
+        session, library_a.id, ClosureCreate(closed_on=date(2026, 11, 25))
+    )
+    llm = FakeLlm(_guide_turn())
+    await run_librarian(session, llm, library_a.id, "오늘 빌리면 언제까지예요?")
+    [result] = _tool_results(llm, 1)
+    assert '"due_if_borrowed": "11월 26일 목요일"' in result.content
+    assert '"due_moved_from": "11월 25일 수요일"' in result.content
+
+
+async def test_guide_tool_empty(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/librarian] 도서관 안내 tool / 빈 안내의 표시"""
+    llm = FakeLlm(_guide_turn())
+    await run_librarian(session, llm, library_a.id, "몇 시까지 해요?")
+    [result] = _tool_results(llm, 1)
+    assert '"registered": false' in result.content
+    assert GUIDE_NOTE_EMPTY in result.content
 
 
 async def test_find_book_tool_without_children(session: AsyncSession) -> None:
@@ -297,7 +394,12 @@ async def test_no_writes(session: AsyncSession, library_a: Tenant) -> None:
     await run_librarian(session, llm, library_a.id, "공룡 백과 대출해 줘. 회원번호 M0001")
     assert await _snapshot(session) == before
     names = {t.name for p in build_librarian_profiles().values() for t in p.tools}
-    assert names == {"search_collection", "find_book", "get_book_detail"}  # 모두 조회
+    assert names == {
+        "search_collection",
+        "find_book",
+        "get_book_detail",
+        "get_library_guide",
+    }  # 모두 조회
     count = await session.scalar(select(func.count()).select_from(text("loans")))
     assert count == 0
 

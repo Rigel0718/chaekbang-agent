@@ -210,3 +210,34 @@ async def test_lost_book_never_shown(session: AsyncSession, catalog: SampleCatal
     assert result.last.answer["recommendations"] == []
     assert result.last.status == "fallback"
     assert result.violations == {}
+
+
+async def test_guide_scenarios_pipeline(session: AsyncSession, catalog: SampleCatalog) -> None:
+    """안내 평가: 날짜 고정, 안내 넣기, 책 위치 적재, 기준값 판정이 가짜 LLM으로 끝까지 돈다."""
+    from evals.librarian.guide import SHELF, fixed_clock, shelve_one
+    from tests.library.librarian_helpers import call, turn
+
+    with fixed_clock():
+        await shelve_one(session, catalog)
+        llm = FakeLlm([turn(call("get_library_guide", {})), submit("11월 26일 목요일까지예요.")])
+        due = await run_scenario(
+            session, llm, _profile(catalog), catalog, _scenario("guide-due-date")
+        )
+        assert due.violations == {} and due.expectation_met
+        assert due.guide_basis is not None
+        assert due.guide_basis["next_days"][0]["due_if_borrowed"] == "11월 26일 목요일"
+
+        title = catalog.titles[catalog.shelved or 0]
+        llm = FakeLlm([turn(call("find_book", {"query": title})), submit(f"{SHELF}에 있어요.")])
+        where = await run_scenario(
+            session, llm, _profile(catalog), catalog, _scenario("guide-book-location")
+        )
+        assert where.expectation_met
+        assert where.last.found  # 서명을 말해서 찾은 책 카드가 나갔다
+
+        llm = FakeLlm([turn(call("get_library_guide", {})), submit("저녁 8시까지 해요.")])
+        empty = await run_scenario(
+            session, llm, _profile(catalog), catalog, _scenario("guide-empty-hours")
+        )
+        assert empty.violations == {"invented_guide": ["20시"]}
+        assert not empty.expectation_met

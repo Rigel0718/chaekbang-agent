@@ -81,6 +81,12 @@ def test_invented_title() -> None:
 def test_says_no_description() -> None:
     assert says_no_description(_turn("이 책은 소개 정보가 없어서 내용을 알려 드리기 어려워요."))
     assert not says_no_description(_turn("공룡이 나오는 모험 이야기예요."))
+    # 2026-11-11 평가에서 놓친 답 (add-library-guide 7.3)
+    assert says_no_description(
+        _turn("이 책은 소개와 목차 정보가 등록되어 있지 않아 구체적인 내용을 확인하기 어렵습니다.")
+    )
+    assert says_no_description(_turn("줄거리는 알 수 없어요."))
+    assert not says_no_description(_turn("내용이 어렵지 않아 아이와 읽기 좋아요."))
 
 
 def test_score_and_expectation() -> None:
@@ -175,4 +181,5 @@ def test_unknown_trace_fails(tmp_path: Path) -> None:
 def test_scenario_ids_unique() -> None:
     ids = [s.id for s in SCENARIOS]
     assert len(ids) == len(set(ids))
-    assert 10 <= len(SCENARIOS) <= 14
+    # 실행 비용을 가늠하는 상한. 안내 시나리오 11개를 더해 23개다(add-library-guide)
+    assert 10 <= len(SCENARIOS) <= 25

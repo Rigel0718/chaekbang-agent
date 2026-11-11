@@ -46,7 +46,12 @@ TABLES = (
     "holdings",
     "members",
     "loans",
+    "library_guides",
+    "library_opening_hours",
+    "library_closures",
+    "library_guide_entries",
 )
+GUIDE_TABLES = TABLES[-4:]
 
 
 async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
@@ -150,6 +155,17 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
     )
     assert (returned, active, overdue) == (5, 5, 3)
 
+    for table in GUIDE_TABLES:
+        modes = (
+            await session.scalars(
+                text(
+                    f"SELECT DISTINCT l.loan_mode FROM {table} t"
+                    " JOIN libraries l ON l.id = t.library_id"
+                )
+            )
+        ).all()
+        assert modes == ["internal"], table
+
 
 async def test_seed_respects_domain_rules(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 시드 데이터 생성 / 시드 데이터가 도메인 규칙을 지킴"""
@@ -181,6 +197,21 @@ async def test_seed_respects_domain_rules(session: AsyncSession) -> None:
         )
     )
     assert on_loan_mismatch == 0
+
+    # 시드 안내의 운영 시간 구간: 여는 시각이 앞이고 같은 요일끼리 겹치지 않는다
+    spans = (
+        await session.execute(
+            text(
+                "SELECT library_id, weekday, opens_at, closes_at FROM library_opening_hours"
+                " ORDER BY library_id, weekday, opens_at"
+            )
+        )
+    ).all()
+    assert spans
+    for (lib, day, opens, closes), following in zip(spans, [*spans[1:], None], strict=True):
+        assert opens < closes
+        if following is not None and following[:2] == (lib, day):
+            assert closes <= following[2]
 
     # 시드 계정으로 로그인할 수 있다: 로그인 service와 같은 조건(비밀번호 검증, 사용 중)을 본다.
     # (로그인 service는 커밋하므로 시드를 넣은 같은 트랜잭션 안에서는 부르지 않는다)
