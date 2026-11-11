@@ -80,7 +80,7 @@ AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`)
 
 - Python 3.12, FastAPI, Pydantic v2
 - PostgreSQL 16 (+ fuzzystrmatch, pgvector. 이미지 `pgvector/pgvector`), SQLAlchemy 2.0 (async), Alembic
-- 임베딩: 로컬 Text Embeddings Inference(TEI) 컨테이너, 기본 모델 `dragonkue/snowflake-arctic-embed-l-v2.0-ko`(1024차원, 입력 512토큰). 서버는 같은 가중치의 ONNX 변환본(`TEI_MODEL_ID`)을 ONNX 실행기로 띄운다. 앱에는 torch를 넣지 않고 `httpx`로 부른다
+- 임베딩: 로컬 Text Embeddings Inference(TEI) 컨테이너, 기본 모델 `dragonkue/snowflake-arctic-embed-l-v2.0-ko`(1024차원, 입력 512토큰). 서버는 같은 가중치의 ONNX 변환본(`TEI_MODEL_ID`)으로만, ONNX 실행기로 띄운다. 다른 모델은 먼저 ONNX로 변환한다. 앱에는 torch를 넣지 않고 `httpx`로 부른다
 - 패키지 관리: uv / 린트·포맷: ruff / 테스트: pytest, pytest-asyncio, httpx
 - 로컬 실행: Docker Compose
 - LLM: OpenAI Responses API (기본 `gpt-6-luna`, 모델별 가격은 `app/core/config.py`의 `LLM_PRICES`)

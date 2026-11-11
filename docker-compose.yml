@@ -23,7 +23,7 @@ services:
     profiles: ["embedding"]
     entrypoint: ["sh", "/start.sh"]
     environment:
-      # 띄울 모델 저장소. 원본(Candle 실행기)으로 되돌리려면 dragonkue/snowflake-arctic-embed-l-v2.0-ko
+      # 띄울 모델 저장소. ONNX 변환본만 받는다(없으면 시작하지 않는다)
       TEI_MODEL_ID: ${TEI_MODEL_ID:-Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-dragonkue/snowflake-arctic-embed-l-v2.0-ko}
       EMBEDDING_MAX_TOKENS: ${EMBEDDING_MAX_TOKENS:-512}
