@@ -59,6 +59,8 @@
 
 - **벡터는 두 층이다.** 공식 서지에 연결된 책은 공식 서지 벡터(여기, `official_book_embeddings`), 연결되지 않은 책은 기관 도서 벡터(`app/library/recommendation/embeddings.py`, `book_embeddings`)를 쓴다. 공식 서지 벡터는 `Book`만 받는 `official_embedding_text`로 만들어 기관 값이 들어갈 길이 없다. 적재 대상은 공식 서지 전부다. 기관을 지정한 실행은 부르는 쪽이 공식 서지 id 조건(`within`)을 넘긴다.
 - 텍스트는 서명(: 부제), 분류, 소개다. 저자는 넣지 않는다(텍스트 버전 2). 공식 소개가 없으면 소개 없이 만든다(기관 소개로 채우지 않는다). `scripts/embed_books.py`가 끝에 "공식 소개 없음 N건(그중 기관 소개 있음 M건)"을 출력한다.
+- **텍스트 종류**(`TextKind`, `scripts/embed_books.py --kind`): 기본 `full` 밖에 추천 실험의 비교용으로 `with_author`(서명, 저자 원문, 분류, 소개. 버전 1과 같은 필드), `description`(소개만), `title`·`category`(필드별 벡터)가 있다. 텍스트 버전은 2 그대로이고 종류마다 벡터가 따로 저장된다. 조립 규칙은 `app/core/embedding_text.py` 한 곳이다.
+- **빈 텍스트는 벡터를 만들지 않는다.** 그 종류의 값이 없는 책(소개 없는 책의 `description`)은 인코딩하지 않고 "빈 텍스트 N건"으로 센다. 빈 문자열을 인코딩하면 그런 책들이 모두 같은 벡터를 갖게 된다.
 - 배치 기본값은 4권이다(`EMBEDDING_BATCH_SIZE`). CPU ONNX에서는 배치가 클수록 느리고 1과 4가 같다(아래 표). GPU에서는 큰 배치가 빠를 수 있어 설정과 `--batch-size`를 남겼다.
 - 모델을 실행하는 코드는 `external/tei.py` 하나다. TEI의 요청·응답 형식은 이 파일 밖으로 나가지 않는다. 적재와 조회는 `Embedder`만 알고, 테스트는 가짜 인코더(`tests/embedding_helpers.py`)로 돈다.
 - 문서(도서)는 접두어 없이, 질의는 모델이 정한 접두어(`query: `)를 붙여 인코딩한다. TEI의 `prompt_name`을 쓰지 않고 앱이 문자열을 붙인다. 결과가 같다는 것은 `tests/embedding_live/`가 확인한다.

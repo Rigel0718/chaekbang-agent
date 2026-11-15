@@ -31,7 +31,9 @@
 | `recommendation/authors.py` | 같은 지은이의 책 `same_author_books`, 지은이 키 SQL 식 `writer_keys_sql` |
 | `services/author_keys.py` | 저자 키 다시 맞추기 `rebuild_author_keys`, 맞춰지지 않은 분류기호 세기 |
 | `recommendation/embedding_text.py` | 기관 도서 벡터의 텍스트 `library_embedding_text`(기관 값만, 조립 규칙은 `app/core/embedding_text.py`) |
-| `recommendation/embeddings.py` | 기관 도서 벡터 적재 `run_library_embedding`, 기관을 지정한 공식 서지 벡터 적재 조건 `held_official_ids`, 두 층 유사도 조회 `similar_books` |
+| `recommendation/embeddings.py` | 기관 도서 벡터 적재 `run_library_embedding`, 기관을 지정한 공식 서지 벡터 적재 조건 `held_official_ids`, 두 층 유사도 조회 `similar_books`(범위 조건, 종류별 가중 평균), 저장된 벡터 읽기 `book_vectors` |
+| `recommendation/ranking.py` | 순수 함수: 역순위 합 `fuse_rrf`, 시리즈 묶기 `cap_series`, 결과 다양화 `mmr`. DB를 모른다 |
+| `recommendation/topic.py` | 주제로 찾기 `find_by_topic`(키워드·벡터 순위를 합침), 깊은 키워드 순위 `keyword_ranking`, 설정 `TopicSettings` |
 | `models/embedding.py` | `BookEmbedding`(공식 서지 없는 기관 도서·모델·텍스트 버전·종류마다 벡터 하나) |
 | `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 검색 tool을 만드는 `search_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
@@ -102,6 +104,13 @@
 - 배치 흐름(`app/central/embedding.py`의 `run_layer`)은 두 층이 같이 쓴다. 인코딩 호출 동안 트랜잭션을 잡지 않고 배치마다 커밋한다. 중간에 멈추면 끝난 배치는 남고 증분으로 이어 한다.
 - 적재는 운영자가 `scripts/embed_books.py`로 돌린다(공식 서지, 기관 도서 순서. `--layer`로 한 층만). 서버 실행 중 자동 적재는 없다. 파생 값만 쓰고 기관이 정한 값은 바꾸지 않으며 훅을 부르지 않는다.
 - `similar_books`는 그 기관의 추천 가능한 책을 기준으로 연결된 책은 공식 서지 벡터, 연결되지 않은 책은 기관 도서 벡터를 붙여 한 순위로 합친다(`UNION ALL`). 조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가 결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
+- `similar_books`의 `within`은 순위를 매기기 전에 거는 기관 도서 id 조건이다(어린이 도서처럼 뜻은 부르는 쪽만 안다). 뽑은 뒤 거르면 조건 밖의 책에 밀려 몇 권 안 남는다. `weights`는 종류별 가중치이고 점수는 그 책에 벡터가 있는 종류들의 유사도 가중 평균이다(필드별 벡터 `title`·`category`·`description`을 합칠 때 쓴다). 종류 하나면 이전과 같다.
+
+## 주제로 찾기
+
+- `find_by_topic`은 "공룡 책", "가벼운 에세이" 같은 요청의 후보 순위를 만든다. LLM을 쓰지 않는다. 키워드 순위(`search.py`의 `ranked_query`와 같은 점수, 10권 상한 없음)와 벡터 순위를 역순위 합(RRF)으로 합치고, 같은 시리즈를 상한까지만 남기고(빠진 권수를 적는다), MMR로 순서를 고친다.
+- 범위(그 기관, 추천 가능, `within`)는 신호마다 순위를 매기기 전에 건다. 결과마다 합친 점수와 신호별 순위(근거)가 있다. 난수가 없어 같은 입력이면 같은 결과다.
+- 설정(`TopicSettings`: 신호 가중치, 벡터 질의 입력, 종류 가중치, 깊이, k, 시리즈 상한, λ)은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지 않았다(`add-related-books`). AI 사서는 지금처럼 `search_collection`을 쓴다.
 - 벡터 인덱스는 없다. 5,000권(공식 4,500 + 기관 500) 두 층 조회가 약 45ms다(처음 한 번 약 68ms).
 - CPU에서 한 권에 약 1.45초가 걸린다(ONNX, 배치 4). 전체 적재는 드물게, 평소에는 증분으로 돌린다.
 

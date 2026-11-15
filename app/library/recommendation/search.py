@@ -109,19 +109,13 @@ def clean_keywords(keywords: Sequence[str]) -> list[str]:
     return seen
 
 
-async def search_collection(
-    session: AsyncSession,
-    library_id: int,
-    keywords: Sequence[str],
-    *,
-    within: Select | None = None,
-    limit: int = SEARCH_LIMIT,
-) -> list[Candidate]:
-    """추천 가능한 책 중 키워드 하나라도 맞는 책. 키워드가 없으면 둘러보기다.
+def ranked_query(library_id: int, words: Sequence[str], within: Select | None = None) -> Select:
+    """추천 가능한 책을 키워드 점수 순서로 고르는 문장(개수 제한 없음).
 
-    within은 기관 개별 기능이 넘기는 기관 도서 id 조건이다. 공통은 그 뜻을 모른다.
+    words는 `clean_keywords`를 거친 낱말이다. 낱말이 없으면 둘러보기 순서다. 키워드 검색과
+    깊은 키워드 순위(`topic.py`)가 같은 점수와 같은 순서 규칙을 쓰게 한곳에 둔다.
+    행은 (기관 도서, 대출 가능 수, 대출 중 수, 갱신 시각)이다.
     """
-    words = clean_keywords(keywords)
     counts = _counts(library_id)
     score = _score(words) if words else literal(0)
     query = (
@@ -134,12 +128,29 @@ async def search_collection(
         query = query.where(LibraryBook.id.in_(within))
     if words:
         query = query.where(score > 0)
-    query = query.order_by(
+    return query.order_by(
         score.desc(),
         (counts.c.available > 0).desc(),
         func.coalesce(Book.title, LibraryBook.title),
         LibraryBook.id,
-    ).limit(min(limit, SEARCH_LIMIT))
+    )
+
+
+async def search_collection(
+    session: AsyncSession,
+    library_id: int,
+    keywords: Sequence[str],
+    *,
+    within: Select | None = None,
+    limit: int = SEARCH_LIMIT,
+) -> list[Candidate]:
+    """추천 가능한 책 중 키워드 하나라도 맞는 책. 키워드가 없으면 둘러보기다.
+
+    within은 기관 개별 기능이 넘기는 기관 도서 id 조건이다. 공통은 그 뜻을 모른다.
+    """
+    query = ranked_query(library_id, clean_keywords(keywords), within).limit(
+        min(limit, SEARCH_LIMIT)
+    )
     imported = await _loan_mode(session, library_id) == LoanMode.IMPORTED
     rows = await session.execute(query)
     return [

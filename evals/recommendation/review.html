@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>라벨 검수</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:920px;margin:0 auto;padding:16px;line-height:1.55;
+ background:#fafafa;color:#222}
+nav{position:sticky;top:0;background:#fafafa;padding:8px 0;border-bottom:1px solid #ddd;z-index:1}
+nav a{display:inline-block;margin:2px;padding:2px 7px;border-radius:4px;text-decoration:none;
+ color:#333;background:#e8e8e8;font-size:13px}
+nav a.done{background:#bfe3c5}
+h2{margin-top:36px;font-size:19px}
+.rule{font-size:13px;color:#555}
+.book{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px 14px;margin:8px 0}
+.book.user{border-left:5px solid #4a9d5b}.book.claude{border-left:5px solid #d9a441}
+.title{font-weight:600}.meta{font-size:13px;color:#666}
+.desc{font-size:14px;margin-top:6px;white-space:pre-wrap}
+button{font-size:15px;padding:4px 14px;margin-right:4px;border:1px solid #999;border-radius:6px;
+ background:#fff;cursor:pointer}
+button.on{background:#2d6cdf;color:#fff;border-color:#2d6cdf}
+button.confirm{background:#4a9d5b;color:#fff;border-color:#4a9d5b;margin-top:6px}
+details{margin:10px 0}summary{cursor:pointer;color:#444}
+.row{display:flex;gap:8px;align-items:baseline;padding:3px 0;border-bottom:1px solid #eee}
+.row .t{flex:1;font-size:14px}.row button{font-size:12px;padding:1px 8px}
+.row .more{color:#2d6cdf;cursor:pointer;font-size:12px}
+</style></head><body>
+<h1>라벨 검수</h1>
+<p class="rule"><b>2</b> 받으면 바로 납득(주제와 대상이 모두 맞음) · <b>1</b> 관련은 있으나 일부만 맞음 ·
+<b>0</b> 맞지 않음. 노란 띠는 초안(Claude), 초록 띠는 확인한 책이다. 누르면 바로 저장된다.
+0인 책 목록에서 빠진 책이 보이면 1이나 2를 누른다.</p>
+<p class="rule"><label><input type="checkbox" id="poolOnly"> 보충 라벨만 보기(실행 뒤 상위 결과에서 더한 책, 파란 "보충" 표시)</label></p>
+<nav id="nav"></nav><div id="root"></div>
+<script>
+const DATA = __DATA__;
+const el = (tag, cls, text) => { const e = document.createElement(tag);
+  if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+async function save(item, book, grade) {
+  const res = await fetch('/label', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({item: item.id, key: book.key, grade})});
+  if (!res.ok) { alert('저장하지 못했습니다: ' + await res.text()); return false; }
+  book.grade = grade; book.by = 'user'; return true;
+}
+function buttons(item, book, after) {
+  const box = el('span');
+  for (const g of [0, 1, 2]) {
+    const b = el('button', book.grade === g ? 'on' : '', String(g));
+    b.onclick = async () => { if (await save(item, book, g)) after(); };
+    box.append(b);
+  }
+  return box;
+}
+function render(item) {
+  const sec = document.getElementById(item.id); sec.replaceChildren();
+  const only = document.getElementById('poolOnly').checked;
+  const shown = item.books.filter(b => !only || b.stage === 'pool');
+  const picked = shown.filter(b => b.grade >= 1), rest = shown.filter(b => !(b.grade >= 1));
+  sec.append(el('h2', '', `[${item.id}] ${item.text}` + (item.children ? '  (어린이 요청)' : '')));
+  sec.append(el('div', 'meta', `후보 ${item.books.length}권 · 2: ${item.books.filter(b => b.grade === 2).length}권 · `
+    + `1: ${item.books.filter(b => b.grade === 1).length}권 · 확인 안 한 초안(1 이상) ${picked.filter(b => b.by !== 'user').length}권`));
+  const again = () => { render(item); nav(); };
+  for (const book of picked.sort((a, b) => b.grade - a.grade)) {
+    const card = el('div', 'book ' + (book.by || ''));
+    card.append(el('div', 'title', (book.stage === 'pool' ? '[보충] ' : '') + book.title));
+    card.append(el('div', 'meta', [book.author, book.category || '분류 없음', book.shelf || '서가 없음'].join(' | ')));
+    card.append(el('div', 'desc', book.description || '(소개 없음)'));
+    const line = el('div'); line.style.marginTop = '8px'; line.append(buttons(item, book, again));
+    card.append(line); sec.append(card);
+  }
+  const confirm = el('button', 'confirm', '보이는 책 모두 확인');
+  confirm.onclick = async () => {
+    for (const book of picked) if (book.by !== 'user') await save(item, book, book.grade);
+    again();
+  };
+  if (picked.some(b => b.by !== 'user')) sec.append(confirm);
+  const fold = el('details'); fold.open = sec.dataset.open === '1';
+  fold.ontoggle = () => { sec.dataset.open = fold.open ? '1' : ''; };
+  fold.append(el('summary', '', `0인 책 ${rest.length}권 (빠진 책이 있는지 서명만 훑어본다)`));
+  for (const book of rest) {
+    const row = el('div', 'row');
+    const title = el('span', 't', `${book.stage === 'pool' ? '[보충] ' : ''}${book.title} / ${book.author} · ${book.category || ''}`);
+    const more = el('span', 'more', '소개');
+    const desc = el('div', 'desc', book.description || '(소개 없음)'); desc.hidden = true;
+    more.onclick = () => { desc.hidden = !desc.hidden; };
+    row.append(title, more, buttons(item, book, again));
+    fold.append(row, desc);
+  }
+  sec.append(fold);
+}
+function nav() {
+  const box = document.getElementById('nav'); box.replaceChildren();
+  for (const item of DATA) {
+    const left = item.books.filter(b => b.grade >= 1 && b.by !== 'user').length;
+    const a = el('a', left ? '' : 'done', item.id); a.href = '#' + item.id; box.append(a);
+  }
+}
+for (const item of DATA) {
+  const sec = el('section'); sec.id = item.id; document.getElementById('root').append(sec); render(item);
+}
+nav();
+document.getElementById('poolOnly').onchange = () => { for (const item of DATA) render(item); };
+</script></body></html>

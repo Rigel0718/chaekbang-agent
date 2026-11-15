@@ -116,6 +116,62 @@ async def test_one_layer(
     assert "기관 도서 벡터 1권: 인코딩 1건" in out and "공식 서지" not in out
 
 
+async def test_kind_adds_vectors_and_keeps_others(
+    session: AsyncSession, library_a: Tenant, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """[catalog/book-embeddings] 종류를 지정한 적재 / 종류 지정"""
+    await _linked(session, library_a.id, "공식", description="공식 소개")
+    await add_held_book(session, library_a.id, title="기관", description="기관 소개")
+    assert await _run(session, FakeEmbedder(), full=True) == EXIT_OK
+    stamp = "SELECT content_hash, updated_at FROM {} WHERE kind = 'full'"
+    before = [
+        (await session.execute(text(stamp.format(table)))).all()
+        for table in ("official_book_embeddings", "book_embeddings")
+    ]
+    capsys.readouterr()
+
+    embedder = FakeEmbedder()
+    assert await _run(session, embedder, full=True, kind="description") == EXIT_OK
+    assert "종류 description)" in capsys.readouterr().out
+    assert embedder.document_calls == [["공식 소개"], ["기관 소개"]]
+    after = [
+        (await session.execute(text(stamp.format(table)))).all()
+        for table in ("official_book_embeddings", "book_embeddings")
+    ]
+    assert before == after
+    kinds = "SELECT kind FROM {} ORDER BY kind"
+    for table in ("official_book_embeddings", "book_embeddings"):
+        assert (await session.scalars(text(kinds.format(table)))).all() == ["description", "full"]
+
+
+def test_unknown_kind(capsys: pytest.CaptureFixture[str]) -> None:
+    """[catalog/book-embeddings] 종류를 지정한 적재 / 없는 종류"""
+    with pytest.raises(SystemExit) as caught:
+        parse_args(["--full", "--kind", "summary"])
+    assert caught.value.code == EXIT_PRECONDITION
+    err = capsys.readouterr().err
+    for kind in ("full", "with_author", "description", "title", "category"):
+        assert kind in err
+    assert parse_args(["--full"]).kind == "full"
+    assert parse_args(["--full", "--kind", "title"]).kind == "title"
+
+
+async def test_blank_text_is_not_encoded(
+    session: AsyncSession, library_a: Tenant, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """[catalog/book-embeddings] 빈 텍스트는 적재하지 않음 / 소개 없는 책"""
+    await _linked(session, library_a.id, "소개 없음")
+    for i in range(2):
+        await _linked(session, library_a.id, f"소개 있음{i}", description=f"소개 {i}")
+    embedder = FakeEmbedder()
+    assert await _run(session, embedder, full=True, layer="official", kind="description") == EXIT_OK
+    out = capsys.readouterr().out
+    assert "공식 서지 벡터 3건: 인코딩 2건, 건너뜀 0건, 빈 텍스트 1건" in out
+    assert "[공식 서지 3/3] 인코딩 2, 건너뜀 0, 빈 텍스트 1" in out
+    assert await _count(session, "official_book_embeddings") == 2
+    assert all(text_ for call in embedder.document_calls for text_ in call)
+
+
 async def test_unreachable_server_stops_with_hint(
     session: AsyncSession, library_a: Tenant, capsys: pytest.CaptureFixture[str]
 ) -> None:

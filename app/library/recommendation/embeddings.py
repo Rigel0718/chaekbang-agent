@@ -7,10 +7,10 @@
 `run_layer`와 같다. 텍스트 원문은 저장하지 않는다. 벡터, 모델 이름, 텍스트 버전, 종류, 해시만 둔다.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import Select, and_, func, select, union_all
+from sqlalchemy import Select, and_, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.embedding import (
@@ -152,39 +152,34 @@ async def missing_official_descriptions(session: AsyncSession) -> tuple[int, int
     return total or 0, with_own or 0
 
 
-async def similar_books(
-    session: AsyncSession,
-    embedder: Embedder,
-    *,
-    library_id: int,
-    query: str,
-    limit: int = SIMILAR_LIMIT,
-    kind: TextKind = TextKind.FULL,
-) -> list[SimilarBook]:
-    """질의와 코사인 유사도가 높은 그 기관의 추천 가능한 책.
+def _vector_branches(
+    library_id: int, model_name: str, kind: TextKind, within: Select | None
+) -> tuple[Select, Select]:
+    """그 기관의 추천 가능한 책과 그 종류의 벡터를 잇는 두 갈래(공식 서지 벡터, 기관 도서 벡터).
 
-    연결된 책은 공식 서지 벡터로, 연결되지 않은 책은 기관 도서 벡터로 비교해 한 순위로 합친다.
-    조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가
-    결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다.
+    각 갈래는 `library_book_id`와 `embedding` 열을 고른다. within은 기관 도서 id 조건이다.
     """
-    vector = (await embedder.encode_queries([query]))[0]
-    kind = TextKind(kind)
-    recommendable = LibraryBook.id.in_(recommendable_ids(library_id))
-    official_distance = OfficialBookEmbedding.embedding.cosine_distance(vector)
-    own_distance = BookEmbedding.embedding.cosine_distance(vector)
+    scope = [
+        LibraryBook.library_id == library_id,
+        LibraryBook.id.in_(recommendable_ids(library_id)),
+    ]
+    if within is not None:
+        scope.append(LibraryBook.id.in_(within))
     linked = (
-        select(LibraryBook.id.label("library_book_id"), official_distance.label("distance"))
+        select(
+            LibraryBook.id.label("library_book_id"),
+            OfficialBookEmbedding.embedding.label("embedding"),
+        )
         .join(OfficialBookEmbedding, OfficialBookEmbedding.book_id == LibraryBook.book_id)
         .where(
-            LibraryBook.library_id == library_id,
-            recommendable,
-            OfficialBookEmbedding.model_name == embedder.name,
+            *scope,
+            OfficialBookEmbedding.model_name == model_name,
             OfficialBookEmbedding.text_version == rules.TEXT_VERSION,
             OfficialBookEmbedding.kind == kind,
         )
     )
     own = (
-        select(LibraryBook.id.label("library_book_id"), own_distance.label("distance"))
+        select(LibraryBook.id.label("library_book_id"), BookEmbedding.embedding.label("embedding"))
         .join(
             BookEmbedding,
             and_(
@@ -193,20 +188,84 @@ async def similar_books(
             ),
         )
         .where(
-            LibraryBook.library_id == library_id,
+            *scope,
             LibraryBook.book_id.is_(None),
-            recommendable,
             BookEmbedding.library_id == library_id,
-            BookEmbedding.model_name == embedder.name,
+            BookEmbedding.model_name == model_name,
             BookEmbedding.text_version == rules.TEXT_VERSION,
             BookEmbedding.kind == kind,
         )
     )
-    ranked = union_all(linked, own).subquery()
+    return linked, own
+
+
+async def similar_books(
+    session: AsyncSession,
+    embedder: Embedder,
+    *,
+    library_id: int,
+    query: str,
+    limit: int = SIMILAR_LIMIT,
+    kind: TextKind = TextKind.FULL,
+    weights: Mapping[TextKind, float] | None = None,
+    within: Select | None = None,
+) -> list[SimilarBook]:
+    """질의와 코사인 유사도가 높은 그 기관의 추천 가능한 책.
+
+    연결된 책은 공식 서지 벡터로, 연결되지 않은 책은 기관 도서 벡터로 비교해 한 순위로 합친다.
+    조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가
+    결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다.
+
+    within은 순위를 매기기 전에 거는 기관 도서 id 조건이다. 공통은 그 뜻을 모른다.
+    weights는 종류별 가중치다(없으면 kind 하나). 점수는 그 책에 벡터가 있는 종류들의 유사도
+    가중 평균이고, 지정한 종류의 벡터가 하나도 없는 책은 결과에 없다.
+    """
+    vector = (await embedder.encode_queries([query]))[0]
+    wanted = {TextKind(k): float(w) for k, w in (weights or {kind: 1.0}).items() if w > 0}
+    if not wanted:
+        return []
+    parts = []
+    for one, weight in wanted.items():
+        for branch in _vector_branches(library_id, embedder.name, one, within):
+            rows = branch.subquery()
+            parts.append(
+                select(
+                    rows.c.library_book_id,
+                    (1 - rows.c.embedding.cosine_distance(vector)).label("similarity"),
+                    literal(weight).label("weight"),
+                )
+            )
+    scored = union_all(*parts).subquery()
+    score = func.sum(scored.c.similarity * scored.c.weight) / func.sum(scored.c.weight)
+    ranked = (
+        select(scored.c.library_book_id, score.label("similarity"))
+        .group_by(scored.c.library_book_id)
+        .subquery()
+    )
     rows = await session.execute(
-        select(LibraryBook, (1 - ranked.c.distance).label("similarity"))
+        select(LibraryBook, ranked.c.similarity)
         .join(ranked, ranked.c.library_book_id == LibraryBook.id)
-        .order_by(ranked.c.distance, LibraryBook.id)
+        .order_by(ranked.c.similarity.desc(), LibraryBook.id)
         .limit(limit)
     )
     return [SimilarBook(book, float(similarity)) for book, similarity in rows]
+
+
+async def book_vectors(
+    session: AsyncSession,
+    model_name: str,
+    library_id: int,
+    library_book_ids: Sequence[int],
+    *,
+    kind: TextKind = TextKind.FULL,
+) -> dict[int, list[float]]:
+    """그 기관의 추천 가능한 책들의 저장된 벡터(두 층). 결과 다양화가 책 사이 유사도에 쓴다.
+
+    다른 기관의 id와 벡터가 없는 책은 빠진다.
+    """
+    if not library_book_ids:
+        return {}
+    within = select(LibraryBook.id).where(LibraryBook.id.in_(list(library_book_ids)))
+    linked, own = _vector_branches(library_id, model_name, TextKind(kind), within)
+    rows = await session.execute(union_all(linked, own))
+    return {book_id: [float(x) for x in embedding] for book_id, embedding in rows}
