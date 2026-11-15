@@ -275,3 +275,27 @@ async def test_title_as_typed_first_among_editions(
         "공룡 그림책",
         "공룡 그림책 (완전판)",
     ]
+
+
+# --- 전각·분해형 글자 (add-book-contributors) ---
+
+
+async def test_fullwidth_query(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 전각·분해형 글자 / 전각 질의"""
+    await add_held_book(session, library_a.id, title="ABC 살인사건", author="애거서 크리스티")
+    assert await _found(session, library_a.id, "ＡＢＣ 살인사건") == ["ABC 살인사건"]
+
+
+async def test_fullwidth_stored_title(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 전각·분해형 글자 / 전각으로 저장된 서명"""
+    await add_held_book(session, library_a.id, title="１９８４", author="조지 오웰")
+    assert await _found(session, library_a.id, "1984") == ["１９８４"]
+
+
+async def test_nfd_stored_title(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 전각·분해형 글자 / 분해형으로 저장된 서명"""
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFD", "데미안")
+    await add_held_book(session, library_a.id, title=decomposed, author="헤르만 헤세")
+    assert await _suggested(session, library_a.id, "데미ㅇ") == [decomposed]

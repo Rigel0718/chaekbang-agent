@@ -5,6 +5,7 @@
 ## 맡는 일
 
 - `books`: ISBN이 있는 책의 공식 서지. 기관 API로는 쓸 수 없다.
+- `book_contributors`: 공식 서지의 기여자(이름, 이름 맞춤 키, 역할, 역할 원문, 순서). 저자 원문에서 다시 만들 수 있는 값이다.
 - YES24 호출과 응답 해석
 - 서지정보 채움 실행. 운영자가 `scripts/enrich_books.py`로 돌린다.
 - 임베딩 인코더 접점과 임베딩 서버 호출. 문자열을 받아 벡터를 돌려줄 뿐이고 어떤 책인지 모른다.
@@ -13,12 +14,14 @@
 
 | 파일 | 내용 |
 | --- | --- |
-| `models.py` | `Book`, `ExternalSource` |
+| `models.py` | `Book`, `BookContributor`, `ExternalSource` |
+| `contributors.py` | 출처별 저자 해석기 고르기, 기여자 저장 `sync_contributors`, 다시 맞추기 `rebuild_contributors` |
 | `enrichment.py` | 채움 실행 `run_enrichment`, 접점 `EnrichmentTargets` |
 | `external/yes24/definitions.py` | 엔드포인트, 응답 필드, 오류 코드 |
 | `external/yes24/client.py` | 인증, 호출 속도 제한, 오류 구분 |
 | `external/yes24/parsing.py` | 응답 상품을 `Yes24Item`으로 변환 |
 | `external/yes24/goods.py` | GOODS API 역할 함수 |
+| `external/yes24/contributors.py` | YES24 저자 원문 해석 `parse_yes24_author` |
 | `embedding.py` | 인코더 접점 `Embedder`(`encode_documents`, `encode_queries`, `check`, `name`, `dim`), `EmbeddingError` |
 | `external/tei.py` | Text Embeddings Inference 어댑터 `TeiEmbedder`, 모델별 질의 접두어 |
 
@@ -30,6 +33,20 @@
 - 기관 모델을 모른다. 대상 ISBN과 연결은 `EnrichmentTargets`로 받고, `app/library/enrichment_targets.py`가 구현한다.
 - 어린이 구분을 모른다. `books.external_category`는 YES24 분류 원문을 사실로만 보관한다.
 - 이미 있는 공식 서지는 고치지 않는다.
+
+## 기여자
+
+- 저자 원문(`Book.author`)은 그대로 두고 표시와 서명·저자 찾기에 쓴다. 기여자는 원문을 역할별 사람으로 푼 파생 값이고, 추천의 "같은 저자" 신호와 역할 표시에 쓴다.
+- 공식 서지를 만드는 경로는 모두 `sync_contributors`를 부른다: 채움(`enrichment._create_official`), 시드(`app/seed/catalog.py`), 평가 표본 적재(`evals/librarian/catalog.py`). 새 경로를 만들면 함께 부른다. 같은 값이면 쓰지 않는다.
+- 역할 표와 기관 파일 해석기는 `app/core/contributors.py`에 있다(운영자 층과 기관 공통이 함께 쓴다). 역할은 일곱(`author`, `illustrator`, `translator`, `editor`, `supervisor`, `original`, `other`)이다.
+- 역할 표나 이름 맞춤 규칙(`app/core/text.py`의 `match_key`)을 고치면 `uv run python scripts/rebuild_contributors.py`로 다시 맞춘다. `--check`는 차이만 센다.
+- 외국 저자의 다른 음역(`조앤 K. 롤링` / `J.K. 롤링`)과 동명이인은 풀지 않는다.
+
+### 출처별 해석기 더하기
+
+1. `external/<출처>/contributors.py`에 `parse_<출처>_author(author: str) -> list[Contributor]`를 둔다. 묶음 나누기만 출처에 맞게 하고, 역할 읽기·이름 나누기는 `app/core/contributors.py`의 조각(`parse_suffix_group`, `read_roles`, `split_names`)을 쓴다.
+2. `contributors.py`의 `PARSERS`에 `ExternalSource` → 해석기를 더한다. 출처가 없거나 표에 없으면 기관 파일 해석기(`parse_author_text`)를 쓴다.
+3. 그 출처의 실제 표기로 테스트를 고정하고, 처음 보는 역할 표기가 있으면 역할 표에 더한다.
 
 ## 임베딩
 

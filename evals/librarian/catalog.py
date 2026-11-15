@@ -6,6 +6,7 @@
   그 밖(상품 바코드 880, 잡지 ISSN 977)은 ISBN 없는 기관 도서로 넣는다. 작은도서관도 잡지와 토이북을
   ISBN 없이 등록하는 경우가 많다.
 - 어린이 구분은 등록과 같은 경로(`apply_category`)로 실제 분류 값에서 정한다.
+- 공식 서지의 기여자는 채움과 같은 경로(`sync_contributors`)로 만든다. 저자 키는 모델이 정한다.
 - 사본 상태는 기관이 가상이라 ISBN 순서에 고정한 규칙으로 만든다. 표본을 다시 받으면 책이 바뀐다.
 """
 
@@ -19,6 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.central.contributors import sync_contributors
 from app.central.models import Book, ExternalSource
 from app.core.isbn import InvalidIsbnError, normalize_isbn
 from app.features.children.models import Audience, LibraryBookAudience
@@ -162,6 +164,8 @@ async def load_catalog(
         )
         session.add(library_book)
         await session.flush()
+        if book is not None:
+            await sync_contributors(session, book)  # 공식 서지를 만드는 다른 경로와 같다
         status = {
             BookState.LOST_ONLY: HoldingStatus.LOST,
             BookState.ON_LOAN: HoldingStatus.ON_LOAN,

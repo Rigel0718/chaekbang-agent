@@ -15,7 +15,7 @@ from tests.helpers import (
 
 async def test_rejects_malformed_isbn(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/library-books] 기관 도서 저장 제약 / 잘못된 ISBN 직접 저장"""
-    values = {"library_id": library_a.id, "title": "t", "author": "a"}
+    values = {"library_id": library_a.id, "title": "t", "author": "a", "author_keys": ["a"]}
     await assert_rejected(
         session, "library_books", isbn="978-0306406157", error=DBAPIError, **values
     )
@@ -39,6 +39,7 @@ async def test_rejects_duplicate_isbn_in_library(
         isbn=VALID_ISBN,
         title="t",
         author="a",
+        author_keys=["a"],
         match="uq_library_books_library_id_isbn",
     )
     await add_library_book(session, library_b.id)
@@ -54,6 +55,7 @@ async def test_rejects_negative_price(session: AsyncSession, library_a: Tenant) 
         library_id=library_a.id,
         title="t",
         author="a",
+        author_keys=["a"],
         list_price=-1000,
         match="list_price_nonnegative",
     )

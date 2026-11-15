@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
+from app.core.contributors import author_keys
 from app.core.isbn import isbn13_check_digit
 from app.core.security import hash_password, hash_token, new_token
 
@@ -146,6 +147,8 @@ async def add_library_book(
         "list_price": 15000,
     }
     values.update(overrides)
+    # 저자 키는 서비스의 쓰기 경로처럼 저자 원문에서 계산한다(직접 주면 그 값).
+    values.setdefault("author_keys", author_keys(values["author"]))
     return await insert(session, "library_books", **values)
 
 
