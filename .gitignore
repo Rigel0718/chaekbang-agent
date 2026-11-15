@@ -14,3 +14,6 @@ evals/librarian/data/
 evals/catalog_search/data/
 # YES24 실험 장서 원본(약 500권). 같은 이유로 저장소에 넣지 않는다. 한 번만 받는다
 evals/collection/data/
+
+# 추천 실험의 기준 책, 최근 기록, 라벨, 질의 벡터, 실행 결과. 책 키가 YES24 실험 장서를 가리키고 라벨은 사람이 단 것이라 저장소에 넣지 않는다(따로 백업한다)
+evals/recommendation/data/

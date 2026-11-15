@@ -2,6 +2,7 @@
 
 from app.central.embedding_text import official_embedding_text
 from app.central.models import Book
+from app.core.embedding_text import TextKind
 from app.library.models.catalog import LibraryBook
 from app.library.recommendation.embedding_text import library_embedding_text
 
@@ -82,3 +83,24 @@ def test_both_layers_use_the_same_rule() -> None:
     own = _own(isbn=None, title="같은 서명", author="같은 저자", kdc="911", description="같은 소개")
     assert official_embedding_text(official) == library_embedding_text(own)
     assert official_embedding_text(official) == "같은 서명\n역사\n같은 소개"
+
+
+def test_official_author_text_has_no_library_author() -> None:
+    """[catalog/book-embeddings] 비교용 텍스트 종류 / 공식 서지 텍스트에 기관 저자 없음"""
+    official = Book(title="공식 서명", author="공식 저자", description="소개")
+    _own(book=official, author="기관 저자")
+    text = official_embedding_text(official, TextKind.WITH_AUTHOR)
+    assert text == "공식 서명\n공식 저자\n소개"
+
+
+def test_both_layers_use_the_same_kind_rule() -> None:
+    """[catalog/book-embeddings] 비교용 텍스트 종류 / 두 층의 같은 종류 규칙"""
+    official = Book(title="같은 서명", author="같은 저자", kdc="911", description="같은 소개")
+    own = _own(isbn=None, title="같은 서명", author="같은 저자", kdc="911", description="같은 소개")
+    for kind in TextKind:
+        assert official_embedding_text(official, kind) == library_embedding_text(own, kind)
+    assert official_embedding_text(official, TextKind.WITH_AUTHOR) == (
+        "같은 서명\n같은 저자\n역사\n같은 소개"
+    )
+    assert official_embedding_text(official, TextKind.TITLE) == "같은 서명"
+    assert official_embedding_text(official, TextKind.CATEGORY) == "역사"

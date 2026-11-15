@@ -16,4 +16,5 @@ def library_embedding_text(book: LibraryBook, kind: TextKind = TextKind.FULL) ->
         subtitle=None,  # 기관 도서에는 부제 칸이 없다
         categories=[kdc_class_name(book.kdc)],
         description=book.description,
+        author=book.author,
     )

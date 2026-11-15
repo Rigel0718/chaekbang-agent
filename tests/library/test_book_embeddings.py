@@ -5,7 +5,7 @@
 """
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.embedding import EmbeddingFailure
@@ -13,8 +13,10 @@ from app.central.embedding_text import official_embedding_text
 from app.central.models import Book
 from app.central.official_embeddings import run_official_embedding
 from app.core import embedding_text as rules
-from app.core.embedding_text import content_hash
+from app.core.embedding_text import TextKind, content_hash
+from app.library.models.catalog import LibraryBook
 from app.library.recommendation.embeddings import (
+    book_vectors,
     held_official_ids,
     missing_official_descriptions,
     run_library_embedding,
@@ -621,3 +623,142 @@ async def test_similar_books_before_loading(session: AsyncSession, library_a: Te
     await _own_books(session, library_a.id, 2)
     await _officials(session, library_a.id, 2)
     assert await similar_books(session, FakeEmbedder(), library_id=library_a.id, query="책") == []
+
+
+# --- 조회 넓히기 (add-recommendation-experiments) ---
+
+
+def _only(ids: list[int]):
+    return select(LibraryBook.id).where(LibraryBook.id.in_(ids))
+
+
+async def test_similar_books_filter_before_ranking(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 유사도 조회 범위와 깊이 / 조건을 먼저"""
+    cosines = {"가": 0.9, "나": 0.8, "다": 0.7, "라": 0.6, "마": 0.5, "바": 0.4, "사": 0.3}
+    ids, embedder = await _similarity_setup(session, library_a.id, cosines, linked={"라", "바"})
+    inside = [ids[t] for t in ("라", "마", "바", "사")]
+    found = await similar_books(
+        session, embedder, library_id=library_a.id, query="질의", limit=5, within=_only(inside)
+    )
+    assert [f.library_book.id for f in found] == inside
+
+
+async def test_similar_books_deep(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 유사도 조회 범위와 깊이 / 깊은 조회"""
+    cosines = {f"깊은{i:02d}": 0.95 - i * 0.02 for i in range(40)}
+    ids, embedder = await _similarity_setup(session, library_a.id, cosines)
+    found = await similar_books(session, embedder, library_id=library_a.id, query="질의", limit=30)
+    assert [f.library_book.id for f in found] == [ids[f"깊은{i:02d}"] for i in range(30)]
+    assert len(await similar_books(session, embedder, library_id=library_a.id, query="질의")) == 5
+
+
+async def test_similar_books_condition_naming_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/book-embeddings] 유사도 조회 범위와 깊이 / 조건이 다른 기관의 책을 가리킴"""
+    mine, embedder = await _similarity_setup(session, library_a.id, {"우리": 0.3})
+    theirs, _ = await _similarity_setup(session, library_b.id, {"남의": 0.99}, linked={"남의"})
+    found = await similar_books(
+        session,
+        embedder,
+        library_id=library_a.id,
+        query="질의",
+        within=_only([theirs["남의"], mine["우리"]]),
+    )
+    assert [f.library_book.id for f in found] == [mine["우리"]]
+
+
+async def _add_kind(session: AsyncSession, library_book_id: int, kind: str, cosine: float) -> None:
+    """이미 `full` 벡터가 있는 책에 다른 종류의 벡터를 직접 넣는다(어느 층이든)."""
+    vector = str(toward(cosine)).replace(" ", "")
+    for table, key in (("official_book_embeddings", "book_id"), ("book_embeddings", "id")):
+        owner = "library_id, library_book_id, " if key == "id" else "book_id, "
+        match = (
+            "e.library_book_id = :id"
+            if key == "id"
+            else "e.book_id = (SELECT book_id FROM library_books WHERE id = :id)"
+        )
+        await session.execute(
+            text(
+                f"INSERT INTO {table} ({owner}model_name, text_version, kind, embedding,"
+                f" content_hash) SELECT {owner}model_name, text_version, :kind, :vector,"
+                f" content_hash FROM {table} e WHERE kind = 'full' AND {match}"
+            ),
+            {"id": library_book_id, "kind": kind, "vector": vector},
+        )
+
+
+async def test_similar_books_weighted_average(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 여러 종류를 합친 유사도 / 가중 평균"""
+    ids, embedder = await _similarity_setup(
+        session, library_a.id, {"공식책": 0.5, "기관쪽": 0.5}, linked={"공식책"}
+    )
+    for book_id in ids.values():
+        await _add_kind(session, book_id, "title", 0.2)
+        await _add_kind(session, book_id, "description", 0.8)
+    found = await similar_books(
+        session,
+        embedder,
+        library_id=library_a.id,
+        query="질의",
+        weights={TextKind.TITLE: 1, TextKind.DESCRIPTION: 3},
+    )
+    assert {f.library_book.id for f in found} == set(ids.values())
+    assert [f.similarity for f in found] == pytest.approx([0.65, 0.65], abs=1e-5)
+
+
+async def test_similar_books_average_skips_missing_kind(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 여러 종류를 합친 유사도 / 없는 종류는 빼고 평균"""
+    ids, embedder = await _similarity_setup(session, library_a.id, {"둘다": 0.5, "서명만": 0.5})
+    await _add_kind(session, ids["둘다"], "title", 0.2)
+    await _add_kind(session, ids["둘다"], "description", 0.8)
+    await _add_kind(session, ids["서명만"], "title", 0.4)
+    extra = (await add_held_book(session, library_a.id, title="벡터 없음"))["id"]
+    found = await similar_books(
+        session,
+        embedder,
+        library_id=library_a.id,
+        query="질의",
+        weights={TextKind.TITLE: 1, TextKind.DESCRIPTION: 1},
+    )
+    scores = {f.library_book.id: f.similarity for f in found}
+    assert scores == pytest.approx({ids["둘다"]: 0.5, ids["서명만"]: 0.4}, abs=1e-5)
+    assert extra not in scores
+
+
+async def test_similar_books_single_kind_weight_is_the_same(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 여러 종류를 합친 유사도 / 종류 하나는 지금과 같음"""
+    cosines = {"가": 0.9, "나": 0.8, "다": 0.7, "라": 0.6}
+    _, embedder = await _similarity_setup(session, library_a.id, cosines, linked={"가", "다"})
+    plain = await similar_books(session, embedder, library_id=library_a.id, query="질의")
+    weighted = await similar_books(
+        session, embedder, library_id=library_a.id, query="질의", weights={TextKind.FULL: 1}
+    )
+    assert [f.library_book.id for f in weighted] == [f.library_book.id for f in plain]
+    assert [f.similarity for f in weighted] == pytest.approx([f.similarity for f in plain])
+
+
+async def test_book_vectors_from_both_layers(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/topic-recommendation] 결과 다양화 (책 사이 유사도에 쓰는 저장된 벡터)
+
+    두 층의 벡터를 돌려주고 다른 기관의 id는 빠진다.
+    """
+    ids, embedder = await _similarity_setup(
+        session, library_a.id, {"공식책": 0.9, "기관쪽": 0.4}, linked={"공식책"}
+    )
+    theirs, _ = await _similarity_setup(session, library_b.id, {"남의": 0.99})
+    vectors = await book_vectors(
+        session, embedder.name, library_a.id, [*ids.values(), theirs["남의"]]
+    )
+    assert set(vectors) == set(ids.values())
+    assert vectors[ids["공식책"]][0] == pytest.approx(0.9, abs=1e-5)
+    assert vectors[ids["기관쪽"]][0] == pytest.approx(0.4, abs=1e-5)
+    assert len(vectors[ids["공식책"]]) == 1024

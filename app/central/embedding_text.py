@@ -15,4 +15,5 @@ def official_embedding_text(book: Book, kind: TextKind = TextKind.FULL) -> str:
         subtitle=book.subtitle,
         categories=[book.external_category, kdc_class_name(book.kdc)],
         description=book.description,
+        author=book.author,
     )

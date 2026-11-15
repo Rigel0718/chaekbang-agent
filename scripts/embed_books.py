@@ -4,6 +4,8 @@
 기관 도서 벡터(`book_embeddings`)는 공식 서지에 연결되지 않은 추천 가능한 기관 도서만 만든다.
 --full은 모두 다시 인코딩하고, --incremental은 벡터가 없거나 텍스트가 바뀐 대상만 인코딩한다.
 --layer official|library는 한 층만, --library-id는 그 기관의 책(과 거기 연결된 공식 서지)만 다룬다.
+--kind는 텍스트 종류다(기본 full). 다른 종류의 벡터는 그대로 남는다. 그 종류의 텍스트가 빈 책은
+벡터를 만들지 않고 "빈 텍스트"로 센다.
 임베딩 서버: docker compose --profile embedding up -d embedder
 종료 코드: 0 완료, 1 전제 조건·인자 문제(서버의 모델·한도 불일치 포함), 2 임베딩 서버 장애로 중단.
 """
@@ -75,6 +77,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--layer", choices=LAYERS, help="이 층만 (없으면 공식 서지, 기관 도서 순서로 둘 다)"
     )
     parser.add_argument("--library-id", type=int, help="이 기관만 (없으면 모든 기관)")
+    parser.add_argument(
+        "--kind",
+        choices=[kind.value for kind in TextKind],
+        default=TextKind.FULL.value,
+        help="텍스트 종류 (기본 full)",
+    )
     parser.add_argument("--batch-size", type=int, help="한 번에 인코딩할 권수 (기본: 설정 값)")
     args = parser.parse_args(argv)
     if args.batch_size is not None and args.batch_size < 1:
@@ -107,7 +115,8 @@ def progress_printer(layer: str):
 
     def print_progress(run: EmbeddingRun) -> None:
         print(
-            f"[{name} {run.done}/{run.targets}] 인코딩 {run.encoded}, 건너뜀 {run.skipped}",
+            f"[{name} {run.done}/{run.targets}] 인코딩 {run.encoded}, 건너뜀 {run.skipped}"
+            + (f", 빈 텍스트 {run.blank}" if run.blank else ""),
             flush=True,
         )
 
@@ -118,6 +127,7 @@ def describe(layer: str, run: EmbeddingRun) -> str:
     return (
         f"{LAYER_NAMES[layer]} 벡터 {run.targets}{LAYER_UNITS[layer]}: "
         f"인코딩 {run.encoded}건, 건너뜀 {run.skipped}건"
+        + (f", 빈 텍스트 {run.blank}건" if run.blank else "")
     )
 
 
@@ -130,6 +140,7 @@ async def load_layers(
     batch_size: int | None,
     layers: tuple[str, ...] = LAYERS,
     progress: bool = True,
+    kind: TextKind = TextKind.FULL,
 ) -> list[tuple[str, EmbeddingRun]]:
     """층을 차례로 적재한다. 앞 층이 멈추면 뒤 층은 시작하지 않는다."""
     done: list[tuple[str, EmbeddingRun]] = []
@@ -143,6 +154,7 @@ async def load_layers(
                 full=full,
                 batch_size=batch_size,
                 within=within,
+                kind=kind,
                 on_progress=on_progress,
             )
         else:
@@ -152,6 +164,7 @@ async def load_layers(
                 full=full,
                 batch_size=batch_size,
                 library_id=library_id,
+                kind=kind,
                 on_progress=on_progress,
             )
         done.append((layer, run))
@@ -168,6 +181,7 @@ async def execute(
     library_id: int | None,
     batch_size: int | None,
     layer: str | None = None,
+    kind: TextKind = TextKind.FULL,
 ) -> int:
     """적재를 실행하고 결과를 출력한 뒤 종료 코드를 돌려준다."""
     if library_id is not None and await session.get(Library, library_id) is None:
@@ -185,10 +199,11 @@ async def execute(
         library_id=library_id,
         batch_size=batch_size,
         layers=(layer,) if layer else LAYERS,
+        kind=TextKind(kind),
     )
     print(
         " / ".join(describe(name, run) for name, run in done)
-        + f" (모델 {embedder.name}, 텍스트 버전 {rules.TEXT_VERSION}, 종류 {TextKind.FULL})"
+        + f" (모델 {embedder.name}, 텍스트 버전 {rules.TEXT_VERSION}, 종류 {TextKind(kind).value})"
     )
     if any(name == OFFICIAL for name, _ in done):
         blank, with_own = await missing_official_descriptions(session)
@@ -223,6 +238,7 @@ async def run(args: argparse.Namespace) -> int:
                 library_id=args.library_id,
                 batch_size=args.batch_size or settings.embedding_batch_size,
                 layer=args.layer,
+                kind=TextKind(args.kind),
             )
     except SeedPreconditionError as exc:
         print(str(exc), file=sys.stderr)
