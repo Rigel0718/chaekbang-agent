@@ -244,11 +244,18 @@ async def test_volatile_values_not_stored(
     """[catalog/book-enrichment] 저장하지 않는 값 / 변동 정보 미저장"""
     book = await _held(session, library_a.id)
     await enrich(session, yes24.client())
-    dump = await session.scalar(text("SELECT json_agg(t)::text FROM books t"))
-    body = (await admin_client.get(f"/library-books/{book['id']}")).text
+    # id와 시각 열은 YES24 값을 담지 않는데, 마이크로초 등에 숫자가 우연히 들어가 빼고 본다
+    dump = await session.scalar(
+        text("SELECT json_agg(to_jsonb(t) - 'id' - 'created_at' - 'updated_at')::text FROM books t")
+    )
+    body = (await admin_client.get(f"/library-books/{book['id']}")).json()
+    assert not {"sale_price", "item_status"} & set(body)
+    volatile_keys = {"id", "book_id", "created_at", "updated_at", "enrichment_checked_at"}
+    body_values = json.dumps(
+        {k: v for k, v in body.items() if k not in volatile_keys}, ensure_ascii=False
+    )
     for value in ("12600", "판매중", "46881", "9.5"):
-        assert value not in dump and value not in body
-    assert not {"sale_price", "item_status"} & set(json.loads(body))
+        assert value not in dump and value not in body_values
 
 
 async def test_cover_image_not_requested(
