@@ -29,6 +29,8 @@
 | `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest` |
 | `api/guide.py`, `services/guide.py` | `GET/PUT /library/guide`, `/library/closures`. 개관 여부(`day_status`), 반납 예정일(`due_date`, `compute_due_date`) |
 | `recommendation/kdc.py` | 청구기호 → KDC 주류 이름 |
+| `recommendation/authors.py` | 같은 지은이의 책 `same_author_books`, 지은이 키 SQL 식 `writer_keys_sql` |
+| `services/author_keys.py` | 저자 키 다시 맞추기 `rebuild_author_keys`, 맞춰지지 않은 분류기호 세기 |
 | `recommendation/embedding_text.py` | 임베딩 텍스트 `build_embedding_text`, `TEXT_VERSION`, 해시 |
 | `recommendation/embeddings.py` | 임베딩 적재 `run_embedding`(전체·증분), 기관 범위 유사도 조회 `similar_books` |
 | `models/embedding.py` | `BookEmbedding`(기관 도서·모델·텍스트 버전마다 벡터 하나) |
@@ -44,6 +46,8 @@
 - 기관은 요청 값이 아니라 인증 토큰으로 정한다. 다른 기관의 데이터는 404다 (`app/core/tenancy.py`의 `get_owned`).
 - 표시 값은 `LibraryBook.shown`으로 읽는다. 공식 값이 먼저이고, 비어 있으면 기관 값이다.
 - 공식 서지에 연결된 기관 도서는 ISBN만 고칠 수 있다.
+- 저자 키(`library_books.author_keys`)는 저자를 쓸 때 모델(`LibraryBook._set_author_keys`)이 함께 정한다. 등록, 수정, 가져오기가 모두 ORM이라 따로 부르지 않는다. Core `insert`로 기관 도서를 넣는 곳(시드)은 `app/core/contributors.py`의 `author_keys`로 값을 넣어야 하고, 빠뜨리면 DB가 거부한다(기본값 없음). Core `update`로 저자를 바꾸지 않는다(`tests/catalog/test_library_book_author_keys.py`가 소스를 검사한다).
+- 분류기호(`kdc`)는 쓸 때 KDC 숫자 문자열로 맞춘다(`813.7`). 읽을 수 없는 값은 공백만 정리해 둔다. 이미 저장된 행은 바꾸지 않는다.
 - 서명·저자 찾기 키(`title_jamo_starts`, `author_jamo_starts`)는 DB가 계산하는 생성 열이다. 코드에서 쓰지 않는다. 규칙은 `app/core/text.py`의 `jamo_starts`이고 SQL 함수 `ko_jamo_starts`와 같아야 한다.
 - 대화의 책 표시(`[고른 책: …]`, `[찾은 책: …]`)는 `chat_messages.note`에 두고 LLM에게는 안내(`Instruction`)로 보낸다. 이용자 문장에 섞으면 어린이 요청 판단이 서명의 낱말을 읽는다.
 
@@ -77,6 +81,14 @@
 - 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
 - `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
 - tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장 일부가 들어 있을 수 있어서다.
+
+## 같은 저자
+
+- 책의 지은이 키는 두 층에서 읽는다. 공식 서지에 연결된 책은 기여자(`book_contributors`) 중 `author`·`original`의 이름 맞춤 키, 연결되지 않은 책은 저자 키다. 연결된 책은 기관이 적은 저자를 보지 않는다.
+- 저자 키는 연결 여부와 상관없이 채운다. 연결이 풀리거나 생겨도 다시 계산하지 않기 위해서다. 읽는 쪽이 연결 여부로 고른다.
+- 그린이는 기본에 넣지 않는다. 추천 실험에서 어린이 도서일 때 넣는 변형을 비교한다.
+- `same_author_books`는 그 기관의 추천 가능한 책만 돌려준다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
+- 서명·저자 찾기는 저자 키가 아니라 원문의 자모 키로 한다.
 
 ## 도서 임베딩
 

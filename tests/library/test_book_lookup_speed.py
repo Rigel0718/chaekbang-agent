@@ -20,7 +20,7 @@ FILL = text(
     """
     WITH n AS (SELECT g FROM generate_series(1, :books) AS g),
     lb AS (
-        INSERT INTO library_books (library_id, title, author, list_price)
+        INSERT INTO library_books (library_id, title, author, author_keys, list_price)
         SELECT :library_id,
                (SELECT string_agg(chr(44032 + ((g * 7919 + k * 104729) % 11172)), '')
                   FROM generate_series(1, 3 + g % 4) AS k)
@@ -28,6 +28,7 @@ FILL = text(
                             FROM generate_series(1, 2) AS k),
                (SELECT string_agg(chr(44032 + ((g * 131 + k * 6007) % 11172)), '')
                   FROM generate_series(1, 2 + g % 2) AS k),
+               ARRAY[]::text[],
                10000
           FROM n
         RETURNING id
@@ -53,8 +54,8 @@ async def test_lookup_speed(session: AsyncSession, library_a: Tenant) -> None:
     await session.execute(FILL, {"books": BOOKS, "library_id": library_a.id})
     await session.execute(
         text(
-            "INSERT INTO library_books (library_id, title, author, list_price) "
-            "VALUES (:id, '데미안', '헤르만 헤세', 10000)"
+            "INSERT INTO library_books (library_id, title, author, author_keys, list_price) "
+            "VALUES (:id, '데미안', '헤르만 헤세', ARRAY['헤르만헤세'], 10000)"
         ),
         {"id": library_a.id},
     )

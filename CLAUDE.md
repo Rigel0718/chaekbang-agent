@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**4주차: 검색과 안내** (진행 중 change 없음. 다음은 `add-related-books`).
-AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`), 도서관 안내(`add-library-guide`), 도서 임베딩 파이프라인(`add-book-embeddings`)은 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 다음은 찾은 책과 비슷한 책 추천(`add-related-books`), 대화 추천 평가(`add-recommendation-evals`) 순이다. `add-related-books`에서 임베딩 텍스트 구성(다 넣기 / 저자 빼기 / 소개만)을 버전별로 적재해 비교하고 기본 버전을 정한다. 근거 수치는 `openspec/changes/archive/2026-11-11-add-book-embeddings/design.md`의 Open Questions에 있다. CPU 적재 속도는 ONNX 변환본으로 바꿔 줄였고 측정은 `app/central/README.md`에 있다. 적재 배치 기본값(지금 스펙 32)을 1~4로 낮출지는 `add-related-books`에서 정한다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 MVP용이고 승인이 나면 국립중앙도서관·도서관 정보나루로 바꾼다.
+**4주차: 검색과 안내** (진행 중 change 없음. 다음은 `add-official-book-embeddings`).
+AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`), 도서관 안내(`add-library-guide`), 도서 임베딩 파이프라인(`add-book-embeddings`), 정규화와 기여자 표(`add-book-contributors`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 2026-11-12에 `add-related-books` 앞에 추천 실험의 바탕을 먼저 두기로 했다. 순서는 정규화와 기여자 표(`add-book-contributors`, 끝남), 벡터 두 층과 실험 장서(`add-official-book-embeddings`), 추천 실험(`add-recommendation-experiments`), 카카오·도서관 정보나루 연동과 일반화(`add-bibliographic-sources`)이고, 그 뒤에 이긴 설정을 제품에 내보내는 `add-related-books`, 대화 추천 평가(`add-recommendation-evals`)가 온다. 임베딩 텍스트 구성(다 넣기 / 저자 빼기 / 소개만)은 `add-recommendation-experiments`에서 버전별로 적재해 비교하고 기본 버전을 정한다. 근거 수치는 `openspec/changes/archive/2026-11-11-add-book-embeddings/design.md`의 Open Questions에 있다. CPU 적재 속도는 ONNX 변환본으로 바꿔 줄였고 측정은 `app/central/README.md`에 있다. 적재 배치 기본값(지금 스펙 32)을 1~4로 낮출지는 `add-official-book-embeddings`에서 정한다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 실험용이고 실제 서비스에는 쓰지 않는다. 카카오 도서 검색 API와 도서관 정보나루 API로 바꾼다(`add-bibliographic-sources`).
 
 ## OpenSpec 작업 규칙
 
@@ -53,13 +53,17 @@ AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`)
 8. `add-catalog-search` – 서명·저자 찾기(오타 허용)와 자동완성, 검색 API, 대화와 잇기(고른 책, 찾은 책 카드), 검색 평가
 9. `add-library-guide` – 도서관 안내 정보(운영 시간, 휴관일, 대표 연락처, 시설 위치, 이용 규칙), 반납 예정일 계산, 안내 tool
 10. `add-book-embeddings` – 도서 임베딩 파이프라인: pgvector, 로컬 임베딩 서버(TEI), 인코더 접점, 임베딩 텍스트, `book_embeddings`, 전체·증분 적재 CLI
-11. `add-related-books` – 찾은 책과 비슷한 책(같은 저자, 분류, 소개 임베딩의 하이브리드 점수), 저자 구조화
-12. `add-recommendation-evals` – 대화 추천 평가: 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서
-13. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
-14. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
-15. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
-16. `add-web-ui` – 이용자·관리자 화면
-17. `add-observability-deploy` – Langfuse, 배포, README, 데모
+11. `add-book-contributors` – 정규화 통일(저장용·비교용, 이름·역할·KDC·시리즈명), 공식 서지 기여자 표, 기관 도서 저자 키, YES24·기관 파일 저자 해석기
+12. `add-official-book-embeddings` – 벡터 두 층(공식 서지 벡터는 운영자 층·공식 값만으로, 기관 도서 벡터는 공식 서지 없는 책만), 실험 장서(YES24 약 500권을 공식 서지로 적재하고 가상 기관이 소장), 적재 배치 기본값
+13. `add-recommendation-experiments` – 추천 실험(YES24 조정): 실험 틀, 요청 세 종류(주제로 찾기, 비슷한 책, 아무 조건 없음)의 평가 세트와 단계별 변형 비교, 임베딩 텍스트 버전 비교
+14. `add-bibliographic-sources` – 카카오 도서 검색·도서관 정보나루 연동과 일반화: 출처별 해석기, 같은 ISBN 다른 메타데이터 비교, 다른 분야 비교, 함께 대출된 책·인기 대출
+15. `add-related-books` – 실험에서 이긴 설정을 제품에 내보내기: 찾은 책 카드 아래 비슷한 책(LLM 없음), AI 사서 tool, REST
+16. `add-recommendation-evals` – 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서
+17. `add-admin-agent` – 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록
+18. `add-approval-flow` – 초안 → 승인 → 실행, 서버 재시작 후에도 재개
+19. `add-librarian-actions` – 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기
+20. `add-web-ui` – 이용자·관리자 화면
+21. `add-observability-deploy` – Langfuse, 배포, README, 데모
 
 **스펙 작성 규칙**
 
@@ -98,6 +102,7 @@ uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표
 docker compose --profile embedding up -d embedder      # 임베딩 서버 (메모리 약 4GB, 처음에 모델 2.3GB 내려받기)
 uv run python scripts/embed_books.py --incremental     # 운영자: 도서 임베딩 적재 (--full, --library-id, --batch-size)
 uv run python scripts/embedding_search.py "질의" --sample  # 임베딩 확인: 표본 적재 후 상위 5권 (--library-id N)
+uv run python scripts/rebuild_contributors.py         # 운영자: 기여자·저자 키를 지금 규칙으로 (--check는 차이만)
 uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
@@ -110,12 +115,14 @@ app/
 ├── main.py       # 조립: 라우터 포함, 기관 개별 기능 등록
 ├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
 ├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘), holidays(공휴일),
-│                 # isbn(정규화·검증), text(공백·대소문자·자모 규칙, 저장용과 비교용), migrations, model_base, errors, tenancy, schemas(페이지)
+│                 # isbn(정규화·검증), text(저장용·비교용·이름 맞춤 정규화, 자모 규칙, KDC 키),
+│                 # contributors(역할 표, 기관 파일 저자 해석, 저자 키), migrations, model_base, errors, tenancy, schemas(페이지)
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
-│   ├── models.py     # Book
+│   ├── models.py     # Book, BookContributor(공식 서지 기여자)
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
+│   ├── contributors.py # 출처별 저자 해석기, 기여자 저장(sync_contributors)
 │   ├── embedding.py  # 임베딩 인코더 접점(Embedder: 문서·질의 인코딩)
-│   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에), tei(임베딩 서버 어댑터), (이후) 도서관 정보나루
+│   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에, 저자 해석), tei(임베딩 서버 어댑터), (이후) 도서관 정보나루
 ├── library/      # 기관 공통
 │   ├── api/      # 라우터: auth, library, guide(안내·휴관일), staff, library_books, catalog(찾기·자동완성),
 │   │             # holdings, members, loans, librarian
@@ -126,7 +133,7 @@ app/
 │   ├── schemas/  # Pydantic 스키마
 │   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
 │   ├── recommendation/ # 서명·저자 찾기와 자동완성(lookup), 주제 검색(search), 소장 검사, 카드, 노출 기록.
-│   │                   # 임베딩 텍스트(embedding_text)와 적재·유사도 조회(embeddings).
+│   │                   # 임베딩 텍스트(embedding_text)와 적재·유사도 조회(embeddings), 같은 저자(authors).
 │   │                   # 어린이 필터는 기능에 둔다. (이후) 비슷한 책
 │   ├── deps.py   # 현재 직원·기관, 역할
 │   ├── hooks.py  # 기관 개별 기능 접점
@@ -141,6 +148,7 @@ scripts/seed.py   # 더미 데이터 (Faker)
 scripts/enrich_books.py  # 운영자용 공식 서지 채움
 scripts/embed_books.py   # 운영자용 도서 임베딩 적재
 scripts/embedding_search.py  # 임베딩 확인용 유사도 조회
+scripts/rebuild_contributors.py  # 운영자용 기여자·저자 키 다시 만들기
 docker/embedder/start.sh # 임베딩 서버 시작(모델 받기, 입력 한도 낮추기)
 evals/            # 장서 가져오기 평가, (이후 단계) 추천·에이전트 평가 시나리오와 채점
 tests/
@@ -180,6 +188,9 @@ openspec/
 - **작은도서관**: 주민센터·아파트 등에 있는 소규모 도서관. 전담 사서가 없고 담당자나 자원봉사자가 운영하는 경우가 많다.
 - **운영자 층 / 기관 공통 / 기관 개별**: 코드의 세 층. 운영자 층은 어느 기관에도 속하지 않는 공식 서지와 외부 연동, 기관 공통은 모든 기관이 쓰는 기능, 기관 개별은 기관 유형에 따라 필요한 기능(어린이 구분)이다.
 - **공식 서지(book)**: 서비스 운영자 층의 서지정보. ISBN이 있는 책만 두고 YES24 값을 공식으로 본다. 기관은 쓸 수 없다.
+- **기여자(contributor)**: 공식 서지 저자 원문을 역할별로 푼 사람. 역할은 `author`(글·지은이), `illustrator`(그림), `translator`(옮김), `editor`(엮음), `supervisor`(감수), `original`(원저·원작), `other`(기획·사진 등)이다. 원문은 그대로 두고 표시는 원문으로 한다. 테이블 `book_contributors`.
+- **저자 키(author keys)**: 기관 도서의 저자 원문에서 지은이(`author`·`original`)만 뽑은 이름 맞춤 키 목록. 공식 서지가 없는 책의 "같은 저자"에 쓴다. 필드 이름은 `author_keys`.
+- **이름 맞춤 키(name key)**: 사람·단체 이름과 시리즈명을 맞춰 보는 값. 공백·문장부호를 지우고 소문자로 바꾼다(`J.K. Rowling` → `jkrowling`). 다른 음역과 동명이인은 풀지 않는다.
 - **기관 도서(library book)**: 이 도서관의 그 책. 파일·입력 값과 ISBN 없는 책이 여기 있다. ISBN이 같은 공식 서지가 있으면 연결하고, 표시할 때 공식 값을 먼저 쓴다. 필드 이름은 `library_book_id`.
 - **장서 / 소장 사본(holding)**: 같은 기관 도서라도 여러 권을 가질 수 있다. 대출은 사본 단위로 한다.
 - **등록번호(accession number)**: 도서관이 사본마다 붙이는 고유 번호. 장서 가져오기에서 사본을 식별하는 기준이다. 필드 이름은 `accession_number`.

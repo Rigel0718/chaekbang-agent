@@ -15,7 +15,9 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.central.contributors import sync_contributors
 from app.central.models import Book
+from app.core.contributors import author_keys
 from app.core.isbn import isbn13_check_digit
 from app.features.children.models import Audience, AudienceSource, LibraryBookAudience
 from app.library.models.catalog import (
@@ -200,10 +202,12 @@ async def _seed_official(session: AsyncSession, books: list[dict]) -> tuple[dict
         insert(Book).values(rows).on_conflict_do_nothing(index_elements=["isbn"]).returning(Book.id)
     )
     created = len(result.all())
-    ids = await session.execute(
-        select(Book.isbn, Book.id).where(Book.isbn.in_([r["isbn"] for r in rows]))
-    )
-    return dict(ids.all()), created
+    officials = (
+        await session.scalars(select(Book).where(Book.isbn.in_([r["isbn"] for r in rows])))
+    ).all()
+    for book in officials:  # 공식 서지를 만드는 다른 경로와 같은 함수. 같은 값이면 쓰지 않는다
+        await sync_contributors(session, book)
+    return {book.isbn: book.id for book in officials}, created
 
 
 async def _seed_library_books(session: AsyncSession, rows: list[dict]) -> int:
@@ -236,7 +240,9 @@ async def _seed_library_books(session: AsyncSession, rows: list[dict]) -> int:
 
 
 def _library_values(book: dict) -> dict:
-    return {k: v for k, v in book.items() if k not in ("audience", "audience_source")}
+    """Core insert라 모델의 저자 키 계산을 거치지 않는다. 같은 함수로 넣는다."""
+    values = {k: v for k, v in book.items() if k not in ("audience", "audience_source")}
+    return {**values, "author_keys": author_keys(book["author"])}
 
 
 async def _seed_audiences(

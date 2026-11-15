@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.central.contributors import sync_contributors
 from app.central.external.yes24.client import StopReason, Yes24Client, Yes24Stopped
 from app.central.external.yes24.goods import get_items_by_isbn
 from app.central.external.yes24.parsing import Yes24Item
@@ -86,6 +87,7 @@ async def _create_official(session: AsyncSession, isbn: str, item: Yes24Item) ->
     )
     book = await _find_official(session, isbn)
     assert book is not None
+    await sync_contributors(session, book)
     return book
 
 

@@ -18,11 +18,12 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.central.models import Book
+from app.core.contributors import author_keys
 from app.core.model_base import ISBN_PATTERN, Base, TimestampMixin, str_enum
-from app.core.text import JAMO_STARTS_FUNCTION
+from app.core.text import JAMO_STARTS_FUNCTION, clean_spaces, kdc_key
 
 # 공식 서지와 기관 도서가 함께 가진 서지 필드. 연결된 도서는 공식 값을 먼저 보여 준다.
 BIBLIOGRAPHIC_FIELDS = (
@@ -103,6 +104,10 @@ class LibraryBook(TimestampMixin, Base):
     author_jamo_starts: Mapped[list[str] | None] = mapped_column(
         ARRAY(Text), Computed(f"{JAMO_STARTS_FUNCTION}(author)", persisted=True)
     )
+    # 저자 키(`app/core/contributors.py`의 `author_keys`): 기관 저자 원문의 지은이 이름 맞춤 키.
+    # 저자를 쓸 때 `_set_author_keys`가 함께 정한다. 기본값이 없어 빠뜨린 직접 저장은 DB가 거부한다.
+    # 연결 여부와 상관없이 채우고, 공식 서지에 연결되지 않은 책에서만 읽는다(같은 저자 조회).
+    author_keys: Mapped[list[str]] = mapped_column(ARRAY(Text))
     publisher: Mapped[str | None] = mapped_column(String(200))
     published_date: Mapped[date | None] = mapped_column(Date)
     list_price: Mapped[int | None] = mapped_column(Integer)
@@ -116,6 +121,19 @@ class LibraryBook(TimestampMixin, Base):
     enrichment_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     book: Mapped[Book | None] = relationship(lazy="joined")
+
+    @validates("author")
+    def _set_author_keys(self, _key: str, value: str) -> str:
+        """저자를 쓰는 모든 ORM 경로(등록, 수정, 가져오기)가 저자 키를 함께 정한다."""
+        self.author_keys = author_keys(value)
+        return value
+
+    @validates("kdc")
+    def _normalize_kdc(self, _key: str, value: str | None) -> str | None:
+        """분류기호는 KDC 숫자 문자열로 맞춘다. 읽을 수 없으면 공백만 정리해 둔다."""
+        if value is None:
+            return None
+        return kdc_key(value) or clean_spaces(value) or None
 
     def shown(self, field: str) -> Any:
         """표시 값: 연결된 공식 서지의 값을 먼저 쓰고, 비어 있으면 기관 값을 쓴다."""

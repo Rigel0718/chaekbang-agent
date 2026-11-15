@@ -19,6 +19,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core import clock
 from app.core.config import get_settings
+from app.core.contributors import author_keys
 from app.core.isbn import normalize_isbn
 from app.core.migrations import PROJECT_ROOT, alembic_config
 from app.core.security import verify_password
@@ -41,6 +42,7 @@ TABLES = (
     "libraries",
     "staff_users",
     "books",
+    "book_contributors",
     "library_books",
     "library_book_audiences",
     "holdings",
@@ -240,6 +242,30 @@ async def test_seed_twice_does_not_duplicate(session: AsyncSession) -> None:
     second = {t: await _count(session, t) for t in TABLES}
     assert first == second
     assert all(created == 0 for created, _ in report.values()), report
+
+
+async def test_seed_contributors_and_author_keys(session: AsyncSession) -> None:
+    """[platform/dev-seed-data] 시드의 기여자와 저자 키 / 시드 뒤 기여자와 저자 키"""
+    await _seed(session)
+    without = await session.scalar(
+        text(
+            "SELECT count(*) FROM books b WHERE NOT EXISTS"
+            " (SELECT 1 FROM book_contributors c WHERE c.book_id = b.id)"
+        )
+    )
+    assert without == 0
+    rows = (await session.execute(text("SELECT author, author_keys FROM library_books"))).all()
+    assert rows
+    assert all(keys == author_keys(author) for author, keys in rows)
+
+
+async def test_seed_twice_keeps_contributors(session: AsyncSession) -> None:
+    """[platform/dev-seed-data] 시드의 기여자와 저자 키 / 두 번 실행해도 기여자가 늘지 않음"""
+    await _seed(session)
+    first = await _count(session, "book_contributors")
+    await _seed(session)
+    assert first > 0
+    assert await _count(session, "book_contributors") == first
 
 
 async def test_seed_is_deterministic(session: AsyncSession) -> None:

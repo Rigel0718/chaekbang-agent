@@ -1,6 +1,7 @@
 """platform/database-schema 스펙 테스트."""
 
 import asyncio
+import unicodedata
 import uuid
 from datetime import date, time
 
@@ -32,6 +33,7 @@ ALL_TABLES = {
     "staff_users",
     "staff_sessions",
     "books",
+    "book_contributors",
     "library_books",
     "library_book_audiences",
     "holdings",
@@ -63,7 +65,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 20
+    assert len(ALL_TABLES) == 21
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -391,3 +393,86 @@ async def test_embedding_rejects_library_book_of_other_library(
         hash="0" * 64,
         embedding=_vector_text(1024),
     )
+
+
+# --- add-book-contributors ---
+
+_CONTRIBUTOR_INSERT = (
+    "INSERT INTO book_contributors (book_id, position, name, name_key, role) "
+    "VALUES (:book_id, :position, :name, :name_key, 'author')"
+)
+
+
+async def test_contributor_table_rejects_bad_rows(session: AsyncSession) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 기여자 테이블의 저장 계층 규칙"""
+    book = await add_book(session, make_isbn(81))
+    row = {"book_id": book["id"], "position": 0, "name": "김영하", "name_key": "김영하"}
+    await session.execute(text(_CONTRIBUTOR_INSERT), row)
+    await assert_sql_rejected(
+        session, _CONTRIBUTOR_INSERT, match="uq_book_contributors_book_id_position", **row
+    )
+    await assert_sql_rejected(
+        session, _CONTRIBUTOR_INSERT, match="name_not_empty", **{**row, "position": 1, "name": ""}
+    )
+    await assert_sql_rejected(
+        session,
+        _CONTRIBUTOR_INSERT,
+        match="fk_book_contributors_book_id_books",
+        **{**row, "book_id": book["id"] + 100000},
+    )
+
+
+async def test_contributors_deleted_with_book(session: AsyncSession) -> None:
+    """[catalog/book-contributors] 공식 서지 기여자 저장 / 공식 서지와 함께 삭제"""
+    book = await add_book(session, make_isbn(82))
+    await session.execute(
+        text(_CONTRIBUTOR_INSERT),
+        {"book_id": book["id"], "position": 0, "name": "김영하", "name_key": "김영하"},
+    )
+    await session.execute(text("DELETE FROM books WHERE id = :id"), {"id": book["id"]})
+    left = await session.scalar(
+        text("SELECT count(*) FROM book_contributors WHERE book_id = :id"), {"id": book["id"]}
+    )
+    assert left == 0
+
+
+async def test_contributor_table_is_shared(engine: AsyncEngine) -> None:
+    """[platform/database-schema] 기관 데이터 테이블 구분 / 기여자 테이블은 기관 공통"""
+
+    def columns(sync_conn):
+        found = inspect(sync_conn)
+        return (
+            {c["name"] for c in found.get_columns("book_contributors")},
+            {fk["referred_table"] for fk in found.get_foreign_keys("book_contributors")},
+        )
+
+    async with engine.connect() as conn:
+        names, referred = await conn.run_sync(columns)
+    assert "book_contributors" in SHARED_TABLES
+    assert "library_id" not in names
+    assert referred == {"books"}
+
+
+async def test_library_book_requires_author_keys(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 저자 키 없는 기관 도서 직접 저장"""
+    await assert_rejected(
+        session,
+        "library_books",
+        library_id=library_a.id,
+        title="t",
+        author="a",
+        match="author_keys",
+    )
+    row = await insert(
+        session, "library_books", library_id=library_a.id, title="t", author="a", author_keys=[]
+    )
+    assert row["author_keys"] == []
+
+
+async def test_lookup_keys_fullwidth_and_nfd(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 찾기 키 열의 전각·분해형 처리"""
+    wide = await add_library_book(session, library_a.id, None, title="ＡＢＣ 살인사건", author="ａ")
+    assert wide["title_jamo_starts"] == jamo_starts("ABC 살인사건")
+    decomposed = unicodedata.normalize("NFD", "데미안")
+    nfd = await add_library_book(session, library_a.id, None, title=decomposed, author="헤세")
+    assert nfd["title_jamo_starts"] == jamo_starts("데미안")
