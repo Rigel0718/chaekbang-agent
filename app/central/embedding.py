@@ -1,12 +1,24 @@
-"""임베딩 인코더 접점. 모델을 실행하는 코드는 어댑터(`external/tei.py`) 하나에 둔다.
+"""임베딩 인코더 접점과 두 층이 함께 쓰는 배치 적재 흐름.
 
-문서(도서)와 질의는 규칙이 다르다. 질의 접두어 같은 모델별 규칙은 구현 안에 두고,
-부르는 쪽은 두 함수만 안다. 벡터는 길이 1로 정규화돼 있다.
+모델을 실행하는 코드는 어댑터(`external/tei.py`) 하나에 둔다. 문서(도서)와 질의는 규칙이 다르다.
+질의 접두어 같은 모델별 규칙은 구현 안에 두고, 부르는 쪽은 두 함수만 안다. 벡터는 길이 1로
+정규화돼 있다.
+
+배치 흐름(`run_layer`)은 공식 서지 벡터와 기관 도서 벡터가 같이 쓴다. 층은 대상 읽기, 저장된 해시
+읽기, 저장만 넘긴다(`EmbeddingLayer`). 인코딩 호출 동안 트랜잭션을 잡지 않고 배치마다 저장을
+끝낸다. 중간에 멈춰도 끝난 배치는 남고 증분 적재로 이어 한다.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
+
+from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
 
 
 class EmbeddingFailure(StrEnum):
@@ -40,3 +52,118 @@ class Embedder(Protocol):
     async def encode_queries(self, texts: Sequence[str]) -> list[list[float]]:
         """검색 질의를 인코딩한다."""
         ...
+
+
+@dataclass
+class EmbeddingRun:
+    targets: int = 0  # 대상 수
+    encoded: int = 0
+    skipped: int = 0  # 해시가 같아 건너뛴 수
+    stopped: EmbeddingError | None = None
+
+    @property
+    def done(self) -> int:
+        return self.encoded + self.skipped
+
+
+@dataclass(frozen=True)
+class PendingText:
+    """인코딩할 대상 하나. `key`는 저장 행의 대상 열 값이다."""
+
+    target_id: int
+    text: str
+    hash: str
+    key: dict[str, Any] = field(default_factory=dict)
+
+
+class EmbeddingLayer(Protocol):
+    """한 층(공식 서지 또는 기관 도서)의 적재 대상과 저장. 대상은 id 순서로 읽는다."""
+
+    async def count(self, session: AsyncSession) -> int: ...
+
+    async def read(self, session: AsyncSession, after_id: int, limit: int) -> list[PendingText]:
+        """id가 after_id보다 큰 대상을 limit개까지, 텍스트와 해시를 만들어 돌려준다."""
+        ...
+
+    async def stored_hashes(self, session: AsyncSession, ids: list[int]) -> dict[int, str]:
+        """현재 모델·텍스트 버전·종류로 저장된 해시."""
+        ...
+
+    async def save(
+        self, session: AsyncSession, pending: list[PendingText], vectors: list[list[float]]
+    ) -> None: ...
+
+
+async def upsert_vectors(
+    session: AsyncSession,
+    model: Any,
+    *,
+    constraint: str,
+    values: dict[str, Any],
+    pending: list[PendingText],
+    vectors: list[list[float]],
+) -> None:
+    """벡터 행을 넣고 같은 키면 벡터와 해시를 바꾼다.
+
+    values는 모든 행에 같은 열(모델 이름, 텍스트 버전, 종류)이다.
+    """
+    statement = insert(model).values(
+        [
+            {**item.key, **values, "embedding": vector, "content_hash": item.hash}
+            for item, vector in zip(pending, vectors, strict=True)
+        ]
+    )
+    await session.execute(
+        statement.on_conflict_do_update(
+            constraint=constraint,
+            set_={
+                "embedding": statement.excluded.embedding,
+                "content_hash": statement.excluded.content_hash,
+                "updated_at": func.now(),
+            },
+        )
+    )
+
+
+async def run_layer(
+    session: AsyncSession,
+    embedder: Embedder,
+    layer: EmbeddingLayer,
+    *,
+    full: bool,
+    batch_size: int | None = None,
+    on_progress: Callable[[EmbeddingRun], None] | None = None,
+) -> EmbeddingRun:
+    """대상을 배치로 인코딩해 저장한다.
+
+    full이면 모두 다시 인코딩하고, 아니면 벡터가 없거나 텍스트 해시가 달라진 대상만 인코딩한다.
+    배치 크기를 주지 않으면 설정 값(`EMBEDDING_BATCH_SIZE`)을 쓴다. 인코더가 실패하면 그 자리에서
+    멈추고 `stopped`에 이유를 담는다. 끝난 배치는 저장돼 있다.
+    """
+    size = batch_size or get_settings().embedding_batch_size
+    run = EmbeddingRun(targets=await layer.count(session))
+    last_id = 0
+    while True:
+        items = await layer.read(session, last_id, size)
+        if not items:
+            break
+        last_id = items[-1].target_id
+        stored = {} if full else await layer.stored_hashes(session, [i.target_id for i in items])
+        pending = [item for item in items if stored.get(item.target_id) != item.hash]
+        await session.commit()  # 인코딩 호출 동안 트랜잭션을 잡지 않는다
+
+        if pending:
+            try:
+                vectors = await embedder.encode_documents([item.text for item in pending])
+                if len(vectors) != len(pending):
+                    raise EmbeddingError(EmbeddingFailure.BAD_RESPONSE, "벡터 수가 입력과 다릅니다")
+            except EmbeddingError as exc:
+                run.stopped = exc
+                return run
+            await layer.save(session, pending, vectors)
+            await session.commit()
+        run.encoded += len(pending)
+        run.skipped += len(items) - len(pending)
+        if on_progress is not None:
+            on_progress(run)
+    return run

@@ -6,23 +6,29 @@
 
 - `books`: ISBN이 있는 책의 공식 서지. 기관 API로는 쓸 수 없다.
 - `book_contributors`: 공식 서지의 기여자(이름, 이름 맞춤 키, 역할, 역할 원문, 순서). 저자 원문에서 다시 만들 수 있는 값이다.
+- `official_book_embeddings`: 공식 서지 벡터. 공식 서지·모델·텍스트 버전·종류마다 하나, 공식 값만으로 만든다. 여러 기관이 함께 쓴다.
 - YES24 호출과 응답 해석
 - 서지정보 채움 실행. 운영자가 `scripts/enrich_books.py`로 돌린다.
-- 임베딩 인코더 접점과 임베딩 서버 호출. 문자열을 받아 벡터를 돌려줄 뿐이고 어떤 책인지 모른다.
+- 임베딩 인코더 접점과 임베딩 서버 호출. 인코더는 문자열을 받아 벡터를 돌려줄 뿐이고 어떤 책인지 모른다.
+- 공식 서지 벡터 적재와 두 층이 함께 쓰는 배치 흐름.
 
 ## 구성
 
 | 파일 | 내용 |
 | --- | --- |
-| `models.py` | `Book`, `BookContributor`, `ExternalSource` |
+| `models.py` | `Book`, `BookContributor`, `OfficialBookEmbedding`, `ExternalSource`, `EMBEDDING_DIM` |
 | `contributors.py` | 출처별 저자 해석기 고르기, 기여자 저장 `sync_contributors`, 다시 맞추기 `rebuild_contributors` |
 | `enrichment.py` | 채움 실행 `run_enrichment`, 접점 `EnrichmentTargets` |
+| `official_books.py` | 공식 서지를 만드는 함수 `create_official`(기여자, 시리즈 키), `series_keys` |
 | `external/yes24/definitions.py` | 엔드포인트, 응답 필드, 오류 코드 |
 | `external/yes24/client.py` | 인증, 호출 속도 제한, 오류 구분 |
 | `external/yes24/parsing.py` | 응답 상품을 `Yes24Item`으로 변환 |
 | `external/yes24/goods.py` | GOODS API 역할 함수 |
+| `external/yes24/category.py` | CATEGORY API 역할 함수 `steady_sellers`(실험 장서 받기 전용) |
 | `external/yes24/contributors.py` | YES24 저자 원문 해석 `parse_yes24_author` |
-| `embedding.py` | 인코더 접점 `Embedder`(`encode_documents`, `encode_queries`, `check`, `name`, `dim`), `EmbeddingError` |
+| `embedding.py` | 인코더 접점 `Embedder`(`encode_documents`, `encode_queries`, `check`, `name`, `dim`), `EmbeddingError`, 두 층의 배치 흐름 `run_layer`·`EmbeddingLayer`·`EmbeddingRun` |
+| `embedding_text.py` | 공식 서지 벡터의 텍스트 `official_embedding_text`(공식 값만, 조립 규칙은 `app/core/embedding_text.py`) |
+| `official_embeddings.py` | 공식 서지 벡터 적재 `run_official_embedding`(대상은 공식 서지 전부, `within`으로 좁힘) |
 | `external/tei.py` | Text Embeddings Inference 어댑터 `TeiEmbedder`, 모델별 질의 접두어 |
 
 임베딩 서버 시작은 `docker/embedder/start.sh`다(모델 받기, 입력 한도 낮추기, 서버 이름 정하기).
@@ -37,7 +43,8 @@
 ## 기여자
 
 - 저자 원문(`Book.author`)은 그대로 두고 표시와 서명·저자 찾기에 쓴다. 기여자는 원문을 역할별 사람으로 푼 파생 값이고, 추천의 "같은 저자" 신호와 역할 표시에 쓴다.
-- 공식 서지를 만드는 경로는 모두 `sync_contributors`를 부른다: 채움(`enrichment._create_official`), 시드(`app/seed/catalog.py`), 평가 표본 적재(`evals/librarian/catalog.py`). 새 경로를 만들면 함께 부른다. 같은 값이면 쓰지 않는다.
+- **외부 응답으로 공식 서지를 만드는 경로는 `official_books.create_official`을 부른다**: 채움(`enrichment.py`)과 실험 장서 적재(`app/seed/experiment.py`). 외부 값만 쓰고, 이미 있는 공식 서지는 고치지 않고, 기여자(`sync_contributors`)와 시리즈 키를 함께 만든다. 시드(`app/seed/catalog.py`)와 평가 표본 적재(`evals/librarian/catalog.py`)는 응답 상품이 없어 `sync_contributors`만 부른다. 새 경로를 만들면 함께 부른다. 같은 값이면 쓰지 않는다.
+- **시리즈 키**(`books.series_keys`): 응답의 시리즈 목록(`Yes24Item.series_names`)에서 시리즈마다 `match_key`를 계산한다. 빈 키와 중복은 빼고 순서는 지킨다. 표시용 `series_name`(이은 문자열)에서는 만들지 않는다. 시리즈명에 쉼표가 들 수 있어서다. 그래서 다시 계산할 수 없고, `rebuild_contributors.py --check`가 "시리즈 키가 빈 시리즈 있는 공식 서지" 건수를 함께 보고한다. 시드와 평가 표본은 빈 목록이다.
 - 역할 표와 기관 파일 해석기는 `app/core/contributors.py`에 있다(운영자 층과 기관 공통이 함께 쓴다). 역할은 일곱(`author`, `illustrator`, `translator`, `editor`, `supervisor`, `original`, `other`)이다.
 - 역할 표나 이름 맞춤 규칙(`app/core/text.py`의 `match_key`)을 고치면 `uv run python scripts/rebuild_contributors.py`로 다시 맞춘다. `--check`는 차이만 센다.
 - 외국 저자의 다른 음역(`조앤 K. 롤링` / `J.K. 롤링`)과 동명이인은 풀지 않는다.
@@ -50,6 +57,9 @@
 
 ## 임베딩
 
+- **벡터는 두 층이다.** 공식 서지에 연결된 책은 공식 서지 벡터(여기, `official_book_embeddings`), 연결되지 않은 책은 기관 도서 벡터(`app/library/recommendation/embeddings.py`, `book_embeddings`)를 쓴다. 공식 서지 벡터는 `Book`만 받는 `official_embedding_text`로 만들어 기관 값이 들어갈 길이 없다. 적재 대상은 공식 서지 전부다. 기관을 지정한 실행은 부르는 쪽이 공식 서지 id 조건(`within`)을 넘긴다.
+- 텍스트는 서명(: 부제), 분류, 소개다. 저자는 넣지 않는다(텍스트 버전 2). 공식 소개가 없으면 소개 없이 만든다(기관 소개로 채우지 않는다). `scripts/embed_books.py`가 끝에 "공식 소개 없음 N건(그중 기관 소개 있음 M건)"을 출력한다.
+- 배치 기본값은 4권이다(`EMBEDDING_BATCH_SIZE`). CPU ONNX에서는 배치가 클수록 느리고 1과 4가 같다(아래 표). GPU에서는 큰 배치가 빠를 수 있어 설정과 `--batch-size`를 남겼다.
 - 모델을 실행하는 코드는 `external/tei.py` 하나다. TEI의 요청·응답 형식은 이 파일 밖으로 나가지 않는다. 적재와 조회는 `Embedder`만 알고, 테스트는 가짜 인코더(`tests/embedding_helpers.py`)로 돈다.
 - 문서(도서)는 접두어 없이, 질의는 모델이 정한 접두어(`query: `)를 붙여 인코딩한다. TEI의 `prompt_name`을 쓰지 않고 앱이 문자열을 붙인다. 결과가 같다는 것은 `tests/embedding_live/`가 확인한다.
 - 항상 `normalize`와 `truncate`를 켠다. 입력 길이 한도(기본 512토큰)는 서버가 정한다. TEI에는 한도를 낮추는 옵션이 없어서 `docker/embedder/start.sh`가 모델 폴더의 `max_seq_length`를 `EMBEDDING_MAX_TOKENS`로 바꿔 띄운다. 모델의 원래 한도(8192토큰)로 띄우면 준비 단계에서 메모리가 6GB를 넘는다.
@@ -87,7 +97,7 @@
 
 적재 시간은 두 번 잰 평균이다. 같은 조건에서도 10~20% 흔들렸다(ONNX 배치 1이 139초, 114초). 질의 p95는 20건 중 느린 한 건이라 흔들림이 크다.
 
-- 가장 빠른 조건끼리 비교하면 약 24% 빠르고(배치 1, 167.5초 → 126.5초), 지금 기본값인 배치 32로는 약 40% 빠르다. 권당 약 1.45초, 5,000권이면 약 2시간이다.
+- 가장 빠른 조건끼리 비교하면 약 24% 빠르고(배치 1, 167.5초 → 126.5초), 당시 기본값인 배치 32로는 약 40% 빠르다. 이 표로 기본값을 4로 낮췄다(`add-official-book-embeddings`). 권당 약 1.45초, 5,000권이면 약 2시간이다.
 - ONNX에서도 배치가 클수록 느리다. 서버가 한 번에 묶는 책들을 가장 긴 책 길이로 채워 계산하는 것으로 보인다. 배치 1과 4는 흔들림 안에서 같다.
 
 ### 모델 바꾸기
@@ -96,21 +106,24 @@
 2. `.env`의 `TEI_MODEL_ID`(변환본 저장소)와 `EMBEDDING_MODEL`(벡터와 함께 저장할 이름, 보통 원본 모델 이름), 필요하면 `EMBEDDING_MAX_TOKENS`를 바꾸고 `docker compose --profile embedding up -d --force-recreate embedder`로 다시 띄운다.
 3. 기준 벡터를 새 모델로 다시 만든다(`uv run python -m tests.embedding_live.reference --write`). 원본 실행기로 만들 수 없으면 변환할 때 sentence-transformers로 원본 벡터와 비교해 둔다.
 4. 질의 접두어가 있는 모델이면 `external/tei.py`의 `QUERY_PREFIXES`에 더한다. 모델 저장소 `config_sentence_transformers.json`의 `prompts`를 확인한다.
-5. `book_embeddings`의 벡터 열은 1024차원이다. 차원이 다른 모델은 마이그레이션이 먼저다.
+5. `official_book_embeddings`와 `book_embeddings`의 벡터 열은 1024차원이다(`EMBEDDING_DIM`). 차원이 다른 모델은 마이그레이션이 먼저다.
 6. `scripts/embed_books.py --incremental`을 돌린다. 모델 이름이 다르면 새 벡터가 따로 저장되고 이전 모델의 벡터는 남는다.
 7. TEI가 아닌 서버나 API를 쓰려면 `Embedder`를 구현한 어댑터를 `external/`에 더한다.
 
 ## YES24 이용 조건
 
-- 소장 도서의 ISBN만 조회한다. 베스트셀러나 카테고리를 돌며 도서 정보를 쌓지 않는다. 상품 검색 `search_items`는 평가 표본 스크립트만 쓴다. 서비스 경로에서 부르지 않는다.
-- 판매가, 판매 상태, 포인트, 판매지수, 평점은 저장하지 않는다.
+- 소장 도서의 ISBN만 조회한다. 베스트셀러나 카테고리를 돌며 도서 정보를 쌓지 않는다.
+- 예외는 둘이고 둘 다 한 번만 받아 저장소 밖 파일(`.gitignore`)에 둔다. 서비스 경로에서 부르지 않는다.
+  - 상품 검색 `search_items`: 평가 표본 약 100권(`evals/librarian/fetch_sample.py`). 테스트 DB 트랜잭션에서만 쓴다.
+  - 카테고리 스테디셀러 `category.steady_sellers`: 실험 장서 약 500권(`evals/collection/fetch.py`). 개발 DB의 가상 기관에만 넣는다(`scripts/seed_experiment.py`). 파일이 있으면 받기가 멈춘다. 서지 출처를 바꾸는 `add-bibliographic-sources`에서 지운다.
+- 판매가, 판매 상태, 포인트, 판매지수, 평점은 저장하지 않는다. 받은 원본 파일에도 넣지 않는다(키 목록은 `definitions.py`의 `VOLATILE_ITEM_KEYS`).
 - 표지는 원본 URL만 저장하고, 조회 응답에 출처와 상품 링크를 함께 돌려준다.
 - 키는 `.env`의 `YES24_API_KEY`에서만 읽고 `X-Api-Key` 헤더로만 보낸다. 출력과 로그에 남기지 않는다.
 
 ## 새 YES24 기능 추가
 
 1. `definitions.py`에 `Endpoint`를 추가한다. 응답 필드는 `ITEM_FIELDS`에 한 줄로 추가한다.
-2. API 묶음별 파일(`goods.py`, 이후 `category.py`)에 역할 함수를 추가하고, 하는 일을 한국어로 적는다.
+2. API 묶음별 파일(`goods.py`, `category.py`)에 역할 함수를 추가하고, 하는 일을 한국어로 적는다. 서비스 경로에서 쓰지 않는 함수는 누가 쓰는지와 이용 조건의 예외인지를 적는다.
 3. 응답 키 문자열은 `definitions.py` 밖에 쓰지 않는다.
 
 API 문서는 `yes24-open-api-guide/`에 있다. 문서와 실제 응답이 다른 곳이 있어서, 새 필드는 실제 응답으로 확인한다.

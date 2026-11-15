@@ -8,15 +8,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.central.contributors import sync_contributors
 from app.central.external.yes24.client import StopReason, Yes24Client, Yes24Stopped
 from app.central.external.yes24.goods import get_items_by_isbn
-from app.central.external.yes24.parsing import Yes24Item
-from app.central.models import Book, ExternalSource
+from app.central.models import Book
+from app.central.official_books import create_official, find_official
 
 DEFAULT_LIMIT = 100
 
@@ -60,37 +57,6 @@ class EnrichmentResult:
         return self.linked + self.enriched + self.not_found + self.mismatch
 
 
-async def _find_official(session: AsyncSession, isbn: str) -> Book | None:
-    return await session.scalar(select(Book).where(Book.isbn == isbn))
-
-
-async def _create_official(session: AsyncSession, isbn: str, item: Yes24Item) -> Book:
-    await session.execute(
-        insert(Book)
-        .values(
-            isbn=isbn,
-            title=item.title,
-            author=item.author,
-            publisher=item.publisher,
-            published_date=item.published_date,
-            list_price=item.list_price,
-            cover_url=item.cover_url,
-            description=item.description,
-            subtitle=item.subtitle,
-            table_of_contents=item.table_of_contents,
-            series_name=item.series_name,
-            external_source=ExternalSource.YES24,
-            external_url=item.url,
-            external_category=item.category,
-        )
-        .on_conflict_do_nothing(index_elements=["isbn"])
-    )
-    book = await _find_official(session, isbn)
-    assert book is not None
-    await sync_contributors(session, book)
-    return book
-
-
 async def _process(
     session: AsyncSession,
     client: Yes24Client,
@@ -98,7 +64,7 @@ async def _process(
     isbn: str,
     result: EnrichmentResult,
 ) -> None:
-    book = await _find_official(session, isbn)
+    book = await find_official(session, isbn)
     await session.commit()  # 외부 호출 전에 트랜잭션을 끝낸다
     if book is not None:
         await targets.link(isbn, book)
@@ -115,7 +81,7 @@ async def _process(
         await targets.mark(isbn, LookupOutcome.NOT_FOUND)
         result.not_found += 1
     else:
-        await targets.link(isbn, await _create_official(session, isbn, item))
+        await targets.link(isbn, await create_official(session, isbn, item))
         result.enriched += 1
 
 

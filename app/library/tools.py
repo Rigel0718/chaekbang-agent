@@ -14,8 +14,8 @@ from pydantic import ConfigDict, Field
 from sqlalchemy import Select
 
 from app.agent.tools import Tool, ToolContext, ToolInput
+from app.core.kdc import kdc_class_name
 from app.library.recommendation.cards import Shelf, shelf_of
-from app.library.recommendation.kdc import kdc_class_name
 from app.library.recommendation.lookup import find_books
 from app.library.recommendation.search import Candidate, get_candidate, search_collection
 from app.library.schemas.guide import DaySchedule, DayStatus, GuideRead, Span

@@ -1,40 +1,34 @@
-"""기관 도서 임베딩의 적재와 조회.
+"""기관 도서 벡터의 적재와 두 층 유사도 조회.
 
-대상은 추천 가능한 기관 도서다(`search.py`의 추천 가능 조건). 인코딩 호출 동안 트랜잭션을 잡지
-않고, 배치마다 저장을 끝낸다. 중간에 멈춰도 끝난 배치는 남고 증분 적재로 이어 한다.
-텍스트 원문은 저장하지 않는다. 벡터, 모델 이름, 텍스트 버전, 해시만 둔다.
+책 하나는 한 층에만 속한다. 공식 서지에 연결된 책은 공식 서지 벡터
+(`app/central/official_embeddings.py`)를, 연결되지 않은 책(ISBN 없음, 못 찾음)은 여기서 만드는
+기관 도서 벡터를 쓴다. 기관 도서 벡터의 대상은
+연결되지 않은 추천 가능한 기관 도서다(`search.py`의 추천 가능 조건). 배치 흐름은 운영자 층의
+`run_layer`와 같다. 텍스트 원문은 저장하지 않는다. 벡터, 모델 이름, 텍스트 버전, 종류, 해시만 둔다.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from sqlalchemy import Select, and_, func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Select, and_, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.central.embedding import Embedder, EmbeddingError, EmbeddingFailure
+from app.central.embedding import (
+    Embedder,
+    EmbeddingRun,
+    PendingText,
+    run_layer,
+    upsert_vectors,
+)
+from app.central.models import Book, OfficialBookEmbedding
+from app.core import embedding_text as rules
+from app.core.embedding_text import TextKind, content_hash
 from app.library.models.catalog import Holding, LibraryBook
 from app.library.models.embedding import BookEmbedding
-from app.library.recommendation.embedding_text import (
-    TEXT_VERSION,
-    build_embedding_text,
-    content_hash,
-)
+from app.library.recommendation.embedding_text import library_embedding_text
 from app.library.recommendation.search import RECOMMENDABLE_STATUSES, recommendable_ids
 
 SIMILAR_LIMIT = 5
-
-
-@dataclass
-class EmbeddingRun:
-    targets: int = 0  # 대상 도서 수
-    encoded: int = 0
-    skipped: int = 0  # 해시가 같아 건너뛴 수
-    stopped: EmbeddingError | None = None
-
-    @property
-    def done(self) -> int:
-        return self.encoded + self.skipped
 
 
 @dataclass(frozen=True)
@@ -43,15 +37,7 @@ class SimilarBook:
     similarity: float  # 코사인 유사도
 
 
-@dataclass(frozen=True)
-class _Pending:
-    library_id: int
-    library_book_id: int
-    text: str
-    hash: str
-
-
-def _target_ids(library_id: int | None) -> Select:
+def _recommendable(library_id: int | None) -> Select:
     """추천 가능한 기관 도서 id. 기관을 주지 않는 것은 운영자 실행뿐이다."""
     if library_id is not None:
         return recommendable_ids(library_id)
@@ -60,101 +46,110 @@ def _target_ids(library_id: int | None) -> Select:
     )
 
 
-async def _stored_hashes(session: AsyncSession, model_name: str, ids: list[int]) -> dict[int, str]:
-    rows = await session.execute(
-        select(BookEmbedding.library_book_id, BookEmbedding.content_hash).where(
-            BookEmbedding.library_book_id.in_(ids),
-            BookEmbedding.model_name == model_name,
-            BookEmbedding.text_version == TEXT_VERSION,
+def held_official_ids(library_id: int) -> Select:
+    """그 기관의 추천 가능한 책에 연결된 공식 서지 id. 기관을 지정한 공식 서지 벡터 적재에 쓴다."""
+    return (
+        select(LibraryBook.book_id)
+        .where(
+            LibraryBook.library_id == library_id,
+            LibraryBook.id.in_(recommendable_ids(library_id)),
+            LibraryBook.book_id.is_not(None),
         )
+        .distinct()
     )
-    return {book_id: stored for book_id, stored in rows}
 
 
-async def _save(
-    session: AsyncSession, model_name: str, pending: list[_Pending], vectors: list[list[float]]
-) -> None:
-    statement = insert(BookEmbedding).values(
-        [
-            {
-                "library_id": item.library_id,
-                "library_book_id": item.library_book_id,
-                "model_name": model_name,
-                "text_version": TEXT_VERSION,
-                "embedding": vector,
-                "content_hash": item.hash,
-            }
-            for item, vector in zip(pending, vectors, strict=True)
+@dataclass(frozen=True)
+class _LibraryLayer:
+    model_name: str
+    kind: TextKind
+    text_version: int
+    library_id: int | None
+
+    def _targets(self) -> Select:
+        return select(LibraryBook.id).where(
+            LibraryBook.id.in_(_recommendable(self.library_id)), LibraryBook.book_id.is_(None)
+        )
+
+    async def count(self, session: AsyncSession) -> int:
+        return await session.scalar(select(func.count()).select_from(self._targets().subquery()))
+
+    async def read(self, session: AsyncSession, after_id: int, limit: int) -> list[PendingText]:
+        books = (
+            await session.scalars(
+                select(LibraryBook)
+                .where(LibraryBook.id.in_(self._targets()), LibraryBook.id > after_id)
+                .order_by(LibraryBook.id)
+                .limit(limit)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        return [
+            PendingText(
+                book.id,
+                text,
+                content_hash(text),
+                {"library_id": book.library_id, "library_book_id": book.id},
+            )
+            for book in books
+            for text in [library_embedding_text(book, self.kind)]
         ]
-    )
-    await session.execute(
-        statement.on_conflict_do_update(
-            constraint="uq_book_embeddings_library_book_model_version",
-            set_={
-                "embedding": statement.excluded.embedding,
-                "content_hash": statement.excluded.content_hash,
-                "updated_at": func.now(),
-            },
+
+    async def stored_hashes(self, session: AsyncSession, ids: list[int]) -> dict[int, str]:
+        rows = await session.execute(
+            select(BookEmbedding.library_book_id, BookEmbedding.content_hash).where(
+                BookEmbedding.library_book_id.in_(ids),
+                BookEmbedding.model_name == self.model_name,
+                BookEmbedding.text_version == self.text_version,
+                BookEmbedding.kind == self.kind,
+            )
         )
-    )
+        return {target: stored for target, stored in rows}
+
+    async def save(
+        self, session: AsyncSession, pending: list[PendingText], vectors: list[list[float]]
+    ) -> None:
+        await upsert_vectors(
+            session,
+            BookEmbedding,
+            constraint="uq_book_embeddings_library_book_model_version_kind",
+            values={
+                "model_name": self.model_name,
+                "text_version": self.text_version,
+                "kind": self.kind.value,
+            },
+            pending=pending,
+            vectors=vectors,
+        )
 
 
-async def run_embedding(
+async def run_library_embedding(
     session: AsyncSession,
     embedder: Embedder,
     *,
     full: bool,
+    batch_size: int | None = None,
+    kind: TextKind = TextKind.FULL,
     library_id: int | None = None,
-    batch_size: int,
     on_progress: Callable[[EmbeddingRun], None] | None = None,
 ) -> EmbeddingRun:
-    """대상 도서를 배치로 인코딩해 저장한다.
-
-    full이면 모두 다시 인코딩하고, 아니면 벡터가 없거나 텍스트 해시가 달라진 도서만 인코딩한다.
-    인코더가 실패하면 그 자리에서 멈추고 `stopped`에 이유를 담는다. 끝난 배치는 저장돼 있다.
-    """
-    targets = _target_ids(library_id)
-    run = EmbeddingRun(
-        targets=await session.scalar(select(func.count()).select_from(targets.subquery())) or 0
+    """공식 서지에 연결되지 않은 추천 가능한 기관 도서의 벡터를 적재한다."""
+    layer = _LibraryLayer(embedder.name, TextKind(kind), rules.TEXT_VERSION, library_id)
+    return await run_layer(
+        session, embedder, layer, full=full, batch_size=batch_size, on_progress=on_progress
     )
-    last_id = 0
-    while True:
-        books = (
-            await session.scalars(
-                select(LibraryBook)
-                .where(LibraryBook.id.in_(targets), LibraryBook.id > last_id)
-                .order_by(LibraryBook.id)
-                .limit(batch_size)
-                .execution_options(populate_existing=True)
-            )
-        ).all()
-        if not books:
-            break
-        last_id = books[-1].id
-        items = [
-            _Pending(book.library_id, book.id, text, content_hash(text))
-            for book in books
-            for text in [build_embedding_text(book)]
-        ]
-        stored = {} if full else await _stored_hashes(session, embedder.name, [b.id for b in books])
-        pending = [item for item in items if stored.get(item.library_book_id) != item.hash]
-        await session.commit()  # 인코딩 호출 동안 트랜잭션을 잡지 않는다
 
-        if pending:
-            try:
-                vectors = await embedder.encode_documents([item.text for item in pending])
-                if len(vectors) != len(pending):
-                    raise EmbeddingError(EmbeddingFailure.BAD_RESPONSE, "벡터 수가 입력과 다릅니다")
-            except EmbeddingError as exc:
-                run.stopped = exc
-                return run
-            await _save(session, embedder.name, pending, vectors)
-            await session.commit()
-        run.encoded += len(pending)
-        run.skipped += len(items) - len(pending)
-        if on_progress is not None:
-            on_progress(run)
-    return run
+
+async def missing_official_descriptions(session: AsyncSession) -> tuple[int, int]:
+    """(공식 소개 없는 공식 서지 수, 그중 연결된 기관 도서에 소개가 있는 수). 적재 출력용."""
+    blank = func.coalesce(func.btrim(Book.description), "") == ""
+    total = await session.scalar(select(func.count()).select_from(Book).where(blank))
+    with_own = await session.scalar(
+        select(func.count(func.distinct(Book.id)))
+        .join(LibraryBook, LibraryBook.book_id == Book.id)
+        .where(blank, func.coalesce(func.btrim(LibraryBook.description), "") != "")
+    )
+    return total or 0, with_own or 0
 
 
 async def similar_books(
@@ -164,15 +159,32 @@ async def similar_books(
     library_id: int,
     query: str,
     limit: int = SIMILAR_LIMIT,
+    kind: TextKind = TextKind.FULL,
 ) -> list[SimilarBook]:
     """질의와 코사인 유사도가 높은 그 기관의 추천 가능한 책.
 
-    조회에 쓴 인코더의 모델 이름과 현재 텍스트 버전의 벡터만 비교한다.
+    연결된 책은 공식 서지 벡터로, 연결되지 않은 책은 기관 도서 벡터로 비교해 한 순위로 합친다.
+    조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가
+    결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다.
     """
     vector = (await embedder.encode_queries([query]))[0]
-    distance = BookEmbedding.embedding.cosine_distance(vector)
-    rows = await session.execute(
-        select(LibraryBook, (1 - distance).label("similarity"))
+    kind = TextKind(kind)
+    recommendable = LibraryBook.id.in_(recommendable_ids(library_id))
+    official_distance = OfficialBookEmbedding.embedding.cosine_distance(vector)
+    own_distance = BookEmbedding.embedding.cosine_distance(vector)
+    linked = (
+        select(LibraryBook.id.label("library_book_id"), official_distance.label("distance"))
+        .join(OfficialBookEmbedding, OfficialBookEmbedding.book_id == LibraryBook.book_id)
+        .where(
+            LibraryBook.library_id == library_id,
+            recommendable,
+            OfficialBookEmbedding.model_name == embedder.name,
+            OfficialBookEmbedding.text_version == rules.TEXT_VERSION,
+            OfficialBookEmbedding.kind == kind,
+        )
+    )
+    own = (
+        select(LibraryBook.id.label("library_book_id"), own_distance.label("distance"))
         .join(
             BookEmbedding,
             and_(
@@ -181,12 +193,20 @@ async def similar_books(
             ),
         )
         .where(
+            LibraryBook.library_id == library_id,
+            LibraryBook.book_id.is_(None),
+            recommendable,
             BookEmbedding.library_id == library_id,
             BookEmbedding.model_name == embedder.name,
-            BookEmbedding.text_version == TEXT_VERSION,
-            LibraryBook.id.in_(recommendable_ids(library_id)),
+            BookEmbedding.text_version == rules.TEXT_VERSION,
+            BookEmbedding.kind == kind,
         )
-        .order_by(distance, LibraryBook.id)
+    )
+    ranked = union_all(linked, own).subquery()
+    rows = await session.execute(
+        select(LibraryBook, (1 - ranked.c.distance).label("similarity"))
+        .join(ranked, ranked.c.library_book_id == LibraryBook.id)
+        .order_by(ranked.c.distance, LibraryBook.id)
         .limit(limit)
     )
     return [SimilarBook(book, float(similarity)) for book, similarity in rows]

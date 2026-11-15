@@ -34,6 +34,7 @@ ALL_TABLES = {
     "staff_sessions",
     "books",
     "book_contributors",
+    "official_book_embeddings",
     "library_books",
     "library_book_audiences",
     "holdings",
@@ -65,7 +66,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 21
+    assert len(ALL_TABLES) == 22
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -342,8 +343,9 @@ async def test_guide_tables_reject_bad_rows(session: AsyncSession, library_a: Te
 
 _EMBEDDING_INSERT = (
     "INSERT INTO book_embeddings"
-    " (library_id, library_book_id, model_name, text_version, embedding, content_hash)"
-    " VALUES (:library_id, :library_book_id, :model_name, 1, (:embedding)::text::vector, :hash)"
+    " (library_id, library_book_id, model_name, text_version, kind, embedding, content_hash)"
+    " VALUES (:library_id, :library_book_id, :model_name, 1, :kind,"
+    " (:embedding)::text::vector, :hash)"
 )
 
 
@@ -358,13 +360,14 @@ async def test_embedding_table_rejects_bad_rows(session: AsyncSession, library_a
         "library_id": library_a.id,
         "library_book_id": mine["id"],
         "model_name": "fake",
+        "kind": "full",
         "hash": "0" * 64,
     }
     await session.execute(text(_EMBEDDING_INSERT), {**row, "embedding": _vector_text(1024)})
     await assert_sql_rejected(
         session,
         _EMBEDDING_INSERT,
-        match="uq_book_embeddings_library_book_model_version",
+        match="uq_book_embeddings_library_book_model_version_kind",
         **row,
         embedding=_vector_text(1024),
     )
@@ -376,6 +379,28 @@ async def test_embedding_table_rejects_bad_rows(session: AsyncSession, library_a
         **{**row, "model_name": "other"},
         embedding=_vector_text(3),
     )
+    await assert_sql_rejected(
+        session,
+        _EMBEDDING_INSERT,
+        match="ck_book_embeddings_kind_not_empty",
+        **{**row, "kind": ""},
+        embedding=_vector_text(1024),
+    )
+
+
+async def test_embedding_kinds_coexist(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 종류가 다른 기관 도서 벡터"""
+    mine = await add_library_book(session, library_a.id)
+    row = {"library_id": library_a.id, "library_book_id": mine["id"], "model_name": "fake"}
+    for kind in ("full", "description"):
+        await session.execute(
+            text(_EMBEDDING_INSERT),
+            {**row, "kind": kind, "hash": "0" * 64, "embedding": _vector_text(1024)},
+        )
+    stored = await session.scalar(
+        text("SELECT count(*) FROM book_embeddings WHERE library_book_id = :id"), {"id": mine["id"]}
+    )
+    assert stored == 2
 
 
 async def test_embedding_rejects_library_book_of_other_library(
@@ -390,9 +415,108 @@ async def test_embedding_rejects_library_book_of_other_library(
         library_id=library_a.id,
         library_book_id=theirs["id"],
         model_name="fake",
+        kind="full",
         hash="0" * 64,
         embedding=_vector_text(1024),
     )
+
+
+# --- add-official-book-embeddings ---
+
+_OFFICIAL_EMBEDDING_INSERT = (
+    "INSERT INTO official_book_embeddings"
+    " (book_id, model_name, text_version, kind, embedding, content_hash)"
+    " VALUES (:book_id, :model_name, 1, :kind, (:embedding)::text::vector, :hash)"
+)
+
+
+async def test_official_embedding_table_rejects_bad_rows(session: AsyncSession) -> None:
+    """[platform/database-schema]
+    마이그레이션으로 스키마 생성 / 공식 서지 임베딩 테이블의 저장 계층 규칙
+    """
+    book = await add_book(session, make_isbn(83))
+    row = {"book_id": book["id"], "model_name": "fake", "kind": "full", "hash": "0" * 64}
+    await session.execute(
+        text(_OFFICIAL_EMBEDDING_INSERT), {**row, "embedding": _vector_text(1024)}
+    )
+    await assert_sql_rejected(
+        session,
+        _OFFICIAL_EMBEDDING_INSERT,
+        match="uq_official_book_embeddings_book_model_version_kind",
+        **row,
+        embedding=_vector_text(1024),
+    )
+    await assert_sql_rejected(
+        session,
+        _OFFICIAL_EMBEDDING_INSERT,
+        match="expected 1024 dimensions",
+        error=DBAPIError,
+        **{**row, "model_name": "other"},
+        embedding=_vector_text(3),
+    )
+    await assert_sql_rejected(
+        session,
+        _OFFICIAL_EMBEDDING_INSERT,
+        match="fk_official_book_embeddings_book_id_books",
+        **{**row, "book_id": book["id"] + 100000},
+        embedding=_vector_text(1024),
+    )
+    await assert_sql_rejected(
+        session,
+        _OFFICIAL_EMBEDDING_INSERT,
+        match="ck_official_book_embeddings_kind_not_empty",
+        **{**row, "kind": ""},
+        embedding=_vector_text(1024),
+    )
+
+
+async def test_official_embeddings_deleted_with_book(session: AsyncSession) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 공식 서지를 지우면 벡터도 지워짐"""
+    book = await add_book(session, make_isbn(84))
+    await session.execute(
+        text(_OFFICIAL_EMBEDDING_INSERT),
+        {
+            "book_id": book["id"],
+            "model_name": "fake",
+            "kind": "full",
+            "hash": "0" * 64,
+            "embedding": _vector_text(1024),
+        },
+    )
+    await session.execute(text("DELETE FROM books WHERE id = :id"), {"id": book["id"]})
+    left = await session.scalar(
+        text("SELECT count(*) FROM official_book_embeddings WHERE book_id = :id"),
+        {"id": book["id"]},
+    )
+    assert left == 0
+
+
+async def test_official_embedding_table_is_shared(engine: AsyncEngine) -> None:
+    """[platform/database-schema] 기관 데이터 테이블 구분 / 공식 서지 임베딩 테이블은 기관 공통"""
+
+    def columns(sync_conn):
+        found = inspect(sync_conn)
+        return (
+            {c["name"] for c in found.get_columns("official_book_embeddings")},
+            {fk["referred_table"] for fk in found.get_foreign_keys("official_book_embeddings")},
+        )
+
+    async with engine.connect() as conn:
+        names, referred = await conn.run_sync(columns)
+    assert "official_book_embeddings" in SHARED_TABLES
+    assert "library_id" not in names
+    assert referred == {"books"}
+
+
+async def test_book_series_keys_default_empty(session: AsyncSession) -> None:
+    """[platform/database-schema]
+    마이그레이션으로 스키마 생성 / 시리즈 키 없는 공식 서지 직접 저장
+    """
+    book = await add_book(session, make_isbn(85))
+    keys = await session.scalar(
+        text("SELECT series_keys FROM books WHERE id = :id"), {"id": book["id"]}
+    )
+    assert keys == []
 
 
 # --- add-book-contributors ---

@@ -7,8 +7,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.external.tei import TeiEmbedder
-from app.library.recommendation.embeddings import run_embedding, similar_books
+from app.library.recommendation.embeddings import similar_books
 from evals.librarian.catalog import DATA_FILE, Sample, load_catalog, load_sample
+from scripts.embed_books import load_layers
 
 QUERY = "공룡을 좋아하는 아이에게 읽어 줄 책"
 
@@ -80,21 +81,25 @@ async def test_long_text_is_cut_at_token_limit(
 async def test_sample_subset_full_then_incremental(
     session: AsyncSession, embedder: TeiEmbedder
 ) -> None:
-    """[catalog/book-embeddings] 전체 적재와 증분 적재 / 증분 재실행은 0건 (실제 서버, 표본 일부)"""
+    """[catalog/book-embeddings] 전체 적재와 증분 적재 / 증분 재실행은 0건
+
+    실제 서버, 표본 일부, 두 층.
+    """
     if not DATA_FILE.exists():
         pytest.skip(f"표본이 없습니다: {DATA_FILE}")
     sample = load_sample(DATA_FILE)
     subset = Sample(sample.fetched_on, sorted(sample.books, key=lambda r: r["isbn13"])[:6])
     catalog = await load_catalog(session, subset)
 
-    full = await run_embedding(
-        session, embedder, full=True, library_id=catalog.library_id, batch_size=4
+    full = await load_layers(
+        session, embedder, full=True, library_id=catalog.library_id, batch_size=4, progress=False
     )
-    assert full.stopped is None and full.encoded == full.targets > 0
-    again = await run_embedding(
-        session, embedder, full=False, library_id=catalog.library_id, batch_size=4
+    assert all(run.stopped is None and run.encoded == run.targets for _, run in full)
+    assert sum(run.targets for _, run in full) > 0
+    again = await load_layers(
+        session, embedder, full=False, library_id=catalog.library_id, batch_size=4, progress=False
     )
-    assert (again.encoded, again.skipped) == (0, full.targets)
+    assert [(run.encoded, run.skipped) for _, run in again] == [(0, run.targets) for _, run in full]
 
     title = next(iter(catalog.titles.values()))
     found = await similar_books(session, embedder, library_id=catalog.library_id, query=title)

@@ -17,9 +17,26 @@ from tests.embedding_helpers import FakeEmbedder, toward, unit
 from tests.external.test_tei_embedder import FakeTei
 from tests.helpers import add_held_book, make_isbn
 
+_numbers = iter(range(900, 10_000))
 
-async def _count(session: AsyncSession) -> int:
-    return await session.scalar(text("SELECT count(*) FROM book_embeddings"))
+
+async def _count(session: AsyncSession, table: str | None = None) -> int:
+    tables = [table] if table else ["official_book_embeddings", "book_embeddings"]
+    total = 0
+    for name in tables:
+        total += await session.scalar(text(f"SELECT count(*) FROM {name}"))
+    return total
+
+
+async def _linked(session: AsyncSession, library_id: int, title: str, **values):
+    """공식 서지에 연결된 기관 도서."""
+    return await add_held_book(
+        session,
+        library_id,
+        isbn=make_isbn(next(_numbers)),
+        official={"title": title, **values},
+        title=f"기관 {title}",
+    )
 
 
 async def _run(session: AsyncSession, embedder, *, full: bool = False, **options) -> int:
@@ -35,6 +52,7 @@ async def _run(session: AsyncSession, embedder, *, full: bool = False, **options
         ["--full", "--incremental"],
         ["--full", "--batch-size", "0"],
         ["--full", "--library-id", "가"],
+        ["--full", "--layer", "books"],
     ],
 )
 def test_invalid_arguments(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
@@ -50,24 +68,52 @@ def test_arguments() -> None:
     args = parse_args(["--incremental", "--library-id", "3", "--batch-size", "8"])
     assert (args.full, args.incremental, args.library_id, args.batch_size) == (False, True, 3, 8)
     assert parse_args(["--full"]).batch_size is None
+    assert parse_args(["--full"]).layer is None
+    assert parse_args(["--full", "--layer", "official"]).layer == "official"
 
 
 async def test_summary_and_exit_ok(
     session: AsyncSession, library_a: Tenant, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """[catalog/book-embeddings] 운영자 실행의 출력과 중단 / 완료 출력"""
-    for i in range(3):
-        await add_held_book(session, library_a.id, title=f"먼저{i}")
-    assert await _run(session, FakeEmbedder(), full=True) == EXIT_OK
+    """[catalog/book-embeddings] 운영자 실행의 출력과 중단 / 완료 출력
+
+    [catalog/book-embeddings] 벡터 종류 / 기본 종류 (출력)
+    """
     for i in range(2):
-        await add_held_book(session, library_a.id, title=f"나중{i}")
+        await _linked(session, library_a.id, f"먼저 공식{i}")
+    await add_held_book(session, library_a.id, title="먼저 기관")
+    assert await _run(session, FakeEmbedder(), full=True) == EXIT_OK
+    await _linked(session, library_a.id, "나중 공식")
+    await add_held_book(session, library_a.id, title="나중 기관")
     capsys.readouterr()
 
     assert await _run(session, FakeEmbedder(), batch_size=2) == EXIT_OK
     out = capsys.readouterr().out
-    assert "대상 5권: 인코딩 2건, 건너뜀 3건" in out
-    assert "모델 fake-model, 텍스트 버전 1" in out
-    assert "[2/5]" in out and "[5/5] 인코딩 2, 건너뜀 3" in out
+    assert (
+        "공식 서지 벡터 3건: 인코딩 1건, 건너뜀 2건 / 기관 도서 벡터 2권: 인코딩 1건, 건너뜀 1건"
+        " (모델 fake-model, 텍스트 버전 2, 종류 full)"
+    ) in out
+    assert "[공식 서지 2/3]" in out and "[공식 서지 3/3] 인코딩 1, 건너뜀 2" in out
+    assert "[기관 도서 2/2] 인코딩 1, 건너뜀 1" in out
+    assert "공식 소개 없음 3건(그중 기관 소개 있음 0건)" in out
+
+
+async def test_one_layer(
+    session: AsyncSession, library_a: Tenant, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """[catalog/book-embeddings] 운영자 실행의 출력과 중단 / 층을 지정한 실행"""
+    await _linked(session, library_a.id, "공식")
+    await add_held_book(session, library_a.id, title="기관")
+    assert await _run(session, FakeEmbedder(), full=True, layer="official") == EXIT_OK
+    out = capsys.readouterr().out
+    assert "공식 서지 벡터 1건: 인코딩 1건" in out
+    assert "기관 도서" not in out
+    assert await _count(session, "official_book_embeddings") == 1
+    assert await _count(session, "book_embeddings") == 0
+
+    assert await _run(session, FakeEmbedder(), full=True, layer="library") == EXIT_OK
+    out = capsys.readouterr().out
+    assert "기관 도서 벡터 1권: 인코딩 1건" in out and "공식 서지" not in out
 
 
 async def test_unreachable_server_stops_with_hint(
@@ -90,15 +136,19 @@ async def test_server_error_mid_run_exits_stopped(
 ) -> None:
     """[catalog/book-embeddings] 운영자 실행의 출력과 중단 / 중간 실패 뒤 이어 하기 (종료 코드)"""
     for i in range(5):
-        await add_held_book(session, library_a.id, title=f"책{i}")
+        await _linked(session, library_a.id, f"책{i}")
+    await add_held_book(session, library_a.id, title="기관 책")
     code = await _run(session, FakeEmbedder(fail_on=2), full=True, batch_size=2)
     captured = capsys.readouterr()
     assert code == EXIT_STOPPED
-    assert "인코딩 2건" in captured.out and "server_error" in captured.err
+    assert "공식 서지 벡터 5건: 인코딩 2건" in captured.out and "server_error" in captured.err
+    assert "기관 도서 벡터" not in captured.out  # 앞 층이 멈추면 뒤 층은 시작하지 않는다
     assert await _count(session) == 2
 
     assert await _run(session, FakeEmbedder(), batch_size=2) == EXIT_OK
-    assert "인코딩 3건, 건너뜀 2건" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "공식 서지 벡터 5건: 인코딩 3건, 건너뜀 2건" in out
+    assert "기관 도서 벡터 1권: 인코딩 1건" in out
 
 
 async def test_other_model_is_a_precondition_error(
@@ -123,8 +173,17 @@ async def test_search_prints_top_five(
 ) -> None:
     """[catalog/book-embeddings] 기관 범위 유사도 조회 / 유사도 순서 (확인 스크립트 출력)"""
     cosines = {"가": 0.2, "나": 0.9, "다": 0.5, "라": 0.7, "마": 0.1, "바": 0.3}
-    for title in cosines:
-        await add_held_book(session, library_a.id, title=title, author=f"{title} 저자")
+    for i, title in enumerate(cosines):
+        if i % 2:
+            await add_held_book(
+                session,
+                library_a.id,
+                isbn=make_isbn(next(_numbers)),
+                official={"title": title, "author": f"{title} 저자"},
+                title=title,
+            )
+        else:
+            await add_held_book(session, library_a.id, title=title, author=f"{title} 저자")
     await add_held_book(session, library_b.id, title="남의 책")
     embedder = FakeEmbedder(
         vectors={"질의": unit(1), "남의": unit(1), **{t: toward(c) for t, c in cosines.items()}}
@@ -187,9 +246,12 @@ async def test_sample_run_loads_then_reruns_with_zero(
     )
     out = capsys.readouterr().out
     assert code == EXIT_OK
-    targets = sum(len(call) for call in embedder.document_calls)
-    assert f"전체 적재: 대상 {targets}권, 인코딩 {targets}건" in out
-    assert f"증분 적재: 인코딩 0건, 건너뜀 {targets}건" in out
+    # 분실·제적 사본만 남은 책은 빠진다
+    assert 0 < sum(len(call) for call in embedder.document_calls) <= 12
+    assert "전체 적재: 공식 서지 벡터 " in out and " / 기관 도서 벡터 " in out
+    assert "증분 적재: " in out
+    assert "인코딩 0건, 건너뜀" in out.split("증분 적재: ")[1]
+    assert out.split("증분 적재: ")[1].splitlines()[0].count("인코딩 0건") == 2
     assert out.count("표본 저자") == 5
 
 

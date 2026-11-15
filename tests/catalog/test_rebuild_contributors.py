@@ -140,3 +140,14 @@ def test_arguments(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         rebuild.parse_args(["--full"])
     assert exc.value.code == 1
+
+
+async def test_check_counts_books_missing_series_keys(
+    session: AsyncSession, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """[catalog/books] 시리즈 키 (다시 만들기 확인이 시리즈 키가 빈 공식 서지를 센다)"""
+    await add_book(session, make_isbn(310), series_name="민들레그림책")
+    await add_book(session, make_isbn(311), series_name="우리 그림책", series_keys=["우리그림책"])
+    await add_book(session, make_isbn(312))
+    assert await rebuild.execute(session, check=True) == 0
+    assert "시리즈 키가 빈 시리즈 있는 공식 서지: 1건" in capsys.readouterr().out

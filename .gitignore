@@ -12,3 +12,5 @@ yes24-open-api-guide/category.json
 # YES24 평가 표본. 같은 이유로 저장소에 넣지 않는다
 evals/librarian/data/
 evals/catalog_search/data/
+# YES24 실험 장서 원본(약 500권). 같은 이유로 저장소에 넣지 않는다. 한 번만 받는다
+evals/collection/data/

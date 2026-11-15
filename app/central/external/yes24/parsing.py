@@ -23,9 +23,10 @@ class Yes24Item:
     table_of_contents: str | None
     cover_url: str | None
     subtitle: str | None
-    series_name: str | None
+    series_name: str | None  # 표시용: 시리즈를 ", "로 이은 것
     url: str | None
     category: str | None
+    series_names: tuple[str, ...] = ()  # 응답 목록 그대로(빈 값 제외). 시리즈 키는 이것으로 만든다
 
 
 def _raw(item: dict[str, Any], name: str) -> Any:
@@ -76,15 +77,20 @@ def parse_price(value: Any) -> int | None:
     return int(price)
 
 
-def _series_name(item: dict[str, Any]) -> str | None:
+def _series_names(item: dict[str, Any]) -> tuple[str, ...]:
     series = _raw(item, "series")
     if not isinstance(series, list):
-        return None
-    names = [_clean(s.get(SERIES_NAME_KEY)) for s in series if isinstance(s, dict)]
-    return _fit("series", ", ".join(n for n in names if n) or None)
+        return ()
+    names = (_clean(s.get(SERIES_NAME_KEY)) for s in series if isinstance(s, dict))
+    return tuple(n for n in names if n)
+
+
+def _series_name(names: tuple[str, ...]) -> str | None:
+    return _fit("series", ", ".join(names) or None)
 
 
 def parse_item(item: dict[str, Any]) -> Yes24Item:
+    series_names = _series_names(item)
     return Yes24Item(
         isbn13=_text(item, "isbn13"),
         title=_text(item, "title"),
@@ -96,7 +102,8 @@ def parse_item(item: dict[str, Any]) -> Yes24Item:
         table_of_contents=_text(item, "table_of_contents"),
         cover_url=_text(item, "cover_url"),
         subtitle=_text(item, "subtitle"),
-        series_name=_series_name(item),
+        series_name=_series_name(series_names),
         url=_text(item, "url"),
         category=_text(item, "category"),
+        series_names=series_names,
     )

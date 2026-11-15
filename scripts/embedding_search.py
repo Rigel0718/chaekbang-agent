@@ -26,10 +26,7 @@ from app.central.embedding import Embedder, EmbeddingError  # noqa: E402
 from app.central.external.tei import TeiEmbedder  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.library.models.library import Library  # noqa: E402
-from app.library.recommendation.embeddings import (  # noqa: E402
-    run_embedding,
-    similar_books,
-)
+from app.library.recommendation.embeddings import similar_books  # noqa: E402
 from app.seed.runner import (  # noqa: E402
     CONNECT_TIMEOUT_SECONDS,
     SeedPreconditionError,
@@ -48,7 +45,8 @@ from scripts.embed_books import (  # noqa: E402
     EXIT_PRECONDITION,
     EXIT_STOPPED,
     Parser,
-    print_progress,
+    describe,
+    load_layers,
     report_failure,
 )
 
@@ -99,7 +97,11 @@ async def execute(session: AsyncSession, embedder: Embedder, library_id: int, qu
 async def execute_sample(
     session: AsyncSession, embedder: Embedder, sample: Sample, query: str, *, batch_size: int
 ) -> int:
-    """표본을 가상 기관에 넣고 전체 적재 → 증분 적재 → 조회를 한다. 되돌리기는 부르는 쪽이 한다."""
+    """표본을 가상 기관에 넣고 두 층 전체 적재 → 증분 적재 → 조회를 한다.
+
+    되돌리기는 부르는 쪽이 한다.
+    표본 중 공식 서지가 있는 책은 공식 서지 벡터, ISBN 없이 넣은 책은 기관 도서 벡터가 된다.
+    """
     try:
         await embedder.check()
     except EmbeddingError as exc:
@@ -109,28 +111,31 @@ async def execute_sample(
     print(f"표본 {len(sample.books)}권을 가상 기관 {catalog.library_id}에 넣었습니다.")
 
     started = time.monotonic()
-    full = await run_embedding(
-        session,
-        embedder,
-        full=True,
-        library_id=catalog.library_id,
-        batch_size=batch_size,
-        on_progress=print_progress,
+    full = await load_layers(
+        session, embedder, full=True, library_id=catalog.library_id, batch_size=batch_size
     )
     print(
-        f"전체 적재: 대상 {full.targets}권, 인코딩 {full.encoded}건 "
-        f"({time.monotonic() - started:.1f}초)"
+        "전체 적재: "
+        + " / ".join(describe(name, run) for name, run in full)
+        + f" ({time.monotonic() - started:.1f}초)"
     )
-    if full.stopped is not None:
-        return report_failure(full.stopped)
+    for _, run in full:
+        if run.stopped is not None:
+            return report_failure(run.stopped)
 
-    again = await run_embedding(
-        session, embedder, full=False, library_id=catalog.library_id, batch_size=batch_size
+    again = await load_layers(
+        session,
+        embedder,
+        full=False,
+        library_id=catalog.library_id,
+        batch_size=batch_size,
+        progress=False,
     )
-    print(f"증분 적재: 인코딩 {again.encoded}건, 건너뜀 {again.skipped}건")
-    if again.stopped is not None:
-        return report_failure(again.stopped)
-    if again.encoded != 0:
+    print("증분 적재: " + " / ".join(describe(name, run) for name, run in again))
+    for _, run in again:
+        if run.stopped is not None:
+            return report_failure(run.stopped)
+    if any(run.encoded != 0 for _, run in again):
         print("증분 재실행의 인코딩이 0건이 아닙니다.", file=sys.stderr)
         return EXIT_STOPPED
     return await search(session, embedder, catalog.library_id, query)
