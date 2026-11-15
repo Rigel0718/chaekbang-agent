@@ -45,7 +45,8 @@ ROLE_WORDS: dict[str, ContributorRole] = {
     **dict.fromkeys(("감수", "감수자"), ContributorRole.SUPERVISOR),
     **dict.fromkeys(("원저", "원작", "원안"), ContributorRole.ORIGINAL),
     **dict.fromkeys(
-        ("기획", "사진", "해설", "구성", "각색", "기획편집", "자문"), ContributorRole.OTHER
+        ("기획", "사진", "해설", "해제", "구성", "각색", "기획편집", "자문"),
+        ContributorRole.OTHER,
     ),
 }
 _ROLE_PREFIXES = ("공", "등")  # 공저, 공역, 등저

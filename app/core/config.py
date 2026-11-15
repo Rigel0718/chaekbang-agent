@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     embedding_model: str = "dragonkue/snowflake-arctic-embed-l-v2.0-ko"
     embedding_dim: int = 1024  # book_embeddings의 벡터 열 차원과 같아야 한다
     embedding_max_tokens: int = 512  # 넘는 입력은 앞부분만 인코딩한다. 바꾸면 --full로 다시 적재
-    embedding_batch_size: int = 32  # TEI의 클라이언트 배치 한도(기본 32)를 넘지 않게 둔다
+    # 한 번에 인코딩할 권수. CPU ONNX에서는 배치가 클수록 느리다(4가 1과 같고 32보다 약 18% 빠름).
+    # TEI의 클라이언트 배치 한도(기본 32)를 넘지 않게 둔다
+    embedding_batch_size: int = 4
     embedding_timeout_seconds: float = 600.0  # CPU에서 512토큰 32권에 2분쯤 걸린다
 
 

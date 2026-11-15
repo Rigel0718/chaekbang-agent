@@ -1,6 +1,7 @@
-"""[catalog/book-embeddings] 저장, 적재 대상, 전체·증분 적재, 기관 범위 유사도 조회.
+"""[catalog/book-embeddings] 두 층 저장, 적재 대상, 전체·증분 적재, 기관 범위 유사도 조회.
 
-임베딩 서버 없이 가짜 인코더로 돈다.
+공식 서지에 연결된 책은 공식 서지 벡터, 연결되지 않은 책은 기관 도서 벡터. 임베딩 서버 없이 가짜
+인코더로 돈다.
 """
 
 import pytest
@@ -8,57 +9,138 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.embedding import EmbeddingFailure
-from app.library.recommendation import embeddings
-from app.library.recommendation.embedding_text import content_hash
-from app.library.recommendation.embeddings import run_embedding, similar_books
+from app.central.embedding_text import official_embedding_text
+from app.central.models import Book
+from app.central.official_embeddings import run_official_embedding
+from app.core import embedding_text as rules
+from app.core.embedding_text import content_hash
+from app.library.recommendation.embeddings import (
+    held_official_ids,
+    missing_official_descriptions,
+    run_library_embedding,
+    similar_books,
+)
 from tests.conftest import Tenant
 from tests.embedding_helpers import FakeEmbedder, toward, unit
-from tests.helpers import add_held_book
+from tests.helpers import add_book, add_held_book, add_holding, add_library_book, make_isbn
+
+_numbers = iter(range(700, 10_000))
 
 
-async def _books(session: AsyncSession, library_id: int, count: int) -> list[int]:
+async def _own_books(session: AsyncSession, library_id: int, count: int, **values) -> list[int]:
+    """공식 서지 없는 책(ISBN 없음)."""
     return [
-        (await add_held_book(session, library_id, title=f"책{i}", description=f"소개{i}"))["id"]
+        (
+            await add_held_book(
+                session, library_id, title=f"책{i}", description=f"소개{i}", **values
+            )
+        )["id"]
         for i in range(count)
     ]
 
 
-async def _rows(session: AsyncSession) -> list:
+async def _official(session: AsyncSession, **values) -> dict:
+    defaults = {"title": "공식 서명", "description": "공식 소개"}
+    return await add_book(session, make_isbn(next(_numbers)), **{**defaults, **values})
+
+
+async def _hold(session: AsyncSession, library_id: int, book: dict, *statuses: str, **values):
+    """공식 서지에 연결된 기관 도서와 사본."""
+    values.setdefault("title", f"기관 서명 {book['id']}")
+    library_book = await add_library_book(
+        session, library_id, book["isbn"], book_id=book["id"], **values
+    )
+    for status in statuses or ("available",):
+        await add_holding(
+            session, library_id, library_book["id"], f"EB{next(_numbers):05d}", status=status
+        )
+    return library_book
+
+
+async def _officials(session: AsyncSession, library_id: int, count: int) -> list[int]:
+    ids = []
+    for i in range(count):
+        book = await _official(session, title=f"공식{i}", description=f"공식 소개{i}")
+        await _hold(session, library_id, book)
+        ids.append(book["id"])
+    return ids
+
+
+async def _official_rows(session: AsyncSession) -> list:
     result = await session.execute(
         text(
-            "SELECT library_id, library_book_id, model_name, text_version, content_hash,"
+            "SELECT book_id, model_name, text_version, kind, content_hash,"
             " vector_dims(embedding) AS dims, created_at, updated_at"
-            " FROM book_embeddings ORDER BY library_book_id, model_name, text_version"
+            " FROM official_book_embeddings ORDER BY book_id, model_name, text_version, kind"
         )
     )
     return list(result.mappings())
 
 
-async def _load(session: AsyncSession, embedder: FakeEmbedder, *, full: bool, **options):
+async def _own_rows(session: AsyncSession) -> list:
+    result = await session.execute(
+        text(
+            "SELECT library_id, library_book_id, model_name, text_version, kind, content_hash,"
+            " vector_dims(embedding) AS dims, created_at, updated_at"
+            " FROM book_embeddings ORDER BY library_book_id, model_name, text_version, kind"
+        )
+    )
+    return list(result.mappings())
+
+
+async def _load_official(session, embedder, *, full: bool, **options):
     options.setdefault("batch_size", 32)
-    return await run_embedding(session, embedder, full=full, **options)
+    return await run_official_embedding(session, embedder, full=full, **options)
+
+
+async def _load_own(session, embedder, *, full: bool, **options):
+    options.setdefault("batch_size", 32)
+    return await run_library_embedding(session, embedder, full=full, **options)
+
+
+async def _load_both(session, embedder, *, full: bool, library_id: int | None = None):
+    within = held_official_ids(library_id) if library_id is not None else None
+    official = await _load_official(session, embedder, full=full, within=within)
+    own = await _load_own(session, embedder, full=full, library_id=library_id)
+    return official, own
+
+
+# --- 전체·증분 적재 ---
 
 
 async def test_full_load(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 전체 적재와 증분 적재 / 전체 적재"""
-    ids = await _books(session, library_a.id, 5)
-    run = await _load(session, FakeEmbedder(), full=True)
-    assert (run.targets, run.encoded, run.skipped, run.stopped) == (5, 5, 0, None)
-    rows = await _rows(session)
-    assert [r["library_book_id"] for r in rows] == ids
-    assert {r["dims"] for r in rows} == {1024}
-    assert {(r["library_id"], r["model_name"], r["text_version"]) for r in rows} == {
-        (library_a.id, "fake-model", 1)
+    official_ids = await _officials(session, library_a.id, 5)
+    own_ids = await _own_books(session, library_a.id, 5)
+    official, own = await _load_both(session, FakeEmbedder(), full=True)
+    assert (official.targets, official.encoded, official.skipped, official.stopped) == (
+        5,
+        5,
+        0,
+        None,
+    )
+    assert (own.targets, own.encoded, own.skipped, own.stopped) == (5, 5, 0, None)
+    rows = await _official_rows(session)
+    assert [r["book_id"] for r in rows] == official_ids
+    assert {(r["model_name"], r["text_version"], r["kind"], r["dims"]) for r in rows} == {
+        ("fake-model", rules.TEXT_VERSION, "full", 1024)
+    }
+    own_rows = await _own_rows(session)
+    assert [r["library_book_id"] for r in own_rows] == own_ids
+    assert {(r["library_id"], r["kind"], r["dims"]) for r in own_rows} == {
+        (library_a.id, "full", 1024)
     }
 
 
 async def test_incremental_rerun_encodes_nothing(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 전체 적재와 증분 적재 / 증분 재실행은 0건"""
-    await _books(session, library_a.id, 5)
-    await _load(session, FakeEmbedder(), full=True)
+    await _officials(session, library_a.id, 3)
+    await _own_books(session, library_a.id, 2)
+    await _load_both(session, FakeEmbedder(), full=True)
     again = FakeEmbedder()
-    run = await _load(session, again, full=False)
-    assert (run.targets, run.encoded, run.skipped) == (5, 0, 5)
+    official, own = await _load_both(session, again, full=False)
+    assert (official.targets, official.encoded, official.skipped) == (3, 0, 3)
+    assert (own.targets, own.encoded, own.skipped) == (2, 0, 2)
     assert again.document_calls == []
 
 
@@ -66,9 +148,9 @@ async def test_incremental_encodes_changed_book_only(
     session: AsyncSession, library_a: Tenant
 ) -> None:
     """[catalog/book-embeddings] 전체 적재와 증분 적재 / 바뀐 책만 다시 인코딩"""
-    ids = await _books(session, library_a.id, 3)
-    await _load(session, FakeEmbedder(), full=True)
-    before = {r["library_book_id"]: r for r in await _rows(session)}
+    ids = await _own_books(session, library_a.id, 3)
+    await _load_own(session, FakeEmbedder(), full=True)
+    before = {r["library_book_id"]: r for r in await _own_rows(session)}
     # 같은 트랜잭션에서는 now()가 같아 고친 시각 비교가 안 되므로 저장된 시각을 과거로 둔다
     await session.execute(text("UPDATE book_embeddings SET updated_at = now() - interval '1 day'"))
     await session.execute(
@@ -76,38 +158,70 @@ async def test_incremental_encodes_changed_book_only(
     )
 
     again = FakeEmbedder()
-    run = await _load(session, again, full=False)
+    run = await _load_own(session, again, full=False)
     assert (run.encoded, run.skipped) == (1, 2)
     assert [len(call) for call in again.document_calls] == [1]
     assert "고친 소개" in again.document_calls[0][0]
-    after = {r["library_book_id"]: r for r in await _rows(session)}
+    after = {r["library_book_id"]: r for r in await _own_rows(session)}
     assert after[ids[1]]["content_hash"] != before[ids[1]]["content_hash"]
     assert after[ids[1]]["content_hash"] == content_hash(again.document_calls[0][0])
     assert after[ids[1]]["updated_at"] > after[ids[0]]["updated_at"]
     assert after[ids[0]]["content_hash"] == before[ids[0]]["content_hash"]
 
 
-async def test_incremental_encodes_new_book_only(session: AsyncSession, library_a: Tenant) -> None:
+async def test_incremental_encodes_new_official_only(
+    session: AsyncSession, library_a: Tenant
+) -> None:
     """[catalog/book-embeddings] 전체 적재와 증분 적재 / 새 책만 인코딩"""
-    await _books(session, library_a.id, 2)
-    await _load(session, FakeEmbedder(), full=True)
-    await add_held_book(session, library_a.id, title="새로 들어온 책")
+    await _officials(session, library_a.id, 2)
+    await _load_official(session, FakeEmbedder(), full=True)
+    await _official(session, title="새로 생긴 공식 서지", description=None)
     again = FakeEmbedder()
-    run = await _load(session, again, full=False)
+    run = await _load_official(session, again, full=False)
     assert (run.targets, run.encoded, run.skipped) == (3, 1, 2)
-    assert again.document_calls == [["새로 들어온 책\n테스트 저자"]]
+    assert again.document_calls == [["새로 생긴 공식 서지"]]
+
+
+async def test_later_linked_book(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 전체 적재와 증분 적재 / 나중에 연결된 책"""
+    (own_id,) = await _own_books(session, library_a.id, 1)
+    await _load_both(session, FakeEmbedder(), full=True)
+    book = await _official(session, title="이제 연결된 책")
+    await session.execute(
+        text("UPDATE library_books SET book_id = :book, isbn = :isbn WHERE id = :id"),
+        {"book": book["id"], "isbn": book["isbn"], "id": own_id},
+    )
+    again = FakeEmbedder()
+    official, own = await _load_both(session, again, full=False)
+    assert (official.encoded, own.targets, own.encoded) == (1, 0, 0)
+    assert [r["book_id"] for r in await _official_rows(session)] == [book["id"]]
+    assert [r["library_book_id"] for r in await _own_rows(session)] == [own_id]  # 지우지 않는다
 
 
 async def test_batch_size(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 전체 적재와 증분 적재 / 배치 크기"""
-    await _books(session, library_a.id, 5)
+    await _officials(session, library_a.id, 5)
     embedder = FakeEmbedder()
     progress: list[int] = []
-    await _load(
+    await _load_official(
         session, embedder, full=True, batch_size=2, on_progress=lambda r: progress.append(r.done)
     )
     assert [len(call) for call in embedder.document_calls] == [2, 2, 1]
     assert progress == [2, 4, 5]
+
+
+async def test_default_batch_size(
+    session: AsyncSession, library_a: Tenant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[catalog/book-embeddings] 전체 적재와 증분 적재 / 배치 기본값"""
+    from app.core.config import Settings, get_settings
+
+    assert Settings.model_fields["embedding_batch_size"].default == 4
+    monkeypatch.setattr(get_settings(), "embedding_batch_size", 4)  # .env 값과 상관없이 기본값으로
+    await _own_books(session, library_a.id, 5)
+    embedder = FakeEmbedder()
+    await run_library_embedding(session, embedder, full=True)
+    assert [len(call) for call in embedder.document_calls] == [4, 1]
 
 
 async def test_full_rerun_encodes_everything_again(
@@ -117,29 +231,47 @@ async def test_full_rerun_encodes_everything_again(
 
     [catalog/book-embeddings] 벡터와 메타데이터 저장 / 같은 키는 한 행
     """
-    ids = await _books(session, library_a.id, 3)
-    await _load(session, FakeEmbedder(), full=True)
-    again = FakeEmbedder(vectors={"책": unit(1)})
-    run = await _load(session, again, full=True)
+    ids = await _officials(session, library_a.id, 3)
+    await _load_official(session, FakeEmbedder(), full=True)
+    again = FakeEmbedder(vectors={"공식": unit(1)})
+    run = await _load_official(session, again, full=True)
     assert (run.encoded, run.skipped) == (3, 0)
-    assert len(await _rows(session)) == 3
+    assert len(await _official_rows(session)) == 3
     stored = await session.scalar(
-        text("SELECT embedding::text FROM book_embeddings WHERE library_book_id = :id"),
+        text("SELECT embedding::text FROM official_book_embeddings WHERE book_id = :id"),
         {"id": ids[0]},
     )
     assert stored.startswith("[1,0,0")  # 두 번째 값으로 바뀌어 있다
+
+
+async def test_failure_keeps_finished_batches(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 운영자 실행의 출력과 중단 / 중간 실패 뒤 이어 하기"""
+    await _officials(session, library_a.id, 5)
+    run = await _load_official(session, FakeEmbedder(fail_on=2), full=True, batch_size=2)
+    assert run.stopped is not None and run.stopped.failure is EmbeddingFailure.SERVER_ERROR
+    assert (run.encoded, len(await _official_rows(session))) == (2, 2)
+
+    rest = await _load_official(session, FakeEmbedder(), full=False, batch_size=2)
+    assert (rest.encoded, rest.skipped, rest.stopped) == (3, 2, None)
+    assert len(await _official_rows(session)) == 5
+
+
+# --- 저장 ---
 
 
 async def test_text_versions_coexist(
     session: AsyncSession, library_a: Tenant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """[catalog/book-embeddings] 벡터와 메타데이터 저장 / 텍스트 버전이 다른 벡터 공존"""
-    await _books(session, library_a.id, 1)
-    await _load(session, FakeEmbedder(), full=False)
-    monkeypatch.setattr(embeddings, "TEXT_VERSION", 2)
-    run = await _load(session, FakeEmbedder(), full=False)
-    assert run.encoded == 1
-    assert [r["text_version"] for r in await _rows(session)] == [1, 2]
+    await _officials(session, library_a.id, 1)
+    await _own_books(session, library_a.id, 1)
+    await _load_both(session, FakeEmbedder(), full=False)
+    monkeypatch.setattr(rules, "TEXT_VERSION", rules.TEXT_VERSION + 1)
+    official, own = await _load_both(session, FakeEmbedder(), full=False)
+    assert (official.encoded, own.encoded) == (1, 1)
+    versions = [rules.TEXT_VERSION - 1, rules.TEXT_VERSION]
+    assert [r["text_version"] for r in await _official_rows(session)] == versions
+    assert [r["text_version"] for r in await _own_rows(session)] == versions
 
 
 async def test_model_names_coexist(session: AsyncSession, library_a: Tenant) -> None:
@@ -147,11 +279,11 @@ async def test_model_names_coexist(session: AsyncSession, library_a: Tenant) -> 
 
     [catalog/book-embeddings] 인코더 교체 / 가짜 인코더로 적재와 조회
     """
-    await _books(session, library_a.id, 1)
-    await _load(session, FakeEmbedder("model-a"), full=False)
-    run = await _load(session, FakeEmbedder("model-b"), full=False)
+    await _officials(session, library_a.id, 1)
+    await _load_official(session, FakeEmbedder("model-a"), full=False)
+    run = await _load_official(session, FakeEmbedder("model-b"), full=False)
     assert run.encoded == 1
-    assert [r["model_name"] for r in await _rows(session)] == ["model-a", "model-b"]
+    assert [r["model_name"] for r in await _official_rows(session)] == ["model-a", "model-b"]
     found = await similar_books(
         session, FakeEmbedder("model-b"), library_id=library_a.id, query="책"
     )
@@ -160,25 +292,43 @@ async def test_model_names_coexist(session: AsyncSession, library_a: Tenant) -> 
 
 async def test_original_text_is_not_stored(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 벡터와 메타데이터 저장 / 원문 미저장"""
-    await add_held_book(
-        session, library_a.id, title="공룡 대탐험", description="아주 특별한 소개 문구"
-    )
+    book = await _official(session, title="공룡 대탐험", description="아주 특별한 공식 소개 문구")
+    await _hold(session, library_a.id, book)
+    await add_held_book(session, library_a.id, title="고양이 탐정", description="기관 소개 문구")
     embedder = FakeEmbedder()
-    await _load(session, embedder, full=True)
-    row = (await session.execute(text("SELECT * FROM book_embeddings"))).mappings().one()
-    assert row["content_hash"] == content_hash(embedder.document_calls[0][0])
-    assert set(row) == {
-        "id",
-        "library_id",
-        "library_book_id",
-        "model_name",
-        "text_version",
-        "embedding",
-        "content_hash",
-        "created_at",
-        "updated_at",
+    await _load_both(session, embedder, full=True)
+    texts = [t for call in embedder.document_calls for t in call]
+    columns = {
+        "official_book_embeddings": {"id", "book_id"},
+        "book_embeddings": {"id", "library_id", "library_book_id"},
     }
-    assert not any("소개 문구" in str(value) or "공룡" in str(value) for value in row.values())
+    for table, keys in columns.items():
+        row = (await session.execute(text(f"SELECT * FROM {table}"))).mappings().one()
+        assert row["content_hash"] in {content_hash(t) for t in texts}
+        assert set(row) == keys | {
+            "model_name",
+            "text_version",
+            "kind",
+            "embedding",
+            "content_hash",
+            "created_at",
+            "updated_at",
+        }
+        values = [str(value) for value in row.values()]
+        assert not any("소개 문구" in v or "공룡" in v or "고양이" in v for v in values)
+
+
+async def test_default_kind_is_full(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 벡터 종류 / 기본 종류"""
+    await _officials(session, library_a.id, 1)
+    await _own_books(session, library_a.id, 1)
+    await run_official_embedding(session, FakeEmbedder(), full=True)
+    await run_library_embedding(session, FakeEmbedder(), full=True)
+    assert [r["kind"] for r in await _official_rows(session)] == ["full"]
+    assert [r["kind"] for r in await _own_rows(session)] == ["full"]
+
+
+# --- 적재 대상 ---
 
 
 async def test_books_without_recommendable_holdings_are_skipped(
@@ -188,56 +338,154 @@ async def test_books_without_recommendable_holdings_are_skipped(
     kept = await add_held_book(session, library_a.id, "on_loan", title="대출 중")
     await add_held_book(session, library_a.id, "withdrawn", "lost", title="빠진 책")
     await add_held_book(session, library_a.id, "damaged", title="파손")
-    run = await _load(session, FakeEmbedder(), full=True)
+    run = await _load_own(session, FakeEmbedder(), full=True)
     assert run.targets == 1
-    assert [r["library_book_id"] for r in await _rows(session)] == [kept["id"]]
+    assert [r["library_book_id"] for r in await _own_rows(session)] == [kept["id"]]
 
 
 async def test_book_without_isbn_is_embedded(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 적재 대상 / ISBN 없는 책 포함"""
     book = await add_held_book(session, library_a.id, isbn=None, title="ISBN 없는 그림책")
     assert book["isbn"] is None and book["book_id"] is None
-    await _load(session, FakeEmbedder(), full=True)
-    assert [r["library_book_id"] for r in await _rows(session)] == [book["id"]]
+    await _load_own(session, FakeEmbedder(), full=True)
+    assert [r["library_book_id"] for r in await _own_rows(session)] == [book["id"]]
+
+
+async def test_linked_book_uses_official_vector_only(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 적재 대상 / 연결된 책은 공식 서지 벡터만"""
+    book = await _official(session)
+    await _hold(session, library_a.id, book)
+    official, own = await _load_both(session, FakeEmbedder(), full=True)
+    assert (official.encoded, own.targets) == (1, 0)
+    assert [r["book_id"] for r in await _official_rows(session)] == [book["id"]]
+    assert await _own_rows(session) == []
+
+
+async def test_shared_book_encoded_once(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/book-embeddings] 적재 대상 / 두 기관이 가진 같은 책"""
+    book = await _official(session)
+    await _hold(session, library_a.id, book)
+    await _hold(session, library_b.id, book)
+    embedder = FakeEmbedder()
+    official, _ = await _load_both(session, embedder, full=True)
+    assert official.encoded == 1
+    assert sum(len(call) for call in embedder.document_calls) == 1
+    assert len(await _official_rows(session)) == 1
 
 
 async def test_run_for_one_library(
     session: AsyncSession, library_a: Tenant, library_b: Tenant
 ) -> None:
     """[catalog/book-embeddings] 적재 대상 / 기관을 지정한 실행"""
-    await _books(session, library_a.id, 2)
+    mine = await _official(session, title="A의 공식 서지")
+    theirs = await _official(session, title="B의 공식 서지")
+    await _hold(session, library_a.id, mine)
+    await _hold(session, library_b.id, theirs)
+    (own_a,) = await _own_books(session, library_a.id, 1)
     await add_held_book(session, library_b.id, title="B 기관 책")
-    run = await _load(session, FakeEmbedder(), full=True, library_id=library_a.id)
-    assert run.targets == 2
-    assert {r["library_id"] for r in await _rows(session)} == {library_a.id}
 
-    everyone = await _load(session, FakeEmbedder(), full=False)
-    assert (everyone.targets, everyone.encoded, everyone.skipped) == (3, 1, 2)
-    assert {r["library_id"] for r in await _rows(session)} == {library_a.id, library_b.id}
+    official, own = await _load_both(session, FakeEmbedder(), full=True, library_id=library_a.id)
+    assert (official.targets, own.targets) == (1, 1)
+    assert [r["book_id"] for r in await _official_rows(session)] == [mine["id"]]
+    assert [r["library_book_id"] for r in await _own_rows(session)] == [own_a]
 
-
-async def test_failure_keeps_finished_batches(session: AsyncSession, library_a: Tenant) -> None:
-    """[catalog/book-embeddings] 운영자 실행의 출력과 중단 / 중간 실패 뒤 이어 하기"""
-    await _books(session, library_a.id, 5)
-    run = await _load(session, FakeEmbedder(fail_on=2), full=True, batch_size=2)
-    assert run.stopped is not None and run.stopped.failure is EmbeddingFailure.SERVER_ERROR
-    assert (run.encoded, len(await _rows(session))) == (2, 2)
-
-    resumed = FakeEmbedder()
-    rest = await _load(session, resumed, full=False, batch_size=2)
-    assert (rest.encoded, rest.skipped, rest.stopped) == (3, 2, None)
-    assert len(await _rows(session)) == 5
+    official, own = await _load_both(session, FakeEmbedder(), full=False)
+    assert (official.encoded, own.encoded) == (1, 1)
+    assert {r["library_id"] for r in await _own_rows(session)} == {library_a.id, library_b.id}
 
 
-async def _similarity_setup(session: AsyncSession, library_id: int, cosines: dict[str, float]):
-    """서명마다 질의 벡터 `unit(1)`과의 유사도를 정한 책을 만들고 적재한다."""
-    ids = {
-        title: (await add_held_book(session, library_id, title=title))["id"] for title in cosines
-    }
+# --- 공식 서지 벡터에 기관 값 없음 ---
+
+
+async def test_official_vector_ignores_library_values(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/book-embeddings] 공식 서지 벡터에 기관 값 없음 / 기관마다 다른 값"""
+    book = await _official(session, title="공식 서명", description="공식 소개", kdc=None)
+    await _hold(
+        session,
+        library_a.id,
+        book,
+        title="A 서명",
+        author="A 저자",
+        kdc="813",
+        description="A 소개",
+    )
+    await _hold(
+        session,
+        library_b.id,
+        book,
+        title="B 서명",
+        author="B 저자",
+        kdc="490",
+        description="B 소개",
+    )
+    embedder = FakeEmbedder()
+    await _load_official(session, embedder, full=True)
+    official = await session.get(Book, book["id"])
+    expected = content_hash(official_embedding_text(official))
+    assert [r["content_hash"] for r in await _official_rows(session)] == [expected]
+    assert embedder.document_calls == [["공식 서명\n공식 소개"]]
+
+
+async def test_official_without_description_ignores_library_description(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 공식 서지 벡터에 기관 값 없음 / 공식 서지에 없는 소개"""
+    book = await _official(session, title="소개 없는 공식", description=None)
+    await _hold(session, library_a.id, book, description="기관에만 있는 소개")
+    embedder = FakeEmbedder()
+    await _load_official(session, embedder, full=True)
+    assert embedder.document_calls == [["소개 없는 공식"]]
+    assert await missing_official_descriptions(session) == (1, 1)
+
+
+async def test_editing_library_values_changes_nothing(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 공식 서지 벡터에 기관 값 없음 / 기관 값을 고쳐도 그대로"""
+    book = await _official(session)
+    library_book = await _hold(session, library_a.id, book)
+    await _load_both(session, FakeEmbedder(), full=True)
+    await session.execute(
+        text(
+            "UPDATE library_books SET title = '고친 서명', description = '고친 소개' WHERE id = :id"
+        ),
+        {"id": library_book["id"]},
+    )
+    official, own = await _load_both(session, FakeEmbedder(), full=False)
+    assert (official.encoded, own.encoded) == (0, 0)
+
+
+# --- 조회 ---
+
+
+async def _similarity_setup(
+    session: AsyncSession,
+    library_id: int,
+    cosines: dict[str, float],
+    *,
+    linked: set[str] = frozenset(),
+):
+    """서명마다 질의 벡터 `unit(1)`과의 유사도를 정한 책을 만들고 적재한다.
+
+    linked에 든 서명은 공식 서지에 연결된 책으로 만든다.
+    """
+    ids = {}
+    for title, _ in cosines.items():
+        if title in linked:
+            book = await _official(session, title=title, description=None)
+            ids[title] = (await _hold(session, library_id, book, title=f"기관 {title}"))["id"]
+        else:
+            ids[title] = (await add_held_book(session, library_id, title=title))["id"]
     embedder = FakeEmbedder(
         vectors={"질의": unit(1), **{title: toward(c) for title, c in cosines.items()}}
     )
-    await _load(session, embedder, full=True, library_id=library_id)
+    await _load_both(session, embedder, full=True, library_id=library_id)
     return ids, embedder
 
 
@@ -251,6 +499,18 @@ async def test_similar_books_in_order(session: AsyncSession, library_a: Tenant) 
     assert embedder.query_calls == [["질의"]]
 
 
+async def test_similar_books_merge_layers(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 기관 범위 유사도 조회 / 두 층이 한 순위로"""
+    cosines = {"가": 0.9, "나": 0.8, "다": 0.7, "라": 0.6, "마": 0.5, "바": 0.4}
+    ids, embedder = await _similarity_setup(
+        session, library_a.id, cosines, linked={"가", "다", "마"}
+    )
+    found = await similar_books(session, embedder, library_id=library_a.id, query="질의", limit=6)
+    assert [f.library_book.id for f in found] == [ids[t] for t in cosines]
+    assert [f.similarity for f in found] == pytest.approx(list(cosines.values()), abs=1e-5)
+    assert [f.library_book.book_id is not None for f in found] == [True, False] * 3
+
+
 async def test_similar_books_stay_in_library(
     session: AsyncSession, library_a: Tenant, library_b: Tenant
 ) -> None:
@@ -262,9 +522,36 @@ async def test_similar_books_stay_in_library(
     assert {f.library_book.library_id for f in found} == {library_a.id}
 
 
+async def test_similar_books_skip_official_held_elsewhere(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/book-embeddings] 기관 범위 유사도 조회 / 다른 기관만 가진 공식 서지"""
+    mine, embedder = await _similarity_setup(session, library_a.id, {"우리": 0.3}, linked={"우리"})
+    await _similarity_setup(session, library_b.id, {"남의": 0.99}, linked={"남의"})
+    found = await similar_books(session, embedder, library_id=library_a.id, query="질의")
+    assert [f.library_book.id for f in found] == [mine["우리"]]
+
+
+async def test_similar_books_shared_book_once(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/book-embeddings] 기관 범위 유사도 조회 / 두 기관이 가진 같은 책"""
+    book = await _official(session, title="함께 가진 책", description=None)
+    mine = await _hold(session, library_a.id, book)
+    await _hold(session, library_b.id, book)
+    embedder = FakeEmbedder(vectors={"질의": unit(1), "함께": toward(0.8)})
+    await _load_both(session, embedder, full=True)
+    found = await similar_books(session, embedder, library_id=library_a.id, query="질의")
+    assert [(f.library_book.id, f.library_book.library_id) for f in found] == [
+        (mine["id"], library_a.id)
+    ]
+
+
 async def test_similar_books_drop_withdrawn(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 기관 범위 유사도 조회 / 적재 뒤 제적된 책"""
-    ids, embedder = await _similarity_setup(session, library_a.id, {"남는": 0.4, "빠질": 0.9})
+    ids, embedder = await _similarity_setup(
+        session, library_a.id, {"남는": 0.4, "빠질": 0.9}, linked={"남는", "빠질"}
+    )
     await session.execute(
         text("UPDATE holdings SET status = 'withdrawn' WHERE library_book_id = :id"),
         {"id": ids["빠질"]},
@@ -273,17 +560,57 @@ async def test_similar_books_drop_withdrawn(session: AsyncSession, library_a: Te
     assert [f.library_book.id for f in found] == [ids["남는"]]
 
 
+async def test_similar_books_ignore_leftover_own_vector(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 기관 범위 유사도 조회 / 연결된 책에 남은 기관 도서 벡터"""
+    own = await add_held_book(session, library_a.id, title="옛 벡터")
+    embedder = FakeEmbedder(
+        vectors={"질의": unit(1), "옛 벡터": toward(0.9), "새 공식": toward(0.3)}
+    )
+    await _load_own(session, embedder, full=True)
+    book = await _official(session, title="새 공식", description=None)
+    await session.execute(
+        text("UPDATE library_books SET book_id = :book, isbn = :isbn WHERE id = :id"),
+        {"book": book["id"], "isbn": book["isbn"], "id": own["id"]},
+    )
+    await _load_official(session, embedder, full=False)
+    assert len(await _own_rows(session)) == 1  # 남아 있다
+    found = await similar_books(session, embedder, library_id=library_a.id, query="질의")
+    assert [f.library_book.id for f in found] == [own["id"]]
+    assert found[0].similarity == pytest.approx(0.3, abs=1e-5)
+
+
 async def test_similar_books_ignore_other_models(
     session: AsyncSession, library_a: Tenant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """[catalog/book-embeddings] 기관 범위 유사도 조회 / 다른 모델의 벡터"""
-    ids, embedder = await _similarity_setup(session, library_a.id, {"책": 0.4})
-    other = FakeEmbedder("other-model", vectors={"책": unit(1)})
-    await _load(session, other, full=True)
-    monkeypatch.setattr(embeddings, "TEXT_VERSION", 2)
-    await _load(session, FakeEmbedder(vectors={"책": unit(1)}), full=True)
+    ids, embedder = await _similarity_setup(
+        session, library_a.id, {"책": 0.4, "바다": 0.2}, linked={"바다"}
+    )
+    near = {"책": unit(1), "바다": unit(1)}
+    await _load_both(session, FakeEmbedder("other-model", vectors=near), full=True)
+    monkeypatch.setattr(rules, "TEXT_VERSION", rules.TEXT_VERSION + 1)
+    await _load_both(session, FakeEmbedder(vectors=near), full=True)
     monkeypatch.undo()
 
+    found = await similar_books(session, embedder, library_id=library_a.id, query="질의")
+    assert [f.library_book.id for f in found] == [ids["책"], ids["바다"]]
+    assert [f.similarity for f in found] == pytest.approx([0.4, 0.2], abs=1e-5)
+
+
+async def test_similar_books_ignore_other_kinds(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 벡터 종류 / 종류가 다른 벡터 공존"""
+    ids, embedder = await _similarity_setup(session, library_a.id, {"책": 0.4}, linked={"책"})
+    await session.execute(
+        text(
+            "INSERT INTO official_book_embeddings"
+            " (book_id, model_name, text_version, kind, embedding, content_hash)"
+            " SELECT book_id, model_name, text_version, 'description', :vector, content_hash"
+            " FROM official_book_embeddings"
+        ),
+        {"vector": str(unit(1)).replace(" ", "")},
+    )
     found = await similar_books(session, embedder, library_id=library_a.id, query="질의")
     assert [f.library_book.id for f in found] == [ids["책"]]
     assert found[0].similarity == pytest.approx(0.4, abs=1e-5)
@@ -291,5 +618,6 @@ async def test_similar_books_ignore_other_models(
 
 async def test_similar_books_before_loading(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/book-embeddings] 기관 범위 유사도 조회 / 적재 전 조회"""
-    await _books(session, library_a.id, 2)
+    await _own_books(session, library_a.id, 2)
+    await _officials(session, library_a.id, 2)
     assert await similar_books(session, FakeEmbedder(), library_id=library_a.id, query="책") == []

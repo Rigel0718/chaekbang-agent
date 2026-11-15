@@ -66,3 +66,24 @@ def test_too_long_optional_field_is_empty() -> None:
 def test_missing_content_detail() -> None:
     """[catalog/book-enrichment] 응답 값 정규화 (contentDetail이 null이어도 읽음)"""
     assert parse_item(item(VALID_ISBN, contentDetail=None)).description is None
+
+
+def test_series_names_many() -> None:
+    """[catalog/books] 시리즈 키 / 시리즈 여러 개 (응답 목록 그대로)"""
+    series = [{"seriesName": "민들레그림책"}, {"seriesName": " 우리 그림책 "}, {"seriesName": ""}]
+    parsed = parse_item(item(VALID_ISBN, series=series))
+    assert parsed.series_names == ("민들레그림책", "우리 그림책")
+    assert parsed.series_name == "민들레그림책, 우리 그림책"  # 표시용은 그대로
+
+
+def test_series_name_with_comma() -> None:
+    """[catalog/books] 시리즈 키 / 쉼표가 든 시리즈명"""
+    parsed = parse_item(item(VALID_ISBN, series=[{"seriesName": "읽고, 쓰고, 생각하고"}]))
+    assert parsed.series_names == ("읽고, 쓰고, 생각하고",)
+
+
+@pytest.mark.parametrize("series", [None, [], "민들레그림책", [{"seriesId": 1}]])
+def test_no_series(series) -> None:
+    """[catalog/books] 시리즈 키 / 시리즈 없음"""
+    parsed = parse_item(item(VALID_ISBN, series=series))
+    assert (parsed.series_names, parsed.series_name) == ((), None)

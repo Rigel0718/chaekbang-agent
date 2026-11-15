@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import ToolResult
 from app.agent.models import RunStatus
+from app.core.kdc import kdc_class_name
 from app.library.librarian import (
     FALLBACK_ANSWER,
     REPAIRED_MESSAGE,
@@ -14,7 +15,6 @@ from app.library.librarian import (
 )
 from app.library.models.library import LoanMode
 from app.library.recommendation.cards import build_cards
-from app.library.recommendation.kdc import kdc_class_name
 from app.library.schemas.guide import ClosureCreate, GuideUpdate
 from app.library.services import guide as guide_service
 from app.library.tools import GUIDE_NOTE_EMPTY, NO_DESCRIPTION

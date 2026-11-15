@@ -15,8 +15,8 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 ## 현재 단계
 
-**4주차: 검색과 안내** (진행 중 change 없음. 다음은 `add-official-book-embeddings`).
-AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`), 도서관 안내(`add-library-guide`), 도서 임베딩 파이프라인(`add-book-embeddings`), 정규화와 기여자 표(`add-book-contributors`)는 끝났다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 2026-11-12에 `add-related-books` 앞에 추천 실험의 바탕을 먼저 두기로 했다. 순서는 정규화와 기여자 표(`add-book-contributors`, 끝남), 벡터 두 층과 실험 장서(`add-official-book-embeddings`), 추천 실험(`add-recommendation-experiments`), 카카오·도서관 정보나루 연동과 일반화(`add-bibliographic-sources`)이고, 그 뒤에 이긴 설정을 제품에 내보내는 `add-related-books`, 대화 추천 평가(`add-recommendation-evals`)가 온다. 임베딩 텍스트 구성(다 넣기 / 저자 빼기 / 소개만)은 `add-recommendation-experiments`에서 버전별로 적재해 비교하고 기본 버전을 정한다. 근거 수치는 `openspec/changes/archive/2026-11-11-add-book-embeddings/design.md`의 Open Questions에 있다. CPU 적재 속도는 ONNX 변환본으로 바꿔 줄였고 측정은 `app/central/README.md`에 있다. 적재 배치 기본값(지금 스펙 32)을 1~4로 낮출지는 `add-official-book-embeddings`에서 정한다. 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 실험용이고 실제 서비스에는 쓰지 않는다. 카카오 도서 검색 API와 도서관 정보나루 API로 바꾼다(`add-bibliographic-sources`).
+**4주차: 검색과 안내** (진행 중 change `add-official-book-embeddings`: 구현 끝남, 확인·archive 전. 다음은 `add-recommendation-experiments`).
+AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`), 도서관 안내(`add-library-guide`), 도서 임베딩 파이프라인(`add-book-embeddings`), 정규화와 기여자 표(`add-book-contributors`)는 끝났고, 벡터 두 층과 실험 장서(`add-official-book-embeddings`)는 구현을 마쳤다. 검색과 추천을 나눈다. 이용자는 대부분 제목이나 저자를 알고 오므로, 아는 책 찾기(오타 허용, 자동완성)를 LLM 없이 코드로 먼저 갖추고 대화와 잇는다. LLM은 자연어로 책을 찾는 대화와 도서관 안내를 맡는다. 2026-11-12에 `add-related-books` 앞에 추천 실험의 바탕을 먼저 두기로 했다. 순서는 정규화와 기여자 표(`add-book-contributors`, 끝남), 벡터 두 층과 실험 장서(`add-official-book-embeddings`, 구현 끝남), 추천 실험(`add-recommendation-experiments`), 카카오·도서관 정보나루 연동과 일반화(`add-bibliographic-sources`)이고, 그 뒤에 이긴 설정을 제품에 내보내는 `add-related-books`, 대화 추천 평가(`add-recommendation-evals`)가 온다. 임베딩 텍스트의 기본은 2026-11-15부터 저자를 뺀 서명·분류·소개(텍스트 버전 2)다. 저자는 고유명사라 기여자·저자 키와 서명·저자 찾기가 맡는다. `add-recommendation-experiments`에서 "저자 넣기"(v1과 같은 필드), 소개만, 필드별 벡터(종류 `kind`)를 비교해 기본을 확정한다. 실험 장서는 YES24 카테고리 스테디셀러 525권(19개 분야, 2026-11-15에 한 번 받음)이고 개발 DB의 `실험용 가상 작은도서관`이 소장한다. 종교·예술·건강 취미·여행 50권은 남겨 둔 분야라 조정에 쓰지 않는다. 근거 수치는 `openspec/changes/archive/2026-11-11-add-book-embeddings/design.md`의 Open Questions에 있다. CPU 적재 속도는 ONNX 변환본으로 바꿔 줄였고 측정은 `app/central/README.md`에 있다. 적재 배치 기본값은 4다(`add-official-book-embeddings`에서 32에서 내림). 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md`의 끝에 있다. 서지 출처 YES24는 실험용이고 실제 서비스에는 쓰지 않는다. 카카오 도서 검색 API와 도서관 정보나루 API로 바꾼다(`add-bibliographic-sources`).
 
 ## OpenSpec 작업 규칙
 
@@ -100,9 +100,11 @@ uv run python scripts/seed.py                # 시드 데이터
 uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움 (--limit, --retry-failed)
 uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표본 필요, LLM 없음)
 docker compose --profile embedding up -d embedder      # 임베딩 서버 (메모리 약 4GB, 처음에 모델 2.3GB 내려받기)
-uv run python scripts/embed_books.py --incremental     # 운영자: 도서 임베딩 적재 (--full, --library-id, --batch-size)
+uv run python scripts/embed_books.py --incremental     # 운영자: 두 층 임베딩 적재 (--full, --layer official|library, --library-id, --batch-size)
 uv run python scripts/embedding_search.py "질의" --sample  # 임베딩 확인: 표본 적재 후 상위 5권 (--library-id N)
 uv run python scripts/rebuild_contributors.py         # 운영자: 기여자·저자 키를 지금 규칙으로 (--check는 차이만)
+uv run python -m evals.collection.fetch --dry-run     # 실험 장서 받기 미리 보기 (실제 받기는 한 번만, 파일이 있으면 멈춤)
+uv run python scripts/seed_experiment.py             # 운영자: 실험 장서를 개발 DB의 가상 기관에 넣기 (다시 돌려도 같음)
 uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
@@ -116,41 +118,48 @@ app/
 ├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
 ├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘), holidays(공휴일),
 │                 # isbn(정규화·검증), text(저장용·비교용·이름 맞춤 정규화, 자모 규칙, KDC 키),
-│                 # contributors(역할 표, 기관 파일 저자 해석, 저자 키), migrations, model_base, errors, tenancy, schemas(페이지)
+│                 # contributors(역할 표, 기관 파일 저자 해석, 저자 키), embedding_text(임베딩 텍스트 조립 규칙·버전·종류),
+│                 # kdc(KDC 주류 이름), migrations, model_base, errors, tenancy, schemas(페이지)
 ├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
-│   ├── models.py     # Book, BookContributor(공식 서지 기여자)
+│   ├── models.py     # Book, BookContributor(공식 서지 기여자), OfficialBookEmbedding(공식 서지 벡터)
 │   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
+│   ├── official_books.py # 공식 서지를 만드는 함수(create_official: 기여자, 시리즈 키)
 │   ├── contributors.py # 출처별 저자 해석기, 기여자 저장(sync_contributors)
-│   ├── embedding.py  # 임베딩 인코더 접점(Embedder: 문서·질의 인코딩)
-│   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에, 저자 해석), tei(임베딩 서버 어댑터), (이후) 도서관 정보나루
+│   ├── embedding.py  # 임베딩 인코더 접점(Embedder: 문서·질의 인코딩), 두 층의 배치 흐름(run_layer)
+│   ├── embedding_text.py # 공식 서지 벡터의 텍스트(공식 값만)
+│   ├── official_embeddings.py # 공식 서지 벡터 적재
+│   └── external/     # 외부 API: yes24(엔드포인트·필드 정의를 한곳에, 저자 해석, 카테고리는 실험 장서 받기 전용),
+│                     # tei(임베딩 서버 어댑터), (이후) 도서관 정보나루
 ├── library/      # 기관 공통
 │   ├── api/      # 라우터: auth, library, guide(안내·휴관일), staff, library_books, catalog(찾기·자동완성),
 │   │             # holdings, members, loans, librarian
 │   │             # (이후 curations, requests ...)
 │   ├── services/ # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용)
 │   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출), guide(안내),
-│   │             # embedding(기관 도서 임베딩)
+│   │             # embedding(기관 도서 벡터: 공식 서지 없는 책만)
 │   ├── schemas/  # Pydantic 스키마
 │   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
 │   ├── recommendation/ # 서명·저자 찾기와 자동완성(lookup), 주제 검색(search), 소장 검사, 카드, 노출 기록.
-│   │                   # 임베딩 텍스트(embedding_text)와 적재·유사도 조회(embeddings), 같은 저자(authors).
+│   │                   # 기관 도서 벡터의 텍스트(embedding_text), 기관 도서 벡터 적재와 두 층 유사도 조회(embeddings),
+│   │                   # 같은 저자(authors).
 │   │                   # 어린이 필터는 기능에 둔다. (이후) 비슷한 책
 │   ├── deps.py   # 현재 직원·기관, 역할
 │   ├── hooks.py  # 기관 개별 기능 접점
 │   └── enrichment_targets.py # 운영자 접점 구현, 처리 현황
 ├── features/     # 기관 개별 기능 (패키지마다 README.md가 있다)
 │   └── children/ # 어린이 구분: 규칙, 저장소, service, 훅, API
-├── seed/         # 조립: 시드 데이터 생성 (scripts/seed.py가 실행)
+├── seed/         # 조립: 시드 데이터 생성 (scripts/seed.py가 실행), 실험 장서 적재(experiment, scripts/seed_experiment.py가 실행)
 └── agent/        # 공통 실행기: tool calling 루프, 최종 검사, 실행 기록, (이후) 승인 대기·재개.
                   # 어떤 tool이 있는지 모른다. tool은 패키지별 tools.py가 내놓고 main.py가 조립한다
 migrations/       # Alembic
 scripts/seed.py   # 더미 데이터 (Faker)
 scripts/enrich_books.py  # 운영자용 공식 서지 채움
-scripts/embed_books.py   # 운영자용 도서 임베딩 적재
+scripts/embed_books.py   # 운영자용 두 층 임베딩 적재
+scripts/seed_experiment.py  # 운영자용 실험 장서 적재(개발 DB)
 scripts/embedding_search.py  # 임베딩 확인용 유사도 조회
 scripts/rebuild_contributors.py  # 운영자용 기여자·저자 키 다시 만들기
 docker/embedder/start.sh # 임베딩 서버 시작(모델 받기, 입력 한도 낮추기)
-evals/            # 장서 가져오기 평가, (이후 단계) 추천·에이전트 평가 시나리오와 채점
+evals/            # 장서 가져오기·AI 사서·찾기 평가, 실험 장서 받기(collection), (이후 단계) 추천 평가와 채점
 tests/
 docs/design.md
 openspec/
@@ -178,7 +187,7 @@ openspec/
 - 상태 값은 `StrEnum`으로 정의한다.
 - 외부 API 키, DB URL은 `.env`에서 읽고 코드에 하드코딩하지 않는다. `.env.example`을 함께 관리한다.
 - 외부 도서 API의 표지 이미지는 저장하지 않고 원본 URL로만 표시하며, 출처를 함께 보여준다.
-- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 평가 표본 약 100권(`evals/librarian/data/`)만 예외이고 저장소에 넣지 않는다.
+- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 평가 표본 약 100권(`evals/librarian/data/`)과 실험 장서 525권(`evals/collection/data/`, 개발 DB의 가상 기관에만)만 예외이고, 둘 다 한 번만 받고 저장소에 넣지 않는다. 서지 출처를 바꾸는 `add-bibliographic-sources`에서 실험 장서를 지운다.
 - 에이전트는 공통 실행기 하나에 프로필(프롬프트, tool 묶음, 권한)만 바꿔 쓴다. tool은 같은 프로세스에서 service를 감싸고, 이름·설명·JSON Schema로 정의한다. `library_id`는 실행기가 코드로 주입하고 LLM이 정하지 않는다.
 - 기관 개별 기능의 값은 공통 테이블과 공통 API에 넣지 않는다. 기능은 `app/main.py`에서 등록하고, 서버를 거치지 않는 새 진입점을 만들면 등록을 함께 챙긴다.
 - 새 service 함수에는 테스트를 같이 작성한다. 기관 분리(다른 기관 데이터가 보이지 않는지) 테스트를 빠뜨리지 않는다.
@@ -189,6 +198,9 @@ openspec/
 - **운영자 층 / 기관 공통 / 기관 개별**: 코드의 세 층. 운영자 층은 어느 기관에도 속하지 않는 공식 서지와 외부 연동, 기관 공통은 모든 기관이 쓰는 기능, 기관 개별은 기관 유형에 따라 필요한 기능(어린이 구분)이다.
 - **공식 서지(book)**: 서비스 운영자 층의 서지정보. ISBN이 있는 책만 두고 YES24 값을 공식으로 본다. 기관은 쓸 수 없다.
 - **기여자(contributor)**: 공식 서지 저자 원문을 역할별로 푼 사람. 역할은 `author`(글·지은이), `illustrator`(그림), `translator`(옮김), `editor`(엮음), `supervisor`(감수), `original`(원저·원작), `other`(기획·사진 등)이다. 원문은 그대로 두고 표시는 원문으로 한다. 테이블 `book_contributors`.
+- **시리즈 키(series keys)**: 공식 서지의 시리즈마다 이름 맞춤 키를 둔 목록. 외부 응답의 시리즈 목록에서 만든다(이은 표시용 `series_name`에서는 만들지 않는다). 필드 이름은 `series_keys`.
+- **공식 서지 벡터 / 기관 도서 벡터**: 임베딩 벡터의 두 층. 공식 서지에 연결된 책은 공식 서지 벡터(`official_book_embeddings`, 운영자 층, 공식 값만, 여러 기관이 함께 씀), 연결되지 않은 책(ISBN 없음, 못 찾음)은 기관 도서 벡터(`book_embeddings`)를 쓴다. 책 하나는 한 층에만 속한다. 벡터마다 텍스트 버전과 종류(`kind`, 지금은 `full`)가 있다.
+- **실험 장서(experiment collection)**: 추천 실험용 YES24 525권. 공식 서지로 만들고 개발 DB의 `실험용 가상 작은도서관`이 소장한다. 서비스 데이터가 아니다.
 - **저자 키(author keys)**: 기관 도서의 저자 원문에서 지은이(`author`·`original`)만 뽑은 이름 맞춤 키 목록. 공식 서지가 없는 책의 "같은 저자"에 쓴다. 필드 이름은 `author_keys`.
 - **이름 맞춤 키(name key)**: 사람·단체 이름과 시리즈명을 맞춰 보는 값. 공백·문장부호를 지우고 소문자로 바꾼다(`J.K. Rowling` → `jkrowling`). 다른 음역과 동명이인은 풀지 않는다.
 - **기관 도서(library book)**: 이 도서관의 그 책. 파일·입력 값과 ISBN 없는 책이 여기 있다. ISBN이 같은 공식 서지가 있으면 연결하고, 표시할 때 공식 값을 먼저 쓴다. 필드 이름은 `library_book_id`.

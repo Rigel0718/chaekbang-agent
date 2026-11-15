@@ -14,6 +14,7 @@ class Endpoint:
 
 GOODS_ITEM_DETAIL = Endpoint("/goods/itemDetail")
 GOODS_ITEM_LIST = Endpoint("/goods/itemList")
+CATEGORY_STEADY_SELLERS = Endpoint("/category/bestsellerSteady")  # 실험 장서 받기 전용
 
 API_KEY_HEADER = "X-Api-Key"
 SEARCH_TYPE_ISBN13 = "ISBN13"
@@ -49,6 +50,13 @@ ITEM_FIELDS = {
     "category": ItemField(("goodsSortNm",), 100),
 }
 SERIES_NAME_KEY = "seriesName"
+ITEMS_KEY = "items"
+TOTAL_COUNT_KEY = "totalCount"
+MAX_PAGE_SIZE = 100  # 목록 API의 pageSize 상한
+ADULT_KEY = "adultYn"  # "Y"면 성인물
+ADULT_YES = "Y"
+# 저장하지 않는 변동 값(판매가, 판매 상태, 포인트, 판매지수, 평점, 등락). 원본 파일에도 넣지 않는다
+VOLATILE_ITEM_KEYS = ("salePrice", "itemStatus", "yesPoint", "salePoint", "starScore", "upDown")
 
 # 상품을 찾지 못한 것으로 보는 오류 코드. 404는 코드와 상관없이 찾지 못한 것이다.
 NOT_FOUND_ERROR_CODES = frozenset({"GOODS_001", "GOODS_002", "SEARCH_002", "PARAM_004"})

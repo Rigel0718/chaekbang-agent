@@ -1,7 +1,9 @@
 """운영자용 도서 임베딩 적재: uv run python scripts/embed_books.py --incremental
 
-추천 가능한 기관 도서의 임베딩 텍스트를 로컬 임베딩 서버로 인코딩해 `book_embeddings`에 저장한다.
---full은 모두 다시 인코딩하고, --incremental은 벡터가 없거나 텍스트가 바뀐 책만 인코딩한다.
+두 층을 차례로 적재한다. 공식 서지 벡터(`official_book_embeddings`)는 공식 서지마다 공식 값만으로,
+기관 도서 벡터(`book_embeddings`)는 공식 서지에 연결되지 않은 추천 가능한 기관 도서만 만든다.
+--full은 모두 다시 인코딩하고, --incremental은 벡터가 없거나 텍스트가 바뀐 대상만 인코딩한다.
+--layer official|library는 한 층만, --library-id는 그 기관의 책(과 거기 연결된 공식 서지)만 다룬다.
 임베딩 서버: docker compose --profile embedding up -d embedder
 종료 코드: 0 완료, 1 전제 조건·인자 문제(서버의 모델·한도 불일치 포함), 2 임베딩 서버 장애로 중단.
 """
@@ -18,12 +20,23 @@ from sqlalchemy.pool import NullPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.central.embedding import Embedder, EmbeddingError, EmbeddingFailure  # noqa: E402
+from app.central.embedding import (  # noqa: E402
+    Embedder,
+    EmbeddingError,
+    EmbeddingFailure,
+    EmbeddingRun,
+)
 from app.central.external.tei import TeiEmbedder  # noqa: E402
+from app.central.official_embeddings import run_official_embedding  # noqa: E402
+from app.core import embedding_text as rules  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
+from app.core.embedding_text import TextKind  # noqa: E402
 from app.library.models.library import Library  # noqa: E402
-from app.library.recommendation.embedding_text import TEXT_VERSION  # noqa: E402
-from app.library.recommendation.embeddings import EmbeddingRun, run_embedding  # noqa: E402
+from app.library.recommendation.embeddings import (  # noqa: E402
+    held_official_ids,
+    missing_official_descriptions,
+    run_library_embedding,
+)
 from app.seed.runner import (  # noqa: E402
     CONNECT_TIMEOUT_SECONDS,
     SeedPreconditionError,
@@ -37,6 +50,12 @@ EXIT_STOPPED = 2
 START_HINT = "`docker compose --profile embedding up -d embedder`"
 DB_HINT = "`docker compose up -d db`로 DB를 실행했는지, DATABASE_URL이 맞는지 확인하세요."
 
+OFFICIAL = "official"
+LIBRARY = "library"
+LAYERS = (OFFICIAL, LIBRARY)  # 적재 순서
+LAYER_NAMES = {OFFICIAL: "공식 서지", LIBRARY: "기관 도서"}
+LAYER_UNITS = {OFFICIAL: "건", LIBRARY: "권"}
+
 
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
@@ -46,11 +65,14 @@ class Parser(argparse.ArgumentParser):
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = Parser(description="추천 가능한 기관 도서의 임베딩 벡터를 만든다")
+    parser = Parser(description="공식 서지 벡터와 기관 도서 벡터를 만든다")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--full", action="store_true", help="대상 도서를 모두 다시 인코딩")
     mode.add_argument(
         "--incremental", action="store_true", help="벡터가 없거나 텍스트가 바뀐 도서만 인코딩"
+    )
+    parser.add_argument(
+        "--layer", choices=LAYERS, help="이 층만 (없으면 공식 서지, 기관 도서 순서로 둘 다)"
     )
     parser.add_argument("--library-id", type=int, help="이 기관만 (없으면 모든 기관)")
     parser.add_argument("--batch-size", type=int, help="한 번에 인코딩할 권수 (기본: 설정 값)")
@@ -80,8 +102,62 @@ def report_failure(error: EmbeddingError) -> int:
     return EXIT_STOPPED
 
 
-def print_progress(run: EmbeddingRun) -> None:
-    print(f"[{run.done}/{run.targets}] 인코딩 {run.encoded}, 건너뜀 {run.skipped}", flush=True)
+def progress_printer(layer: str):
+    name = LAYER_NAMES[layer]
+
+    def print_progress(run: EmbeddingRun) -> None:
+        print(
+            f"[{name} {run.done}/{run.targets}] 인코딩 {run.encoded}, 건너뜀 {run.skipped}",
+            flush=True,
+        )
+
+    return print_progress
+
+
+def describe(layer: str, run: EmbeddingRun) -> str:
+    return (
+        f"{LAYER_NAMES[layer]} 벡터 {run.targets}{LAYER_UNITS[layer]}: "
+        f"인코딩 {run.encoded}건, 건너뜀 {run.skipped}건"
+    )
+
+
+async def load_layers(
+    session: AsyncSession,
+    embedder: Embedder,
+    *,
+    full: bool,
+    library_id: int | None,
+    batch_size: int | None,
+    layers: tuple[str, ...] = LAYERS,
+    progress: bool = True,
+) -> list[tuple[str, EmbeddingRun]]:
+    """층을 차례로 적재한다. 앞 층이 멈추면 뒤 층은 시작하지 않는다."""
+    done: list[tuple[str, EmbeddingRun]] = []
+    for layer in layers:
+        on_progress = progress_printer(layer) if progress else None
+        if layer == OFFICIAL:
+            within = held_official_ids(library_id) if library_id is not None else None
+            run = await run_official_embedding(
+                session,
+                embedder,
+                full=full,
+                batch_size=batch_size,
+                within=within,
+                on_progress=on_progress,
+            )
+        else:
+            run = await run_library_embedding(
+                session,
+                embedder,
+                full=full,
+                batch_size=batch_size,
+                library_id=library_id,
+                on_progress=on_progress,
+            )
+        done.append((layer, run))
+        if run.stopped is not None:
+            break
+    return done
 
 
 async def execute(
@@ -90,7 +166,8 @@ async def execute(
     *,
     full: bool,
     library_id: int | None,
-    batch_size: int,
+    batch_size: int | None,
+    layer: str | None = None,
 ) -> int:
     """적재를 실행하고 결과를 출력한 뒤 종료 코드를 돌려준다."""
     if library_id is not None and await session.get(Library, library_id) is None:
@@ -101,20 +178,25 @@ async def execute(
         await embedder.check()
     except EmbeddingError as exc:
         return report_failure(exc)
-    run = await run_embedding(
+    done = await load_layers(
         session,
         embedder,
         full=full,
         library_id=library_id,
         batch_size=batch_size,
-        on_progress=print_progress,
+        layers=(layer,) if layer else LAYERS,
     )
     print(
-        f"대상 {run.targets}권: 인코딩 {run.encoded}건, 건너뜀 {run.skipped}건 "
-        f"(모델 {embedder.name}, 텍스트 버전 {TEXT_VERSION})"
+        " / ".join(describe(name, run) for name, run in done)
+        + f" (모델 {embedder.name}, 텍스트 버전 {rules.TEXT_VERSION}, 종류 {TextKind.FULL})"
     )
-    if run.stopped is not None:
-        return report_failure(run.stopped)
+    if any(name == OFFICIAL for name, _ in done):
+        blank, with_own = await missing_official_descriptions(session)
+        await session.commit()
+        print(f"공식 소개 없음 {blank}건(그중 기관 소개 있음 {with_own}건)")
+    stopped = next((run.stopped for _, run in done if run.stopped is not None), None)
+    if stopped is not None:
+        return report_failure(stopped)
     return EXIT_OK
 
 
@@ -140,6 +222,7 @@ async def run(args: argparse.Namespace) -> int:
                 full=args.full,
                 library_id=args.library_id,
                 batch_size=args.batch_size or settings.embedding_batch_size,
+                layer=args.layer,
             )
     except SeedPreconditionError as exc:
         print(str(exc), file=sys.stderr)
