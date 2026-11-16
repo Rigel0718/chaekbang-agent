@@ -4,6 +4,7 @@ import pytest
 
 from app.features.children.rules import (
     has_children_label,
+    has_external_evidence,
     is_children_category,
     is_children_request,
 )
@@ -61,6 +62,26 @@ def test_unsourced_marks(mark: str) -> None:
 def test_other_addition_codes(code: str) -> None:
     """[features/children] 파일 근거 (청소년 4와 형식이 다른 값은 아님)"""
     assert not has_children_label(None, None, code)
+
+
+@pytest.mark.parametrize("code", ["74850", "63710", "77810"])
+def test_children_addition_symbols(code: str) -> None:
+    """[features/children] 외부 분류 근거 / 어린이 근거인 부가기호 (값 표)"""
+    assert has_external_evidence(None, code)
+    assert has_external_evidence("문학 > 한국문학 > 동화", code)
+
+
+@pytest.mark.parametrize("code", ["03810", "43810", "53710", "93000", "7485", "", None])
+def test_other_addition_symbols(code: str | None) -> None:
+    """[features/children] 외부 분류 근거 / 어린이 근거가 아닌 부가기호 (값 표)"""
+    assert not has_external_evidence(None, code)
+    assert not has_external_evidence("문학 > 한국문학 > 소설", code)
+
+
+def test_category_evidence_still_counts() -> None:
+    """[features/children] 외부 분류 근거 / 어린이 근거인 분류 (부가기호가 없거나 일반이어도)"""
+    assert has_external_evidence("국내도서-유아", None)
+    assert has_external_evidence("국내도서-어린이", "03810")
 
 
 @pytest.mark.parametrize("category", ["국내도서-유아", "국내도서-어린이", "국내도서-초등학습서"])

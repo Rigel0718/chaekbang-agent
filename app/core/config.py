@@ -66,9 +66,14 @@ class Settings(BaseSettings):
     seed_admin_password: str | None = None
     seed_kiosk_password: str | None = None
 
-    # YES24 Open API. 키는 서지정보 채움 실행에만 쓴다.
+    # 공식 서지의 출처 셋(YES24, 정보나루, 카카오). 키는 서지정보 채움과 실험 장서 받기에만 쓴다.
     yes24_api_key: SecretStr | None = None
     yes24_base_url: str = "https://apis.yes24.com/v1"
+    # 정보나루는 키를 쿼리 파라미터로만 받는다. 그래서 https로 부르고 URL을 로그에 남기지 않는다.
+    library_bigdata_key: SecretStr | None = None
+    data4library_base_url: str = "https://data4library.kr/api"
+    kakao_rest_api_key: SecretStr | None = None
+    kakao_base_url: str = "https://dapi.kakao.com"
 
     # LLM. 키가 없어도 서버는 시작하고, 에이전트 실행만 실패한다.
     openai_api_key: SecretStr | None = None

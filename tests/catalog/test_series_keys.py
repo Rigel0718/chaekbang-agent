@@ -5,13 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.external.yes24.parsing import parse_item
 from app.central.official_books import create_official, series_keys
+from app.central.sources import from_yes24
 from tests.helpers import add_book, make_isbn
 from tests.yes24_helpers import item
 
 
 async def _create(session: AsyncSession, n: int, **values):
     isbn = make_isbn(n)
-    return await create_official(session, isbn, parse_item(item(isbn, **values)))
+    return await create_official(session, isbn, from_yes24(parse_item(item(isbn, **values))))
 
 
 async def test_many_series(session: AsyncSession) -> None:
@@ -54,5 +55,7 @@ async def test_existing_official_not_changed(session: AsyncSession) -> None:
     """[catalog/books] 공식 서지 쓰기 제한 (이미 있는 공식 서지는 고치지 않는다)"""
     isbn = make_isbn(606)
     existing = await add_book(session, isbn, title="원래 서명")
-    book = await create_official(session, isbn, parse_item(item(isbn, title="다른 서명")))
+    book = await create_official(
+        session, isbn, from_yes24(parse_item(item(isbn, title="다른 서명")))
+    )
     assert (book.id, book.title, book.series_keys) == (existing["id"], "원래 서명", [])

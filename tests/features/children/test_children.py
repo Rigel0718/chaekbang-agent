@@ -19,6 +19,7 @@ from tests.helpers import (
     add_library_book,
     assert_rejected,
 )
+from tests.source_helpers import FakeSources, d4l_book, d4l_ok, enrich_sources
 from tests.yes24_helpers import FakeYes24, enrich, item, ok
 
 HEADER = ["등록번호", "서명", "저자"]
@@ -396,6 +397,72 @@ async def test_new_import_uses_category(admin_client_b: AsyncClient, session: As
     await import_file(admin_client_b, [*HEADER, "ISBN"], ["EM1", "책", "저자", VALID_ISBN])
     book_id = await _imported_id(session)
     assert await _audience(admin_client_b, book_id) == ("children", "external_category")
+
+
+# --- 외부 근거: 공식 서지의 부가기호 ---
+
+
+@pytest.mark.parametrize("code", ["74850", "63710"])
+async def test_children_addition_symbol_on_link(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, code: str
+) -> None:
+    """[features/children] 외부 분류 근거 / 어린이 근거인 부가기호"""
+    await add_book(session, addition_symbol=code, external_category="문학 > 한국문학 > 동화")
+    book = await add_library_book(session, library_a.id, None)
+    await _fill_isbn(admin_client, book["id"])
+    assert await _audience(admin_client, book["id"]) == ("children", "external_category")
+
+
+@pytest.mark.parametrize("code", ["03810", "43810"])
+async def test_other_addition_symbol_on_link(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, code: str
+) -> None:
+    """[features/children] 외부 분류 근거 / 어린이 근거가 아닌 부가기호"""
+    await add_book(session, addition_symbol=code, external_category="문학 > 한국문학 > 소설")
+    book = await add_library_book(session, library_a.id, None)
+    await _fill_isbn(admin_client, book["id"])
+    assert await _audience(admin_client, book["id"]) == GENERAL
+    assert await _stored_rows(session) == 0
+
+
+async def test_new_book_uses_addition_symbol(
+    admin_client: AsyncClient, session: AsyncSession
+) -> None:
+    """[features/children] 외부 분류 근거 / 새로 등록하는 도서"""
+    await add_book(session, addition_symbol="77810")
+    created = (await admin_client.post("/library-books", json=BOOK)).json()
+    assert await _audience(admin_client, created["id"]) == ("children", "external_category")
+
+
+async def test_manual_kept_on_addition_symbol_link(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[features/children] 외부 분류 근거 / 높은 근거 유지 (부가기호)"""
+    await add_book(session, addition_symbol="74850")
+    book = await add_library_book(session, library_a.id, None)
+    await add_audience(session, library_a.id, book["id"], "general", "manual")
+    await _fill_isbn(admin_client, book["id"])
+    assert await _audience(admin_client, book["id"]) == ("general", "manual")
+
+
+async def test_source_run_does_not_touch_audience_then_refresh(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[features/children] 외부 분류 근거 / 운영자 실행은 바꾸지 않음
+
+    [features/children] 어린이 구분 갱신 / 채움 뒤 갱신 (정보나루 부가기호)
+    """
+    book = await _held(session, library_a.id)
+    sources = FakeSources()
+    sources.data4library.responses[VALID_ISBN] = d4l_ok(
+        d4l_book(VALID_ISBN, addition_symbol="74850")
+    )
+    await enrich_sources(session, sources)
+    assert await _audience(admin_client, book["id"]) == GENERAL
+    assert await _stored_rows(session) == 0
+    res = await admin_client.post("/children/refresh")
+    assert res.json() == {"updated": 1}
+    assert await _audience(admin_client, book["id"]) == ("children", "external_category")
 
 
 @pytest.mark.parametrize(

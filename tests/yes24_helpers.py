@@ -6,8 +6,10 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.central.enrichment import EnrichmentResult, run_enrichment
+from app.central.enrichment import EnrichmentResult, Lookup, run_enrichment
 from app.central.external.yes24.client import RateLimiter, Yes24Client
+from app.central.external.yes24.goods import get_items_by_isbn
+from app.central.sources import LookupOutcome, OfficialValues, from_yes24
 from app.library.enrichment_targets import LibraryEnrichmentTargets
 
 TEST_API_KEY = "test-yes24-key-value"
@@ -84,6 +86,24 @@ def make_client(handler: Callable[[httpx.Request], httpx.Response]) -> Yes24Clie
     return Yes24Client(http, TEST_API_KEY, RateLimiter(0))
 
 
+def yes24_lookup(client: Yes24Client) -> Lookup:
+    """YES24 한 곳을 부르는 조회. 서비스의 채움은 쓰지 않고(정보나루·카카오), 테스트만 쓴다.
+
+    채움 실행(`run_enrichment`)은 조회가 무엇이든 같은 흐름이라, 기존 시나리오를 그대로 확인한다.
+    """
+
+    async def lookup(isbn: str) -> OfficialValues | LookupOutcome:
+        items = await get_items_by_isbn(client, isbn)
+        item = next((i for i in items if i.isbn13 == isbn), None)
+        if items and item is None:
+            return LookupOutcome.MISMATCH
+        return (from_yes24(item) if item else None) or LookupOutcome.NOT_FOUND
+
+    return lookup
+
+
 async def enrich(session: AsyncSession, client: Yes24Client, **options: Any) -> EnrichmentResult:
-    """운영자 실행과 같이 접점을 이어서 채움을 돌린다."""
-    return await run_enrichment(session, client, LibraryEnrichmentTargets(session), **options)
+    """운영자 실행과 같이 접점을 이어서 채움을 돌린다(YES24 조회로)."""
+    return await run_enrichment(
+        session, yes24_lookup(client), LibraryEnrichmentTargets(session), **options
+    )

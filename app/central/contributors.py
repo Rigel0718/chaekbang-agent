@@ -18,8 +18,11 @@ NAME_LIMIT = 200  # BookContributor.name, name_key 열 길이
 ROLE_TEXT_LIMIT = 50
 
 # 출처별 해석기. 출처가 없거나 표에 없으면 기관 파일 해석기(꼴이 정해지지 않은 원문)를 쓴다.
+# 정보나루 원문(이름표 꼴·괄호 꼴)과 카카오 배열을 이은 원문은 기관 파일 해석기가 읽는 꼴이다.
 PARSERS: dict[ExternalSource, Callable[[str], list[Contributor]]] = {
     ExternalSource.YES24: parse_yes24_author,
+    ExternalSource.DATA4LIBRARY: parse_author_text,
+    ExternalSource.KAKAO: parse_author_text,
 }
 
 

@@ -339,6 +339,36 @@ async def test_card_cover_source(session: AsyncSession, library_a: Tenant) -> No
     assert card.product_url == "https://www.yes24.com/product/goods/1"
 
 
+async def test_card_cover_source_follows_field_sources(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[agent/librarian] 추천 카드 / 표지 출처 (서명은 정보나루, 표지는 카카오)"""
+    book = await add_held_book(
+        session,
+        library_a.id,
+        title="공룡",
+        official={
+            "cover_url": "https://search1.kakaocdn.net/thumb/cover",
+            "external_source": "data4library",
+            "external_url": "https://search.daum.net/search?w=bookpage&bookId=1",
+        },
+    )
+    await session.execute(
+        text("UPDATE books SET field_sources = CAST(:v AS jsonb)"),
+        {"v": '{"cover_url": "kakao", "external_url": "kakao"}'},
+    )
+    [card] = await build_cards(session, library_a.id, _answer(book["id"]))
+    assert card.cover_source == "카카오"
+
+    await session.execute(
+        text("UPDATE books SET cover_url = NULL, field_sources = CAST(:v AS jsonb)"),
+        {"v": '{"kdc": "data4library"}'},
+    )
+    session.expire_all()
+    [card] = await build_cards(session, library_a.id, _answer(book["id"]))
+    assert card.cover_source is None  # 표지가 없으면 표지 출처도 없다
+
+
 async def test_card_other_library_dropped(
     session: AsyncSession, library_a: Tenant, library_b: Tenant
 ) -> None:

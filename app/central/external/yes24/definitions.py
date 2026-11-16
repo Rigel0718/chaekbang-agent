@@ -1,7 +1,7 @@
 """YES24 Open API 정의. 엔드포인트와 응답 필드는 여기에만 둔다.
 
 새 엔드포인트는 Endpoint 상수로, 새 응답 필드는 ITEM_FIELDS에 한 줄로 추가한다.
-근거: yes24-open-api-guide/의 문서와 실제 응답.
+근거: api-guides/yes24-open-api-guide/의 문서와 실제 응답.
 """
 
 from dataclasses import dataclass

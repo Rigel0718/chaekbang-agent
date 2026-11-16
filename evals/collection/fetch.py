@@ -11,7 +11,8 @@
 
 받은 기록: 2026-11-15, 카테고리 스테디셀러(`detail=Y`, 분야마다 1쪽, 호출 19회), 525권. 다시 받지
 않는 이유는 둘이다. 이용 조건의 예외를 한 번으로 묶어 두고, 같은 날 같은 방식으로 받은 장서여야
-실험끼리 비교된다. 서지 출처를 바꾸는 `add-bibliographic-sources`에서 이 파일과 실험 장서를 지운다.
+실험끼리 비교된다. `add-bibliographic-sources`(2026-11-16)에서도 지우지 않는다. 같은 ISBN의
+정보나루·카카오 값은 `evals/collection/sources.py`가 따로 받아 둔다.
 """
 
 import argparse

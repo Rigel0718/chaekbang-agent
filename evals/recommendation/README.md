@@ -16,13 +16,16 @@ uv run python -m evals.recommendation similar --split all --variants sim-vec,sim
 uv run python -m evals.recommendation history --split all --variants hist-mean,hist-per-book     # 최근 기록
 uv run python -m evals.recommendation.draft dump similar   # 후보: data/draft/similar-items.txt, similar-books.txt (history도, apply·--pool도 같다)
 uv run python -m evals.recommendation.review similar --sample   # 고정 표본 검수 (history도)
+uv run python -m evals.recommendation.review topic --sample --since <백업 라벨 파일>   # 그 백업 뒤에 단 보충 라벨에서만 표본
+uv run python -m evals.recommendation compare <기준 실행 폴더> <새 실행 폴더>   # 같은 세트의 두 실행을 지금 라벨로 짝 비교
 ```
 
 - 개발 DB(`DATABASE_URL`)의 `실험용 가상 작은도서관`(이름으로 찾는다)에서 읽기만 한다. 실험 장서는 `scripts/seed_experiment.py`가 넣는다.
 - 재는 코드는 제품 패키지의 것이다(`app/library/recommendation/topic.py`, `related.py`, `ranking.py`, `embeddings.py`). 기관 범위, 추천 가능, 어린이 조건이 그 함수에서 강제된다. 여기에는 변형 정의, 세트, 라벨, 지표만 있다.
 - 질의 인코딩만 로컬 임베딩 서버를 쓴다(`docker compose --profile embedding up -d embedder`). 질의 벡터를 `data/query_vectors.json`에 캐시해, 한 번 돌린 질의는 서버 없이 돈다. 비슷한 책(`similar`)과 최근 기록(`history`)은 기준 책의 저장된 벡터만 써서 서버가 필요 없다.
 - 세트는 셋이다: `topic`(주제 질의), `similar`(기준 책 하나), `history`(최근 기록 책 목록). 변형 표는 세트마다 따로이고(`variants.py`) 다른 세트의 변형 이름은 오류다. 어린이 기준 책(기록이면 책이 모두 어린이 도서)에는 어린이 도서 조건을 건다.
-- 장서는 YES24 카테고리 스테디셀러이고 기관과 사본 상태는 가상이다. 수치를 실제 서비스 성능으로 쓰지 않는다.
+- 장서는 YES24 카테고리 스테디셀러로 고른 525권이고 기관과 사본 상태는 가상이다. 2026-11-17부터 공식 서지는 세 출처(정보나루·카카오·YES24)를 합친 값이다(`scripts/seed_experiment.py`, `--sources`로 출처를 고를 수 있다). 수치를 실제 서비스 성능으로 쓰지 않는다.
+- **실행 사이 비교**(`compare`): 장서 값을 바꾸기 전과 뒤처럼 같은 세트를 다른 장서 상태에서 돌린 두 실행을, 두 실행의 상위 10권 책 키를 지금 라벨로 다시 채점해 짝 비교한다. 세트 해시가 다르면 멈춘다. 요약은 `<새 실행>-vs-<기준 실행>/summary.md`에 쓴다. DB·인코딩이 없다. 실행 요약의 지문에는 공식 서지 출처별 수가 있다.
 
 ## 파일
 
@@ -34,7 +37,7 @@ uv run python -m evals.recommendation.review similar --sample   # 고정 표본 
 | `data/query_vectors.json` | 질의 벡터 캐시 | 뺀다 |
 | `data/runs/<시각>/` | `summary.md`(표), `results.json`(질의·변형별 상위 10권) | 뺀다 |
 
-- `data/`는 책 키가 YES24 실험 장서를 가리켜 저장소에 넣지 않는다. **라벨은 다시 만들 수 없으니 `data/labels/`를 따로 백업한다.**
+- `data/`는 책 키가 실험 장서를 가리켜 저장소에 넣지 않는다. **라벨은 다시 만들 수 없으니 `data/labels/`를 따로 백업한다.**
 - 책 키는 `isbn:<13자리>`, ISBN이 없으면 `acc:<가장 앞선 등록번호>`다. DB의 id는 장서를 다시 넣으면 바뀌어서 쓰지 않는다.
 - 저장소의 질의 파일에 ISBN이나 등록번호 모양의 값이 있으면 세트 검사가 실패한다.
 - 남겨 둔 분야(종교·예술·건강 취미·여행)는 질의의 관련 분야, 기준 책, 최근 기록에 쓸 수 없다(세트 검사가 거부). 그 책들은 후보로는 남는다.
@@ -77,4 +80,5 @@ uv run python -m evals.recommendation.review similar --sample   # 고정 표본 
 - **주제로 찾기**: 키워드 순위 + 벡터 순위 RRF(k 60, 1:1, `hybrid-k60`)가 지금 키워드 검색을 이겼다. 서명 가나다순 뒤 기준은 조정 0.453 → 0.519, 확인 0.384 → 0.522(`data/runs/20261116-112024`).
 - **비슷한 책**: 벡터 이웃(`sim-vec`, `full`)을 채택 규칙으로 넘은 변형이 없다. 규칙 신호(같은 시리즈·같은 저자) RRF는 품질이 같다. 텍스트 종류는 책→책에서도 `full`이다(`data/runs/20261116-153444`).
 - **최근 기록**: 벡터 평균(`hist-mean`)이 책별 RRF(k 60)를 이겼다(`data/runs/20261116-153457`).
-- 같은 KDC 세목과 우리 도서관 인기는 실험 장서에서 0건이다.
+- 같은 KDC 세목과 우리 도서관 인기는 YES24 실험 장서에서 0건이었다.
+- **세 출처로 다시 채운 뒤**(`add-bibliographic-sources`, 2026-11-17): A(세 출처)에서 `hybrid-k60`·`hist-mean`은 그대로이고, `sim-rrf`가 정보나루 KDC 덕에 같은 KDC 세목 신호가 14권에서 값을 가지면서 처음으로 채택 규칙을 넘었다(조정 +0.052). B(YES24 뺌)는 대체로 낮다(최근 기록 조정 -0.224). A 최종 실행 `data/runs/20261117-025721`·`025753`·`025756`.

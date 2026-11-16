@@ -17,11 +17,22 @@ from app.seed.experiment import (
     LIBRARY_NAME,
     Collection,
     layout,
+    purge_experiment,
     seed_experiment,
 )
 from scripts import seed_experiment as script
 from tests.conftest import Tenant
-from tests.helpers import add_book, add_held_book, add_holding, add_loan, add_member, make_isbn
+from tests.helpers import (
+    add_book,
+    add_held_book,
+    add_holding,
+    add_library_book,
+    add_loan,
+    add_member,
+    make_isbn,
+)
+from tests.source_helpers import FakeSources, d4l_book, d4l_ok, enrich_sources, kakao_document
+from tests.source_helpers import kakao_ok as kakao_response
 from tests.yes24_helpers import FakeYes24, enrich, item, ok
 
 SHELVES = {"toddler": "유아 자료실", "children": "어린이 자료실", "general": "일반 자료실"}
@@ -382,3 +393,314 @@ async def test_two_paths_same_official(session: AsyncSession, library_a: Tenant)
     assert enriched == loaded
     assert enriched[0]["series_keys"] == ["우주소설", "읽고쓰고"]
     assert len(enriched[1]) == 2
+
+
+# --- 세 출처로 적재 (add-bibliographic-sources) ---
+
+
+def _sources(
+    rows: list[dict],
+    d4l: dict[int, dict | None] | None = None,
+    kakao: dict[int, dict | None] | None = None,
+) -> dict[str, dict]:
+    """YES24 행과 같은 ISBN의 새 출처 행. d4l·kakao는 {i: 덮을 값 또는 None(찾지 못함)}."""
+    result = {}
+    for i, row in enumerate(rows):
+        isbn = row["item"]["isbn13"]
+        d4l_values = (d4l or {}).get(i, {})
+        kakao_values = (kakao or {}).get(i, {})
+        result[isbn] = {
+            "isbn": isbn,
+            "field": row["field"],
+            "data4library": {"status": "not_found", "books": []}
+            if d4l_values is None
+            else {
+                "status": "found",
+                "books": [
+                    d4l_book(
+                        isbn,
+                        **{
+                            "bookname": f"실험 책 {i} :부제 {i}",
+                            "authors": f"지은이: 작가{i}",
+                            "addition_symbol": "03810",
+                            **d4l_values,
+                        },
+                    )
+                ],
+            },
+            "kakao": {"status": "not_found", "documents": []}
+            if kakao_values is None
+            else {
+                "status": "found",
+                "documents": [kakao_document(isbn, **{"title": f"실험 책 {i}", **kakao_values})],
+            },
+        }
+    return result
+
+
+async def _seed_sources(
+    session: AsyncSession, rows: list[dict], sources: dict, use: frozenset[str] | None = None
+) -> dict:
+    collection = Collection(
+        "2026-11-15",
+        SHELVES,
+        rows,
+        sources=sources,
+        use=use or frozenset({"data4library", "kakao", "yes24"}),
+    )
+    return await seed_experiment(session, collection, "admin-password", "kiosk-password")
+
+
+async def _official_rows(session: AsyncSession) -> list:
+    result = await session.execute(text("SELECT * FROM books ORDER BY isbn"))
+    return list(result.mappings())
+
+
+async def test_merged_contributors_and_series_keys(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 공식 서지와 가상 기관으로 적재 / 기여자와 시리즈 키
+
+    (세 출처를 합친 값)
+    """
+    series = [{"seriesName": "민들레그림책"}, {"seriesName": "우리 그림책"}]
+    rows = _rows(1, overrides={0: {"series": series, "author": "칼 멜링 글/브라이트 스타 그림"}})
+    await _seed_sources(session, rows, _sources(rows))
+    (book,) = await _official_rows(session)
+    assert book["external_source"] == "yes24"
+    assert book["field_sources"]["kdc"] == "data4library"
+    assert book["series_keys"] == ["민들레그림책", "우리그림책"]
+    assert book["field_sources"]["list_price"] == "kakao"
+    assert book["field_sources"]["series_name"] == "yes24"
+    assert book["kdc"] == "813.8"
+    roles = (
+        await session.execute(
+            text("SELECT name, role FROM book_contributors WHERE book_id = :b ORDER BY position"),
+            {"b": book["id"]},
+        )
+    ).all()
+    assert [tuple(r) for r in roles] == [("칼 멜링", "author"), ("브라이트 스타", "illustrator")]
+
+
+async def test_without_sources_file(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 공식 서지와 가상 기관으로 적재 / 새 출처 파일 없음"""
+    await _seed(session, _rows(5))
+    books = await _official_rows(session)
+    assert books and {b["external_source"] for b in books} == {"yes24"}
+    assert all(b["field_sources"] == {} for b in books)
+
+
+async def test_choose_sources(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 공식 서지와 가상 기관으로 적재 / 출처 고르기"""
+    rows = _rows(5)
+    await _seed_sources(session, rows, _sources(rows), frozenset({"data4library", "kakao"}))
+    books = await _official_rows(session)
+    assert len(books) == 4  # 한 권은 ISBN 없이 넣는다
+    for book in books:
+        assert "yes24" not in book["field_sources"].values()
+        assert book["external_source"] == "data4library"
+        assert book["external_category"] is None and book["series_name"] is None
+
+
+async def test_missing_book_keeps_numbers(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 공식 서지와 가상 기관으로 적재 / 찾지 못한 책의 순서 번호
+
+    (고른 출처 모두 서명·저자가 없는 책)
+    """
+    rows = _rows(10)
+    sources = _sources(rows, d4l={2: None}, kakao={2: None})
+    use = frozenset({"data4library", "kakao"})
+    report = await _seed_sources(session, rows, sources, use)
+    assert report["missing_books"] == (1, 0)
+    library_books = await _library_books(session)
+    assert len(library_books) == 9
+    accession = (
+        "SELECT h.accession_number FROM holdings h JOIN library_books lb"
+        " ON lb.id = h.library_book_id WHERE lb.isbn = :i ORDER BY 1 LIMIT 1"
+    )
+    fifth = await session.scalar(text(accession), {"i": make_isbn(104)})
+    assert fifth == "EX00005"  # 세 번째 책이 빠져도 뒤 책의 등록번호는 같다(네 번째는 ISBN 없음)
+    third = await session.scalar(text(accession), {"i": make_isbn(102)})
+    assert third is None
+
+
+async def test_book_keys_same_as_yes24_only(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 공식 서지와 가상 기관으로 적재
+
+    (세 출처로 다시 넣어도 책 키가 YES24만 넣을 때와 같다)
+    """
+    rows = _rows(12)
+    query = (
+        "SELECT coalesce(lb.isbn, '-'), min(h.accession_number) FROM library_books lb"
+        " JOIN holdings h ON h.library_book_id = lb.id WHERE lb.library_id = :l"
+        " GROUP BY lb.id, lb.isbn ORDER BY 2"
+    )
+    await _seed(session, rows)
+    before = (await session.execute(text(query), {"l": await _library_id(session)})).all()
+    await purge_experiment(session)
+    await _seed_sources(session, rows, _sources(rows))
+    after = (await session.execute(text(query), {"l": await _library_id(session)})).all()
+    assert after == before
+
+
+async def test_book_without_isbn_merged_values(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 실제 장서를 닮은 구성 / ISBN 없는 책의 값 (합친 값)"""
+    rows = _rows(4)
+    sources = _sources(rows, d4l={3: {"authors": "작가삼 지음 ;화가삼 그림"}})
+    await _seed_sources(session, rows, sources, frozenset({"data4library", "kakao"}))
+    row = (await _library_books(session))[3]
+    assert (row["isbn"], row["book_id"]) == (None, None)
+    assert (row["title"], row["author"]) == ("실험 책 3", "작가삼 지음 ;화가삼 그림")
+    assert row["description"] == "강아지똥이 민들레 꽃을 피워 내는 이야기"  # 정보나루 소개
+    assert row["list_price"] == 14000  # 카카오 정가
+    assert row["author_keys"] == author_keys(row["author"]) == ["작가삼"]
+
+
+async def test_children_from_category_or_addition_symbol(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 실제 장서를 닮은 구성 / 어린이 구분 (세 출처)"""
+    rows = _rows(
+        3,
+        overrides={
+            0: {"goodsSortNm": "국내도서-유아", "field": "toddler"},
+            1: {"goodsSortNm": "국내도서-인문"},
+            2: {"goodsSortNm": "국내도서-인문"},
+        },
+    )
+    sources = _sources(rows, d4l={1: {"addition_symbol": "77810"}, 2: {"addition_symbol": "03810"}})
+    await _seed_sources(session, rows, sources)
+    assert await _children(session) == {
+        "실험 책 0": "external_category",
+        "실험 책 1": "external_category",
+    }
+
+
+async def test_run_twice_with_sources(session: AsyncSession) -> None:
+    """[platform/experiment-collection] 반복 실행과 다른 데이터 보호 / 두 번 실행 (세 출처)"""
+    rows = _rows(20)
+    sources = _sources(rows)
+    await _seed_sources(session, rows, sources)
+    first = await _counts(session)
+    second = await _seed_sources(session, rows, sources)
+    assert await _counts(session) == first
+    assert all(created == 0 for created, _ in second.values())
+
+
+async def test_two_paths_same_official_three_sources(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/books] 공식 서지 쓰기 제한 / 두 경로의 같은 결과 (세 출처)"""
+    enriched_isbn, loaded_isbn = make_isbn(150), make_isbn(151)
+    series = [{"seriesName": "우주 소설"}]
+    await add_held_book(session, library_a.id, isbn=enriched_isbn, title="기관 서명")
+    fake = FakeSources()
+    for isbn in (enriched_isbn,):
+        fake.data4library.responses[isbn] = d4l_ok(d4l_book(isbn, bookname="같은 책 :부제"))
+        fake.kakao.responses[isbn] = kakao_response(kakao_document(isbn, title="같은 책"))
+        fake.yes24.responses[isbn] = ok(item(isbn, title="같은 책", series=series))
+    await enrich_sources(session, fake)
+    row = {"field": "general", "rank": 1, "item": item(loaded_isbn, title="같은 책", series=series)}
+    sources = {
+        loaded_isbn: {
+            "isbn": loaded_isbn,
+            "field": "general",
+            "data4library": {
+                "status": "found",
+                "books": [d4l_book(loaded_isbn, bookname="같은 책 :부제")],
+            },
+            "kakao": {
+                "status": "found",
+                "documents": [kakao_document(loaded_isbn, title="같은 책")],
+            },
+        }
+    }
+    await _seed_sources(session, [row], sources)
+
+    async def snapshot(isbn: str):
+        return (
+            await session.execute(
+                text(
+                    "SELECT to_jsonb(b) - 'id' - 'isbn' - 'created_at' - 'updated_at'"
+                    " FROM books b WHERE isbn = :i"
+                ),
+                {"i": isbn},
+            )
+        ).scalar_one()
+
+    enriched, loaded = await snapshot(enriched_isbn), await snapshot(loaded_isbn)
+    # 고정본의 ISBN이 문서 안 값(카카오 isbn 칸 등)에 들어가 다를 수 있는 칸만 뺀다
+    assert enriched == loaded
+
+
+# --- 실험 장서 지우기 ---
+
+
+async def test_purge_only_experiment(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/experiment-collection] 실험 장서 지우기 / 실험 장서만 지움"""
+    held = await add_held_book(session, library_a.id, title="A의 책")
+    holding = await add_holding(session, library_a.id, held["id"], "A-0001")
+    member = await add_member(session, library_a.id, "M-1")
+    await add_loan(session, holding, member)
+    query = (
+        "SELECT (SELECT count(*) FROM library_books WHERE library_id = :l),"
+        " (SELECT count(*) FROM holdings WHERE library_id = :l),"
+        " (SELECT count(*) FROM members WHERE library_id = :l),"
+        " (SELECT count(*) FROM loans WHERE library_id = :l)"
+    )
+    before = {
+        t.id: tuple((await session.execute(text(query), {"l": t.id})).one())
+        for t in (library_a, library_b)
+    }
+    rows = _rows(10)
+    await _seed_sources(session, rows, _sources(rows))
+    deleted = await purge_experiment(session)
+    assert deleted["libraries"] == 1
+    assert deleted["library_books"] == 10
+    assert deleted["books"] == 9
+    assert await _library_id(session) is None
+    after = {
+        t.id: tuple((await session.execute(text(query), {"l": t.id})).one())
+        for t in (library_a, library_b)
+    }
+    assert after == before
+    staff = await session.scalar(
+        text("SELECT count(*) FROM staff_users WHERE login_id LIKE 'experiment-%'")
+    )
+    assert staff == 0
+
+
+async def test_purge_keeps_shared_official(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/experiment-collection] 실험 장서 지우기 / 함께 쓰는 공식 서지"""
+    rows = _rows(3)
+    await _seed(session, rows)
+    shared = make_isbn(100)
+    official_id = await session.scalar(text("SELECT id FROM books WHERE isbn = :i"), {"i": shared})
+    await add_library_book(session, library_a.id, shared, book_id=official_id, title="A의 책")
+    contributors = await session.scalar(
+        text("SELECT count(*) FROM book_contributors WHERE book_id = :b"), {"b": official_id}
+    )
+    await purge_experiment(session)
+    assert await session.scalar(text("SELECT count(*) FROM books")) == 1
+    assert await session.scalar(text("SELECT isbn FROM books")) == shared
+    assert (
+        await session.scalar(
+            text("SELECT count(*) FROM book_contributors WHERE book_id = :b"), {"b": official_id}
+        )
+        == contributors
+    )
+
+
+async def test_purge_without_library(
+    session: AsyncSession, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """[platform/experiment-collection] 실험 장서 지우기 / 가상 기관이 없음"""
+    assert await purge_experiment(session) == {}
+    assert await script.purge(session) == script.EXIT_OK
+    assert "지운 것이 없습니다" in capsys.readouterr().out
+
+
+def test_sources_argument() -> None:
+    """[platform/experiment-collection] 공식 서지와 가상 기관으로 적재 / 출처 고르기 (인자)"""
+    assert script.parse_sources("data4library, kakao") == frozenset({"data4library", "kakao"})
+    with pytest.raises(Exception, match="출처"):
+        script.parse_sources("naver")
+    assert script.main(["--sources", "naver"]) == script.EXIT_PRECONDITION
