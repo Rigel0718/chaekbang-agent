@@ -220,21 +220,50 @@ async def similar_books(
     weights는 종류별 가중치다(없으면 kind 하나). 점수는 그 책에 벡터가 있는 종류들의 유사도
     가중 평균이고, 지정한 종류의 벡터가 하나도 없는 책은 결과에 없다.
     """
-    vector = (await embedder.encode_queries([query]))[0]
-    wanted = {TextKind(k): float(w) for k, w in (weights or {kind: 1.0}).items() if w > 0}
+    wanted = _wanted(kind, weights)
     if not wanted:
         return []
+    vector = (await embedder.encode_queries([query]))[0]
+    return await _rank_by_vectors(
+        session,
+        embedder.name,
+        library_id=library_id,
+        vectors=dict.fromkeys(wanted, vector),
+        weights=wanted,
+        limit=limit,
+        within=within,
+    )
+
+
+def _wanted(kind: TextKind, weights: Mapping[TextKind, float] | None) -> dict[TextKind, float]:
+    return {TextKind(k): float(w) for k, w in (weights or {kind: 1.0}).items() if w > 0}
+
+
+async def _rank_by_vectors(
+    session: AsyncSession,
+    model_name: str,
+    *,
+    library_id: int,
+    vectors: Mapping[TextKind, Sequence[float]],
+    weights: Mapping[TextKind, float],
+    limit: int,
+    within: Select | None,
+    exclude: Sequence[int] = (),
+) -> list[SimilarBook]:
+    """종류마다 준 벡터와의 유사도 가중 평균으로 그 기관의 추천 가능한 책을 줄 세운다(두 층)."""
     parts = []
-    for one, weight in wanted.items():
-        for branch in _vector_branches(library_id, embedder.name, one, within):
+    for one, vector in vectors.items():
+        for branch in _vector_branches(library_id, model_name, one, within):
             rows = branch.subquery()
             parts.append(
                 select(
                     rows.c.library_book_id,
-                    (1 - rows.c.embedding.cosine_distance(vector)).label("similarity"),
-                    literal(weight).label("weight"),
+                    (1 - rows.c.embedding.cosine_distance(list(vector))).label("similarity"),
+                    literal(weights[one]).label("weight"),
                 )
             )
+    if not parts:
+        return []
     scored = union_all(*parts).subquery()
     score = func.sum(scored.c.similarity * scored.c.weight) / func.sum(scored.c.weight)
     ranked = (
@@ -242,13 +271,53 @@ async def similar_books(
         .group_by(scored.c.library_book_id)
         .subquery()
     )
+    query = select(LibraryBook, ranked.c.similarity).join(
+        ranked, ranked.c.library_book_id == LibraryBook.id
+    )
+    if exclude:
+        query = query.where(LibraryBook.id.not_in(list(exclude)))
     rows = await session.execute(
-        select(LibraryBook, ranked.c.similarity)
-        .join(ranked, ranked.c.library_book_id == LibraryBook.id)
-        .order_by(ranked.c.similarity.desc(), LibraryBook.id)
-        .limit(limit)
+        query.order_by(ranked.c.similarity.desc(), LibraryBook.id).limit(limit)
     )
     return [SimilarBook(book, float(similarity)) for book, similarity in rows]
+
+
+async def neighbors_of(
+    session: AsyncSession,
+    model_name: str,
+    *,
+    library_id: int,
+    library_book_ids: Sequence[int],
+    limit: int = SIMILAR_LIMIT,
+    kind: TextKind = TextKind.FULL,
+    weights: Mapping[TextKind, float] | None = None,
+    within: Select | None = None,
+) -> list[SimilarBook]:
+    """기준 책들의 저장된 벡터와 유사도가 높은 그 기관의 추천 가능한 책. 질의를 인코딩하지 않는다.
+
+    기준 책마다 그 책이 속한 층의 벡터를 쓰고, 여러 권이면 종류마다 평균한다. 다른 기관의 id와
+    벡터가 없는 기준 책은 쓰지 않는다. 쓸 벡터가 하나도 없으면 비어 있다. 기준 책 자신은 결과에
+    없다. 범위 조건(within), 깊이, 종류 가중치는 `similar_books`와 같다.
+    """
+    wanted = _wanted(kind, weights)
+    vectors: dict[TextKind, list[float]] = {}
+    for one in wanted:
+        found = await book_vectors(session, model_name, library_id, library_book_ids, kind=one)
+        if found:
+            columns = zip(*(found[i] for i in sorted(found)), strict=True)
+            vectors[one] = [sum(column) / len(found) for column in columns]
+    if not vectors:
+        return []
+    return await _rank_by_vectors(
+        session,
+        model_name,
+        library_id=library_id,
+        vectors=vectors,
+        weights=wanted,
+        limit=limit,
+        within=within,
+        exclude=library_book_ids,
+    )
 
 
 async def book_vectors(

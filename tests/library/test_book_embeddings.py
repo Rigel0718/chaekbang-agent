@@ -19,6 +19,7 @@ from app.library.recommendation.embeddings import (
     book_vectors,
     held_official_ids,
     missing_official_descriptions,
+    neighbors_of,
     run_library_embedding,
     similar_books,
 )
@@ -762,3 +763,108 @@ async def test_book_vectors_from_both_layers(
     assert vectors[ids["공식책"]][0] == pytest.approx(0.9, abs=1e-5)
     assert vectors[ids["기관쪽"]][0] == pytest.approx(0.4, abs=1e-5)
     assert len(vectors[ids["공식책"]]) == 1024
+
+
+# --- 저장된 벡터로 조회 ---
+
+
+class _NoEncoding(FakeEmbedder):
+    """적재 뒤에는 인코딩을 부르면 실패한다."""
+
+    locked = False
+
+    async def encode_queries(self, texts):
+        raise AssertionError("질의를 인코딩하면 안 된다")
+
+    async def encode_documents(self, texts):
+        if self.locked:
+            raise AssertionError("문서를 인코딩하면 안 된다")
+        return await super().encode_documents(texts)
+
+
+async def _stored_setup(session: AsyncSession, library_id: int, vectors: dict, linked=frozenset()):
+    """서명마다 벡터를 정한 책을 만들고 적재한다. 적재 뒤에는 인코딩할 수 없다."""
+    ids = {}
+    for title in vectors:
+        if title in linked:
+            book = await _official(session, title=title, description=None)
+            ids[title] = (await _hold(session, library_id, book, title=f"기관 {title}"))["id"]
+        else:
+            ids[title] = (await add_held_book(session, library_id, title=title))["id"]
+    embedder = _NoEncoding(vectors=vectors)
+    await _load_both(session, embedder, full=True, library_id=library_id)
+    embedder.locked = True
+    return ids, embedder
+
+
+async def test_neighbors_without_encoding(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 저장된 벡터로 유사도 조회 / 인코딩 없음"""
+    ids, embedder = await _stored_setup(
+        session, library_a.id, {"기준": unit(1), "가까움": toward(0.9), "멂": toward(0.2)}
+    )
+    found = await neighbors_of(
+        session, embedder.name, library_id=library_a.id, library_book_ids=[ids["기준"]]
+    )
+    assert [f.library_book.id for f in found] == [ids["가까움"], ids["멂"]]
+    assert [f.similarity for f in found] == pytest.approx([0.9, 0.2], abs=1e-5)
+
+
+async def test_neighbors_of_unlinked_base(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-embeddings] 저장된 벡터로 유사도 조회 / 두 층의 기준 책"""
+    ids, embedder = await _stored_setup(
+        session,
+        library_a.id,
+        {"기준": unit(1), "공식책": toward(0.8), "기관쪽": toward(0.6)},
+        linked={"공식책"},
+    )
+    found = await neighbors_of(
+        session, embedder.name, library_id=library_a.id, library_book_ids=[ids["기준"]]
+    )
+    assert [f.library_book.id for f in found] == [ids["공식책"], ids["기관쪽"]]
+    assert [f.library_book.book_id is not None for f in found] == [True, False]
+
+
+async def test_neighbors_of_several_books_use_the_mean(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-embeddings] 저장된 벡터로 유사도 조회 / 여러 권의 평균"""
+    ids, embedder = await _stored_setup(
+        session,
+        library_a.id,
+        {
+            "첫째": unit(1, 0),
+            "둘째": unit(0, 1),
+            "가운데": unit(1, 1),
+            "첫째쪽": unit(1, 0.1),
+            "다른곳": unit(0, 0, 1),
+        },
+    )
+    found = await neighbors_of(
+        session,
+        embedder.name,
+        library_id=library_a.id,
+        library_book_ids=[ids["첫째"], ids["둘째"]],
+    )
+    assert [f.library_book.id for f in found] == [ids["가운데"], ids["첫째쪽"], ids["다른곳"]]
+    assert found[0].similarity == pytest.approx(1.0, abs=1e-5)
+
+
+async def test_neighbors_ignore_other_library_base(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/book-embeddings] 저장된 벡터로 유사도 조회 / 다른 기관의 기준 책 벡터"""
+    mine, embedder = await _stored_setup(session, library_a.id, {"우리": toward(0.5)})
+    theirs, _ = await _stored_setup(
+        session, library_b.id, {"남의기준": unit(1), "남의책": toward(0.9)}
+    )
+    only_theirs = await neighbors_of(
+        session, embedder.name, library_id=library_a.id, library_book_ids=[theirs["남의기준"]]
+    )
+    assert only_theirs == []
+    mixed = await neighbors_of(
+        session,
+        embedder.name,
+        library_id=library_a.id,
+        library_book_ids=[theirs["남의기준"], mine["우리"]],
+    )
+    assert mixed == []  # 우리 책 하나뿐이고 그 책이 기준이다

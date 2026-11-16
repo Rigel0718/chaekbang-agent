@@ -38,6 +38,7 @@ from app.library.models.catalog import LibraryBook
 from app.library.models.library import Library
 from app.library.recommendation.authors import same_author_books
 from app.library.recommendation.cards import shelf_of
+from app.library.recommendation.related import editions_of
 from app.library.recommendation.search import get_candidates, recommendable_ids
 from app.seed.experiment import LIBRARY_NAME, CollectionMissingError
 from evals.collection.fetch import DATA_FILE as COLLECTION_FILE
@@ -233,10 +234,17 @@ async def related_candidates(
     fields: Mapping[str, str],
     key_ids: Mapping[str, int],
 ) -> list[int]:
-    """실행 전 후보: 기준 책들의 분야 + 같은 지은이·같은 시리즈의 책. 기준 책은 뺀다."""
+    """실행 전 후보: 기준 책들의 분야 + 같은 지은이·같은 시리즈의 책.
+
+    기준 책과 그 다른 판본은 뺀다. 기준 책이 모두 어린이 도서이면 어린이 도서만 후보다(실행할 때
+    어린이 도서 조건을 거는 기준과 같다).
+    """
     base_ids = [key_ids[key] for key in base_keys if key in key_ids]
     base_fields = {fields.get(key) for key in base_keys}
     allowed = set(await session.scalars(recommendable_ids(library_id)))
+    children = set(await session.scalars(children_book_ids(library_id)))
+    if base_ids and all(base_id in children for base_id in base_ids):
+        allowed &= children
     found = {
         book_id
         for key, book_id in key_ids.items()
@@ -252,7 +260,8 @@ async def related_candidates(
     by_id = {book_id: set(keys) for book_id, keys in series}
     wanted = set().union(*(by_id.get(base_id, set()) for base_id in base_ids))
     found |= {book_id for book_id, keys in by_id.items() if keys & wanted}
-    return sorted(found - set(base_ids))
+    hidden = {*base_ids, *(await editions_of(session, library_id, base_ids))}
+    return sorted((found & allowed) - hidden)
 
 
 def pool_keys(

@@ -4,6 +4,7 @@
 
     uv run python -m evals.recommendation.draft dump topic            # 후보를 data/draft/에 쓴다
     uv run python -m evals.recommendation.draft apply topic <초안.json>
+    uv run python -m evals.recommendation.draft dump similar          # history도 같다
 
 - 초안은 어떤 변형의 결과도 보지 않고 실행 전 후보 전체에 단다.
 - 초안 파일은 `{"t01": {"<책 키>": 2, …}}`로 1 이상인 책만 적는다. 적지 않은 후보는 0이다.
@@ -15,6 +16,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import select
@@ -22,15 +24,34 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.features.children.service import children_book_ids
 from app.library.models.library import Library
 from app.seed.experiment import LIBRARY_NAME
 from evals.collection.fetch import DATA_FILE as COLLECTION_FILE
 from evals.recommendation.keys import DATA_DIR, library_keys, load_fields
-from evals.recommendation.label import Card, cards_for, pool_keys, topic_candidates
+from evals.recommendation.label import (
+    Card,
+    cards_for,
+    pool_keys,
+    related_candidates,
+    topic_candidates,
+)
 from evals.recommendation.labels import BEFORE, CLAUDE, POOL, USER, Labels, labels_file
-from evals.recommendation.sets import TopicQuery, load_topic
+from evals.recommendation.sets import TopicQuery, load_seeds, load_topic
 
 DRAFT_DIR = DATA_DIR / "draft"
+SETS = ("topic", "similar", "history")
+
+
+@dataclass(frozen=True)
+class RelatedItem:
+    """비슷한 책의 기준 책 하나, 또는 최근 기록 하나. 초안과 검수 화면이 주제 질의처럼 다룬다."""
+
+    id: str
+    text: str  # 머리글: 기준 책(들)의 서명
+    children: bool  # 기준 책이 모두 어린이 도서다
+    split: str
+    bases: tuple[Card, ...]  # 기준 책(들)의 카드(소개 전문)
 
 
 class DraftError(ValueError):
@@ -99,6 +120,101 @@ async def load_topic_items(
         await engine.dispose()
 
 
+async def load_related_items(
+    database_url: str,
+    set_name: str,
+    length: int | None,
+    extra: Mapping[str, Sequence[str]] | None = None,
+) -> list[tuple[RelatedItem, list[Card]]]:
+    """비슷한 책(`similar`)이나 최근 기록(`history`) 항목마다 실행 전 후보의 카드.
+
+    후보는 기준 책들의 분야 + 같은 지은이·같은 시리즈의 책이다(다른 판본 제외, 어린이 기준 책이면
+    어린이 도서만). extra가 있으면 후보 밖의 그 책들(보충 라벨)도 뒤에 붙인다.
+    """
+    fields = load_fields(COLLECTION_FILE)
+    seeds, histories = load_seeds(fields)
+    rows = (
+        [(seed.id, seed.split, [seed.book]) for seed in seeds]
+        if set_name == "similar"
+        else [(history.id, history.split, list(history.books)) for history in histories]
+    )
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            library_id = await session.scalar(
+                select(Library.id).where(Library.name == LIBRARY_NAME)
+            )
+            if library_id is None:
+                return []
+            key_ids = await library_keys(session, library_id)
+            id_keys = {book_id: key for key, book_id in key_ids.items()}
+            children = set(await session.scalars(children_book_ids(library_id)))
+            items = []
+            for item_id, split, base_keys in rows:
+                base_ids = [key_ids[key] for key in base_keys]
+                bases = await cards_for(session, library_id, base_ids, id_keys, None)
+                ids = await related_candidates(session, library_id, base_keys, fields, key_ids)
+                more = sorted(
+                    {key_ids[k] for k in (extra or {}).get(item_id, ()) if k in key_ids}
+                    - set(ids)
+                    - set(base_ids)
+                )
+                item = RelatedItem(
+                    id=item_id,
+                    text=" + ".join(card.title for card in bases),
+                    children=all(base_id in children for base_id in base_ids),
+                    split=split,
+                    bases=tuple(bases),
+                )
+                cards = await cards_for(session, library_id, [*ids, *more], id_keys, length)
+                items.append((item, cards))
+            return items
+    finally:
+        await engine.dispose()
+
+
+async def load_items(
+    database_url: str,
+    set_name: str,
+    length: int | None,
+    extra: Mapping[str, Sequence[str]] | None = None,
+) -> list:
+    """세트의 (항목, 후보 카드) 목록. 실험 기관이 없으면 빈 목록."""
+    if set_name == "topic":
+        return await load_topic_items(database_url, length, extra)
+    return await load_related_items(database_url, set_name, length, extra)
+
+
+def _line(card: Card, length: int | None) -> str:
+    return (
+        f"{card.key} | {card.title} | {card.author} | {card.category} | {card.description[:length]}"
+    )
+
+
+def _dump_related(
+    set_name: str, items: Sequence[tuple[RelatedItem, Sequence[Card]]], length: int
+) -> None:
+    """기준 책·기록의 후보를 쓴다. 책은 한 번만(`<세트>-books.txt`), 항목마다 후보 키만 쓴다.
+
+    여러 항목이 같은 분야의 책을 되풀이해 후보로 가져서, 책 소개를 한 번만 읽게 한다.
+    """
+    DRAFT_DIR.mkdir(parents=True, exist_ok=True)
+    books: dict[str, Card] = {}
+    lines = []
+    for item, cards in items:
+        lines += ["", f"# {item.id} [{item.split}]" + (" [어린이]" if item.children else "")]
+        lines += [f"기준: {_line(base, None)}" for base in item.bases]
+        lines.append(f"후보 {len(cards)}권: " + " ".join(card.key for card in cards))
+        books.update({card.key: card for card in cards})
+    path = DRAFT_DIR / f"{set_name}-items.txt"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"{path} ({len(items)}개 항목, 후보 {sum(len(cards) for _, cards in items)}건)")
+    ordered = sorted(books.values(), key=lambda card: (card.category, card.title, card.key))
+    path = DRAFT_DIR / f"{set_name}-books.txt"
+    path.write_text("\n".join(_line(card, length) for card in ordered) + "\n", encoding="utf-8")
+    print(f"{path} (책 {len(books)}권)")
+
+
 def _dump(items: Sequence[tuple[TopicQuery, Sequence[Card]]], length: int) -> None:
     """후보를 같은 후보 묶음끼리 한 파일로 쓴다(어린이 질의는 같은 책을 되풀이해 본다)."""
     DRAFT_DIR.mkdir(parents=True, exist_ok=True)
@@ -137,12 +253,13 @@ def _pool(
             if not pool:
                 continue
             lines += ["", f"# {query.id} {query.text}" + (" [어린이]" if query.children else "")]
+            lines += [f"기준: {_line(base, None)}" for base in getattr(query, "bases", ())]
             lines += [
                 f"{card.key} | {card.title} | {card.author} | {card.category} | "
                 f"{card.description[: args.length]}"
                 for card in pool
             ]
-        path = DRAFT_DIR / "topic-pool.txt"
+        path = DRAFT_DIR / f"{args.set}-pool.txt"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"{path} (라벨 없는 책 {sum(len(keys) for keys in wanted.values())}건)")
         return 0
@@ -164,10 +281,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.recommendation.draft")
     commands = parser.add_subparsers(dest="command", required=True)
     dump = commands.add_parser("dump", help="후보를 data/draft/에 쓴다")
-    dump.add_argument("set", choices=("topic",))
+    dump.add_argument("set", choices=SETS)
     dump.add_argument("--length", type=int, default=400, help="소개 글자 수")
     apply = commands.add_parser("apply", help="초안 파일을 라벨 파일에 넣는다")
-    apply.add_argument("set", choices=("topic",))
+    apply.add_argument("set", choices=SETS)
     apply.add_argument("file", type=Path)
     for command in (dump, apply):
         command.add_argument("--pool", type=Path, help="보충: 실행 폴더(상위 10권 중 라벨 없는 책)")
@@ -181,19 +298,22 @@ def main() -> int:
         results = json.loads((run / "results.json").read_text(encoding="utf-8"))
         names = [name for name in args.variants.split(",") if name] or list(results)
         wanted = pool_keys(results, names, labels)
-    items = asyncio.run(load_topic_items(get_settings().database_url, None, wanted))
+    items = asyncio.run(load_items(get_settings().database_url, args.set, None, wanted))
     if not items:
         print("실험 기관이 없습니다. `uv run python scripts/seed_experiment.py`")
         return 1
     if args.pool is not None:
         return _pool(args, items, wanted, labels)
     if args.command == "dump":
-        _dump(items, args.length)
+        if args.set == "topic":
+            _dump(items, args.length)
+        else:
+            _dump_related(args.set, items, args.length)
         return 0
     picks = json.loads(args.file.read_text(encoding="utf-8"))
     unknown = sorted(set(picks) - {query.id for query, _ in items})
     if unknown:
-        print(f"없는 질의 id: {unknown}")
+        print(f"없는 항목 id: {unknown}")
         return 1
     for query, cards in items:  # 쓰기 전에 모두 검사한다
         stray = sorted(set(picks.get(query.id, {})) - {card.key for card in cards})
