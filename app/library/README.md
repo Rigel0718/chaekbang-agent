@@ -31,9 +31,10 @@
 | `recommendation/authors.py` | 같은 지은이의 책 `same_author_books`, 지은이 키 SQL 식 `writer_keys_sql` |
 | `services/author_keys.py` | 저자 키 다시 맞추기 `rebuild_author_keys`, 맞춰지지 않은 분류기호 세기 |
 | `recommendation/embedding_text.py` | 기관 도서 벡터의 텍스트 `library_embedding_text`(기관 값만, 조립 규칙은 `app/core/embedding_text.py`) |
-| `recommendation/embeddings.py` | 기관 도서 벡터 적재 `run_library_embedding`, 기관을 지정한 공식 서지 벡터 적재 조건 `held_official_ids`, 두 층 유사도 조회 `similar_books`(범위 조건, 종류별 가중 평균), 저장된 벡터 읽기 `book_vectors` |
+| `recommendation/embeddings.py` | 기관 도서 벡터 적재 `run_library_embedding`, 기관을 지정한 공식 서지 벡터 적재 조건 `held_official_ids`, 두 층 유사도 조회 `similar_books`(범위 조건, 종류별 가중 평균), 저장된 벡터로 이웃 조회 `neighbors_of`(인코딩 없음), 저장된 벡터 읽기 `book_vectors` |
 | `recommendation/ranking.py` | 순수 함수: 역순위 합 `fuse_rrf`, 시리즈 묶기 `cap_series`, 결과 다양화 `mmr`. DB를 모른다 |
 | `recommendation/topic.py` | 주제로 찾기 `find_by_topic`(키워드·벡터 순위를 합침), 깊은 키워드 순위 `keyword_ranking`, 설정 `TopicSettings` |
+| `recommendation/related.py` | 비슷한 책 `find_similar`(같은 시리즈·같은 저자·KDC 세목·벡터 이웃, 판본 제외 `editions_of`, 근거), 최근 기록 `find_from_history`, 우리 도서관 인기 `popular_ranking`, 설정 `SimilarSettings`·`HistorySettings` |
 | `models/embedding.py` | `BookEmbedding`(공식 서지 없는 기관 도서·모델·텍스트 버전·종류마다 벡터 하나) |
 | `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 검색 tool을 만드는 `search_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
@@ -113,6 +114,15 @@
 - 설정(`TopicSettings`: 신호 가중치, 벡터 질의 입력, 종류 가중치, 깊이, k, 시리즈 상한, λ)은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지 않았다(`add-related-books`). AI 사서는 지금처럼 `search_collection`을 쓴다.
 - 벡터 인덱스는 없다. 5,000권(공식 4,500 + 기관 500) 두 층 조회가 약 45ms다(처음 한 번 약 68ms).
 - CPU에서 한 권에 약 1.45초가 걸린다(ONNX, 배치 4). 전체 적재는 드물게, 평소에는 증분으로 돌린다.
+
+## 비슷한 책과 최근 기록
+
+- `find_similar`는 기준 책 하나에서 후보 순위를 만든다. 신호는 같은 시리즈(공식 서지 시리즈 키), 같은 저자(`same_author_books`), 같은 KDC 세목(표시 KDC가 소수점 첫째 자리까지 같음), 벡터 이웃(기준 책의 **저장된** 벡터, `neighbors_of`)이다. 질의를 인코딩하지 않아 임베딩 서버 없이 돌고, 인코더 대신 모델 이름을 받는다.
+- 합치기는 RRF(`fuse_rrf`) 또는 규칙 신호 먼저(`fuse_priority`: 시리즈 → 저자 → KDC → 벡터)다. 결과마다 신호별 순위(근거)가 있다. 시리즈 묶기와 MMR은 주제로 찾기의 함수를 쓴다.
+- 기준 책 자신과 같은 책의 다른 판본은 내지 않는다. 판본 규칙은 `editions_of`다: 판본·묶음 표기를 지운 표시 서명에서 공백·문장부호를 지운 값이 같고 지은이가 겹친다. 괄호 안 권 표기(`(봄·여름)`)도 판본으로 본다(한계).
+- `category_scope`는 벡터 이웃을 같은 외부 분류 원문 안으로 좁힌다. 외부 분류는 상위 분야라 KDC 세목 대신으로 쓰지 않는다.
+- `find_from_history`는 최근 기록(책 목록)에서 고른다. `mean`은 기록 책 벡터의 평균, `per-book`은 책마다 만든 비슷한 책 순위의 RRF다(근거 이름 `book:<id>`). 기록 책 중 그 기관의 책만 근거로 쓴다. 결과가 모자라면 `popular_ranking`(최근 180일 대출 행 수, 그 기관만)으로 채운다. 대출 행이 없는 기관에서는 채우지 않는다.
+- 범위(그 기관, 추천 가능, `within`)는 신호마다 순위 전에 건다. 다른 기관의 기준 책은 NotFoundError다. 설정은 추천 실험이 정한다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
 
 ## 도서관 안내
 

@@ -12,11 +12,16 @@ uv run python -m evals.recommendation.label topic          # 터미널에서 직
 uv run python -m evals.recommendation topic --variants current,vec-text,hybrid   # 조정 세트로 실행
 uv run python -m evals.recommendation topic --split all --variants current,best
 uv run python -m evals.recommendation.label topic --pool <실행 폴더 이름> --variants current,best   # 보충 라벨
+uv run python -m evals.recommendation similar --split all --variants sim-vec,sim-rrf,sim-best     # 비슷한 책 (임베딩 서버 필요 없음)
+uv run python -m evals.recommendation history --split all --variants hist-mean,hist-per-book     # 최근 기록
+uv run python -m evals.recommendation.draft dump similar   # 후보: data/draft/similar-items.txt, similar-books.txt (history도, apply·--pool도 같다)
+uv run python -m evals.recommendation.review similar --sample   # 고정 표본 검수 (history도)
 ```
 
 - 개발 DB(`DATABASE_URL`)의 `실험용 가상 작은도서관`(이름으로 찾는다)에서 읽기만 한다. 실험 장서는 `scripts/seed_experiment.py`가 넣는다.
-- 재는 코드는 제품 패키지의 것이다(`app/library/recommendation/topic.py`, `ranking.py`, `embeddings.py`). 기관 범위, 추천 가능, 어린이 조건이 그 함수에서 강제된다. 여기에는 변형 정의, 세트, 라벨, 지표만 있다.
-- 질의 인코딩만 로컬 임베딩 서버를 쓴다(`docker compose --profile embedding up -d embedder`). 질의 벡터를 `data/query_vectors.json`에 캐시해, 한 번 돌린 질의는 서버 없이 돈다.
+- 재는 코드는 제품 패키지의 것이다(`app/library/recommendation/topic.py`, `related.py`, `ranking.py`, `embeddings.py`). 기관 범위, 추천 가능, 어린이 조건이 그 함수에서 강제된다. 여기에는 변형 정의, 세트, 라벨, 지표만 있다.
+- 질의 인코딩만 로컬 임베딩 서버를 쓴다(`docker compose --profile embedding up -d embedder`). 질의 벡터를 `data/query_vectors.json`에 캐시해, 한 번 돌린 질의는 서버 없이 돈다. 비슷한 책(`similar`)과 최근 기록(`history`)은 기준 책의 저장된 벡터만 써서 서버가 필요 없다.
+- 세트는 셋이다: `topic`(주제 질의), `similar`(기준 책 하나), `history`(최근 기록 책 목록). 변형 표는 세트마다 따로이고(`variants.py`) 다른 세트의 변형 이름은 오류다. 어린이 기준 책(기록이면 책이 모두 어린이 도서)에는 어린이 도서 조건을 건다.
 - 장서는 YES24 카테고리 스테디셀러이고 기관과 사본 상태는 가상이다. 수치를 실제 서비스 성능으로 쓰지 않는다.
 
 ## 파일
@@ -46,7 +51,8 @@ uv run python -m evals.recommendation.label topic --pool <실행 폴더 이름> 
 - **목록 방식**(실행 전 기본): 질의 하나의 후보를 번호 목록 한 화면으로 본다. `2인 번호`와 `1인 번호`를 공백이나 쉼표로 넣고(없으면 Enter) 확인하면 나머지는 0으로 한 번에 쓴다. `?12`는 12번 책의 카드(소개 300자), `r`은 다시, `q`는 끝내기(그 질의는 쓰지 않는다). 한 권씩 물으면 주제만 1,384건이라 이렇게 단다.
 - **카드 방식**(보충 단계, 또는 `--cards`): 한 권씩 묻고 답마다 쓴다. Enter는 0, `q`는 끝내기.
 - 다시 열면 라벨 없는 책부터 이어 간다.
-- 이번 change에서는 주제 질의만 단다. 비슷한 책·최근 기록의 라벨은 `add-related-book-experiments`에서 단다.
+- 비슷한 책·최근 기록의 후보는 기준 책들의 분야 + 같은 지은이·같은 시리즈의 책이다. 기준 책과 그 다른 판본은 빼고, 어린이 기준 책이면 어린이 도서만이다. 검수 화면은 기준 책의 소개 전문을 후보 위에 보여 준다.
+- **비슷한 책·최근 기록의 라벨은 Claude가 달고 사람은 고정 표본만 본다**(2026-11-16, `add-related-book-experiments`). 실행 전 1,400여 건에 보충까지 사람이 다 보기에는 많다. 표본은 등급(2·1·0)마다 고르게, 항목 id와 책 키의 SHA-256 순서로 뽑는다(비슷한 책 25건, 최근 기록 20건). 결과를 보지 않고 정해져 언제 봐도 특정 변형 쪽으로 기울지 않는다. `review <세트> --sample`에서 지금 등급이 맞으면 그 숫자를, 틀리면 맞는 숫자를 누른다. 요약에 일치율(사람이 고치지 않은 비율)과 보지 않은 표본 수를 적는다. 표본의 30% 이상을 고치면 결과를 쓰지 않고 기준을 다시 맞춘다. 사람이 고친 라벨에는 초안 등급이 `draft`로 남는다.
 
 ## 지표와 읽는 법
 
@@ -61,8 +67,14 @@ uv run python -m evals.recommendation.label topic --pool <실행 폴더 이름> 
 
 - 질의가 적어(조정 20, 확인 10) 평균만 보지 않는다. 기준 변형과 질의별 nDCG@5 차이로 이김·비김·짐을 세고, 고정 시드 부트스트랩(2,000번)으로 평균 차이의 95% 구간을 낸다.
 - **채택 규칙**: 조정 세트에서 평균 차이 > 0, 이김 > 짐, 구간 하한 > 0이면 채택한다. 아니면 "차이 없음"으로 보고 더 단순한 쪽을 둔다. 확인 세트는 마지막에 한 번, 뒤집히지 않는지만 본다.
+- 비슷한 책·최근 기록의 요약에는 묶음별 표(어린이·일반, 관련 책 있음·없음 / 같은 분야·섞인 분야·어린이)와 **신호 건수**(신호마다 결과가 비지 않은 항목 수와 평균 권수)가 있다. 실험 장서에 값이 없는 신호(같은 KDC 세목, 우리 도서관 인기)는 0건으로 나온다. 겹침(같은 지은이·시리즈 쌍)은 비슷한 책에서는 나쁜 값이 아니라 채택 근거로 쓰지 않는다.
 - 변형은 `variants.py`에 있다. 단계(기준 → 벡터 입력 → 텍스트 종류 → 합치기 → 시리즈 묶기 → 다양화)마다 앞 단계의 승자 위에 얹고, 승자는 `BEST_*`에 적는다.
 
 ## 결과
 
-구현 중이다. 결과 표는 실험을 돌린 뒤 여기에 적는다.
+표와 근거는 change의 design "결과"에 있다(`openspec/changes/…/add-recommendation-experiments/design.md`, `add-related-book-experiments/design.md`).
+
+- **주제로 찾기**: 키워드 순위 + 벡터 순위 RRF(k 60, 1:1, `hybrid-k60`)가 지금 키워드 검색을 이겼다. 서명 가나다순 뒤 기준은 조정 0.453 → 0.519, 확인 0.384 → 0.522(`data/runs/20261116-112024`).
+- **비슷한 책**: 벡터 이웃(`sim-vec`, `full`)을 채택 규칙으로 넘은 변형이 없다. 규칙 신호(같은 시리즈·같은 저자) RRF는 품질이 같다. 텍스트 종류는 책→책에서도 `full`이다(`data/runs/20261116-153444`).
+- **최근 기록**: 벡터 평균(`hist-mean`)이 책별 RRF(k 60)를 이겼다(`data/runs/20261116-153457`).
+- 같은 KDC 세목과 우리 도서관 인기는 실험 장서에서 0건이다.

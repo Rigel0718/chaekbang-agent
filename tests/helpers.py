@@ -26,8 +26,8 @@ TEST_PASSWORD = "test-password-1"
 
 
 def make_isbn(n: int) -> str:
-    """n마다 다른, 체크 디지트가 올바른 ISBN-13."""
-    first12 = f"979110000{n:03d}"
+    """n마다 다른, 체크 디지트가 올바른 ISBN-13. n이 1000을 넘어도 13자리다(이전 값은 그대로)."""
+    first12 = f"9791{10_000_000 + n:08d}"
     return first12 + isbn13_check_digit(first12)
 
 

@@ -1,4 +1,7 @@
-"""주제로 찾기의 변형. 단계마다 앞 단계의 승자 위에 다음 단계를 얹는다(design 결정 7).
+"""추천 실험의 변형. 세트(주제로 찾기, 비슷한 책, 최근 기록)마다 표가 따로 있다.
+
+단계마다 앞 단계의 승자 위에 다음 단계를 얹는다(`add-recommendation-experiments` design 결정 7,
+`add-related-book-experiments` design 결정 6·7).
 
 단계의 승자는 실행 결과를 보고 사람이 정해 아래 `BEST_*`에 적는다. 근거는 change의 design과
 README의 결과 표에 남긴다. 격자는 일부러 작게 둔다. 질의가 20개라 촘촘히 고르면 조정 세트에
@@ -14,6 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.central.embedding import Embedder
 from app.core.embedding_text import TextKind
 from app.library.recommendation.ranking import Ranked
+from app.library.recommendation.related import (
+    AUTHOR,
+    KDC,
+    SERIES,
+    VECTOR,
+    HistorySettings,
+    SimilarSettings,
+    find_from_history,
+    find_similar,
+)
 from app.library.recommendation.search import search_collection
 from app.library.recommendation.topic import KEYWORD, TopicSettings, find_by_topic
 from evals.recommendation.sets import TopicQuery
@@ -23,13 +36,14 @@ DEEP = 10  # 지표가 보는 깊이(Recall@10)
 Runner = Callable[
     [AsyncSession, Embedder, int, TopicQuery, Select | None], Awaitable[Sequence[Ranked]]
 ]
+Settings = TopicSettings | SimilarSettings | HistorySettings
 
 
 @dataclass(frozen=True)
 class Variant:
     name: str
     note: str
-    settings: TopicSettings | None = None  # 주제로 찾기의 설정
+    settings: Settings | None = None  # 그 세트의 제품 함수에 넘길 설정
     runner: Runner | None = None  # 설정으로 나타낼 수 없는 것(지금 제품의 키워드 검색)
 
 
@@ -38,13 +52,35 @@ async def run_variant(
     embedder: Embedder,
     variant: Variant,
     library_id: int,
-    query: TopicQuery,
+    query,
     within: Select | None,
 ) -> Sequence[Ranked]:
-    """변형 하나로 질의 하나의 상위 `DEEP`권. 어린이 조건(`within`)은 부르는 쪽이 넘긴다."""
+    """변형 하나로 항목 하나의 상위 `DEEP`권. 어린이 조건(`within`)은 부르는 쪽이 넘긴다.
+
+    항목은 주제 질의이거나, 기준 책들의 기관 도서 id(`base_ids`)를 가진 비슷한 책·최근 기록
+    항목이다. 비슷한 책과 최근 기록은 저장된 벡터만 써서 인코더의 모델 이름만 쓴다.
+    """
     if variant.runner is not None:
         return await variant.runner(session, embedder, library_id, query, within)
     assert variant.settings is not None
+    if isinstance(variant.settings, SimilarSettings):
+        return await find_similar(
+            session,
+            embedder.name,
+            library_id=library_id,
+            library_book_id=query.base_ids[0],
+            within=within,
+            settings=replace(variant.settings, limit=DEEP),
+        )
+    if isinstance(variant.settings, HistorySettings):
+        return await find_from_history(
+            session,
+            embedder.name,
+            library_id=library_id,
+            library_book_ids=query.base_ids,
+            within=within,
+            settings=replace(variant.settings, limit=DEEP),
+        )
     return await find_by_topic(
         session,
         embedder,
@@ -135,3 +171,122 @@ def _all() -> list[Variant]:
 
 VARIANTS: dict[str, Variant] = {variant.name: variant for variant in _all()}
 DEFAULT_VARIANTS = ("current", "vec-text", "hybrid", "best")
+
+# --- 비슷한 책 (`add-related-book-experiments` design 결정 6) ---
+# 단계의 승자 (실행 결과를 보고 고친다)
+BEST_SIM_KIND = "full"  # 단계 1: 벡터 이웃의 텍스트 종류
+BEST_SIM_FUSION = "rrf"  # 단계 3: rrf / priority
+BEST_SIM_RULE_WEIGHT = 1.0  # 단계 3: 규칙 신호(시리즈·저자·KDC) 가중치
+BEST_SIM_SERIES_CAP: int | None = None  # 단계 4
+BEST_SIM_MMR: float | None = None  # 단계 4
+
+
+def _sim_vector(kind: str = BEST_SIM_KIND, **changes) -> SimilarSettings:
+    return replace(SimilarSettings(signals={VECTOR: 1.0}, weights=KINDS[kind]), **changes)
+
+
+def _sim_fused(rule_weight: float = BEST_SIM_RULE_WEIGHT, **changes) -> SimilarSettings:
+    base = SimilarSettings(
+        signals={SERIES: rule_weight, AUTHOR: rule_weight, KDC: rule_weight, VECTOR: 1.0},
+        fusion=BEST_SIM_FUSION,
+        weights=KINDS[BEST_SIM_KIND],
+    )
+    return replace(base, **changes)
+
+
+def _sim_best(**changes) -> SimilarSettings:
+    return _sim_fused(series_cap=BEST_SIM_SERIES_CAP, mmr_lambda=BEST_SIM_MMR, **changes)
+
+
+def _similar() -> list[Variant]:
+    rules = {SERIES: 1.0, AUTHOR: 1.0, KDC: 1.0}
+    no_kdc = {SERIES: BEST_SIM_RULE_WEIGHT, AUTHOR: BEST_SIM_RULE_WEIGHT, VECTOR: 1.0}
+    return [
+        Variant("sim-vec", "0 기준: 벡터 이웃만, full", _sim_vector("full")),
+        Variant("sim-vec-author", "1 벡터 이웃만, 저자 넣기", _sim_vector("author")),
+        Variant("sim-vec-desc", "1 벡터 이웃만, 소개만", _sim_vector("desc")),
+        Variant("sim-vec-fields", "1 벡터 이웃만, 필드별 1:1:1", _sim_vector("fields")),
+        Variant(
+            "sim-vec-cat",
+            "1' 진단: 벡터 이웃을 같은 외부 분류 안으로",
+            _sim_vector(category_scope=True),
+        ),
+        Variant(
+            "sim-rules",
+            "2 진단: 규칙만(시리즈 → 저자 → KDC), 벡터 없음",
+            SimilarSettings(signals=rules, fusion="priority"),
+        ),
+        Variant("sim-rrf", "3 규칙 + 벡터 RRF 1:1", _sim_fused(1.0, fusion="rrf")),
+        Variant("sim-rrf-rule2", "3 규칙 + 벡터 RRF, 규칙 가중치 2", _sim_fused(2.0, fusion="rrf")),
+        Variant("sim-priority", "3 규칙 먼저, 그다음 벡터", _sim_fused(1.0, fusion="priority")),
+        Variant(
+            "sim-author-rrf",
+            "3 규칙 + 벡터(저자 넣기) RRF 1:1",
+            _sim_fused(1.0, fusion="rrf", weights=KINDS["author"]),
+        ),
+        Variant("sim-series1", "4 시리즈 상한 1", _sim_fused(series_cap=1)),
+        Variant("sim-series2", "4 시리즈 상한 2", _sim_fused(series_cap=2)),
+        Variant(
+            "sim-mmr0.7", "4 MMR λ 0.7", _sim_fused(series_cap=BEST_SIM_SERIES_CAP, mmr_lambda=0.7)
+        ),
+        Variant("sim-best", "채택한 설정", _sim_best()),
+        Variant("sim-best-kdc0", "확인: 채택한 설정에서 KDC 신호를 뺌", _sim_best(signals=no_kdc)),
+    ]
+
+
+SIMILAR_VARIANTS: dict[str, Variant] = {variant.name: variant for variant in _similar()}
+DEFAULT_SIMILAR = ("sim-vec", "sim-rrf", "sim-best")
+
+# --- 최근 기록 (design 결정 7) ---
+# 단계 1: mean / per-book. 2026-11-16: 벡터 평균. 책별 RRF는 k 60이면 크게 낮고 k 1이면 차이 없음
+BEST_HIST_METHOD = "mean"
+BEST_HIST_SERIES_CAP: int | None = None  # 단계 2
+BEST_HIST_MMR: float | None = None  # 단계 2
+
+
+def _hist(**changes) -> HistorySettings:
+    base = HistorySettings(
+        method=BEST_HIST_METHOD, similar=_sim_best(), weights=KINDS[BEST_SIM_KIND]
+    )
+    return replace(base, **changes)
+
+
+def _history() -> list[Variant]:
+    return [
+        Variant("hist-mean", "0 기준: 기록 책 벡터 평균의 이웃", _hist(method="mean")),
+        Variant("hist-per-book", "1 책별 비슷한 책 순위(채택 설정) RRF", _hist(method="per-book")),
+        Variant(
+            "hist-per-book-vec",
+            "1' 책별 벡터 이웃만 RRF",
+            _hist(method="per-book", similar=_sim_vector()),
+        ),
+        Variant(
+            "hist-per-book-k1",
+            "1'' 진단(결과를 본 뒤 더함): 책별 RRF의 k를 1로(각 책의 앞 순위를 크게)",
+            _hist(method="per-book", rrf_k=1),
+        ),
+        Variant("hist-series1", "2 시리즈 상한 1", _hist(series_cap=1)),
+        Variant(
+            "hist-mmr0.7", "2 MMR λ 0.7", _hist(series_cap=BEST_HIST_SERIES_CAP, mmr_lambda=0.7)
+        ),
+        Variant(
+            "hist-best",
+            "채택한 설정",
+            _hist(series_cap=BEST_HIST_SERIES_CAP, mmr_lambda=BEST_HIST_MMR),
+        ),
+    ]
+
+
+HISTORY_VARIANTS: dict[str, Variant] = {variant.name: variant for variant in _history()}
+DEFAULT_HISTORY = ("hist-mean", "hist-per-book", "hist-best")
+
+VARIANT_SETS: dict[str, dict[str, Variant]] = {
+    "topic": VARIANTS,
+    "similar": SIMILAR_VARIANTS,
+    "history": HISTORY_VARIANTS,
+}
+DEFAULT_SETS: dict[str, tuple[str, ...]] = {
+    "topic": DEFAULT_VARIANTS,
+    "similar": DEFAULT_SIMILAR,
+    "history": DEFAULT_HISTORY,
+}

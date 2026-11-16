@@ -16,12 +16,13 @@ from collections.abc import Sequence
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 from app.core.config import get_settings
-from evals.recommendation.draft import load_topic_items
+from evals.recommendation.draft import SETS, load_items
 from evals.recommendation.label import Card
 from evals.recommendation.labels import BEFORE, GRADES, USER, Labels, labels_file
-from evals.recommendation.sets import TopicQuery
+from evals.recommendation.sample import SAMPLE_SIZES, pick_sample, sample_line
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -38,30 +39,59 @@ def review_label(labels: Labels, item_id: str, key: str, grade: int) -> None:
     labels.put(item_id, key, grade, labels.stage(item_id, key) or BEFORE, USER)
 
 
-def page_data(labels: Labels, items: Sequence[tuple[TopicQuery, Sequence[Card]]]) -> list[dict]:
-    """페이지에 넣을 값: 질의와 후보 카드, 지금 라벨과 단 쪽."""
-    return [
-        {
-            "id": query.id,
-            "text": query.text,
-            "children": query.children,
-            "books": [
-                {
-                    "key": card.key,
-                    "title": card.title,
-                    "author": card.author,
-                    "category": card.category,
-                    "shelf": card.shelf,
-                    "description": card.description,
-                    "grade": labels.grade(query.id, card.key),
-                    "by": labels.labeler(query.id, card.key),
-                    "stage": labels.stage(query.id, card.key),
-                }
-                for card in cards
-            ],
-        }
-        for query, cards in items
-    ]
+def _book(labels: Labels, item_id: str, card: Card) -> dict:
+    return {
+        "key": card.key,
+        "title": card.title,
+        "author": card.author,
+        "category": card.category,
+        "shelf": card.shelf,
+        "description": card.description,
+        "grade": labels.grade(item_id, card.key),
+        "by": labels.labeler(item_id, card.key),
+        "stage": labels.stage(item_id, card.key),
+    }
+
+
+def page_data(
+    labels: Labels,
+    items: Sequence[tuple[Any, Sequence[Card]]],
+    sample: Sequence[tuple[str, str]] | None = None,
+) -> list[dict]:
+    """페이지에 넣을 값: 항목(질의, 또는 기준 책들)과 후보 카드, 지금 라벨과 단 쪽.
+
+    sample((항목 id, 책 키) 목록)이 있으면 그 책만 넣고 항목에 표본 표시를 한다. 표본에 든 책이
+    없는 항목은 빠진다.
+    """
+    wanted = None if sample is None else set(sample)
+    data = []
+    for query, cards in items:
+        books = [
+            _book(labels, query.id, card)
+            for card in cards
+            if wanted is None or (query.id, card.key) in wanted
+        ]
+        if wanted is not None and not books:
+            continue
+        data.append(
+            {
+                "id": query.id,
+                "text": query.text,
+                "children": query.children,
+                "sample": wanted is not None,
+                "bases": [
+                    {
+                        "title": base.title,
+                        "author": base.author,
+                        "category": base.category,
+                        "description": base.description,
+                    }
+                    for base in getattr(query, "bases", ())
+                ],
+                "books": books,
+            }
+        )
+    return data
 
 
 PAGE_FILE = Path(__file__).with_name("review.html")
@@ -73,7 +103,9 @@ def render_page(data: Sequence[dict]) -> str:
 
 
 def make_handler(
-    labels: Labels, items: Sequence[tuple[TopicQuery, Sequence[Card]]]
+    labels: Labels,
+    items: Sequence[tuple[Any, Sequence[Card]]],
+    sample: Sequence[tuple[str, str]] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     keys = {query.id: {card.key for card in cards} for query, cards in items}
 
@@ -91,7 +123,7 @@ def make_handler(
             if self.path != "/":
                 self._send(HTTPStatus.NOT_FOUND, "없는 주소")
                 return
-            self._send(HTTPStatus.OK, render_page(page_data(labels, items)), "text/html")
+            self._send(HTTPStatus.OK, render_page(page_data(labels, items, sample)), "text/html")
 
         def do_POST(self) -> None:
             try:
@@ -113,22 +145,30 @@ def make_handler(
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.recommendation.review")
-    parser.add_argument("set", choices=("topic",))
+    parser.add_argument("set", choices=SETS)
     parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument(
+        "--sample", action="store_true", help="고정 표본만 본다(라벨은 Claude가 달고 사람은 표본만)"
+    )
     args = parser.parse_args()
     labels = Labels(labels_file(args.set))
     extra = {item_id: list(entries) for item_id, entries in labels.items.items()}
-    items = asyncio.run(load_topic_items(get_settings().database_url, None, extra))
+    items = asyncio.run(load_items(get_settings().database_url, args.set, None, extra))
     if not items:
         print("실험 기관이 없습니다. `uv run python scripts/seed_experiment.py`")
         return 1
+    sample = pick_sample(labels, SAMPLE_SIZES[args.set]) if args.sample else None
+    if sample is not None:
+        print(f"표본 {len(sample)}건(등급별 고르게, 해시 순서). 모두 누르면 끝난다.")
     # 한 번에 한 요청만 처리해 라벨 파일 쓰기가 겹치지 않게 한다
-    server = HTTPServer((HOST, args.port), make_handler(labels, items))
+    server = HTTPServer((HOST, args.port), make_handler(labels, items, sample))
     print(f"검수 화면: http://{HOST}:{args.port}  (끝내려면 Ctrl+C)\n라벨 파일: {labels.path}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print(f"\n단 쪽별 라벨 수: {labels.by_counts()}")
+        if sample is not None:
+            print(sample_line(labels, SAMPLE_SIZES[args.set]))
     finally:
         server.server_close()
     return 0

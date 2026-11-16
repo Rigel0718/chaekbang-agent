@@ -21,11 +21,14 @@ details{margin:10px 0}summary{cursor:pointer;color:#444}
 .row{display:flex;gap:8px;align-items:baseline;padding:3px 0;border-bottom:1px solid #eee}
 .row .t{flex:1;font-size:14px}.row button{font-size:12px;padding:1px 8px}
 .row .more{color:#2d6cdf;cursor:pointer;font-size:12px}
+.base{background:#eef3fb;border:1px solid #c5d4ee;border-radius:8px;padding:10px 14px;margin:8px 0}
 </style></head><body>
 <h1>라벨 검수</h1>
 <p class="rule"><b>2</b> 받으면 바로 납득(주제와 대상이 모두 맞음) · <b>1</b> 관련은 있으나 일부만 맞음 ·
 <b>0</b> 맞지 않음. 노란 띠는 초안(Claude), 초록 띠는 확인한 책이다. 누르면 바로 저장된다.
-0인 책 목록에서 빠진 책이 보이면 1이나 2를 누른다.</p>
+0인 책 목록에서 빠진 책이 보이면 1이나 2를 누른다.
+비슷한 책·최근 기록은 <b>2</b> 기준 책(들)을 좋게 읽은 사람에게 권하면 납득 · <b>1</b> 같은 갈래지만 결이 다름 · <b>0</b> 아님.
+표본 검수(<code>--sample</code>)에서는 지금 등급이 맞으면 그 숫자를, 틀리면 맞는 숫자를 누른다.</p>
 <p class="rule"><label><input type="checkbox" id="poolOnly"> 보충 라벨만 보기(실행 뒤 상위 결과에서 더한 책, 파란 "보충" 표시)</label></p>
 <nav id="nav"></nav><div id="root"></div>
 <script>
@@ -51,8 +54,17 @@ function render(item) {
   const sec = document.getElementById(item.id); sec.replaceChildren();
   const only = document.getElementById('poolOnly').checked;
   const shown = item.books.filter(b => !only || b.stage === 'pool');
-  const picked = shown.filter(b => b.grade >= 1), rest = shown.filter(b => !(b.grade >= 1));
-  sec.append(el('h2', '', `[${item.id}] ${item.text}` + (item.children ? '  (어린이 요청)' : '')));
+  // 표본 검수는 0인 책도 카드로 보여 준다(등급마다 고르게 뽑은 표본이다)
+  const picked = item.sample ? shown : shown.filter(b => b.grade >= 1);
+  const rest = item.sample ? [] : shown.filter(b => !(b.grade >= 1));
+  sec.append(el('h2', '', `[${item.id}] ${item.text}` + (item.children ? '  (어린이)' : '')));
+  for (const base of item.bases || []) {
+    const card = el('div', 'base');
+    card.append(el('div', 'title', '기준 책: ' + base.title));
+    card.append(el('div', 'meta', [base.author, base.category || '분류 없음'].join(' | ')));
+    card.append(el('div', 'desc', base.description || '(소개 없음)'));
+    sec.append(card);
+  }
   sec.append(el('div', 'meta', `후보 ${item.books.length}권 · 2: ${item.books.filter(b => b.grade === 2).length}권 · `
     + `1: ${item.books.filter(b => b.grade === 1).length}권 · 확인 안 한 초안(1 이상) ${picked.filter(b => b.by !== 'user').length}권`));
   const again = () => { render(item); nav(); };
@@ -64,7 +76,7 @@ function render(item) {
     const line = el('div'); line.style.marginTop = '8px'; line.append(buttons(item, book, again));
     card.append(line); sec.append(card);
   }
-  const confirm = el('button', 'confirm', '보이는 책 모두 확인');
+  const confirm = el('button', 'confirm', item.sample ? '보이는 책 모두 맞음' : '보이는 책 모두 확인');
   confirm.onclick = async () => {
     for (const book of picked) if (book.by !== 'user') await save(item, book, book.grade);
     again();
@@ -82,12 +94,12 @@ function render(item) {
     row.append(title, more, buttons(item, book, again));
     fold.append(row, desc);
   }
-  sec.append(fold);
+  if (!item.sample) sec.append(fold);
 }
 function nav() {
   const box = document.getElementById('nav'); box.replaceChildren();
   for (const item of DATA) {
-    const left = item.books.filter(b => b.grade >= 1 && b.by !== 'user').length;
+    const left = item.books.filter(b => (item.sample || b.grade >= 1) && b.by !== 'user').length;
     const a = el('a', left ? '' : 'done', item.id); a.href = '#' + item.id; box.append(a);
   }
 }

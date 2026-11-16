@@ -56,7 +56,12 @@ class Labels:
                 raise ValueError(f"라벨은 0·1·2다: {grade}")
         entries = self.items.setdefault(item_id, {})
         for key, grade in grades.items():
-            entries[key] = {"grade": grade, "stage": stage, "by": by}
+            entry = {"grade": grade, "stage": stage, "by": by}
+            old = entries.get(key)
+            if by == USER and old is not None and ("draft" in old or old.get("by") == CLAUDE):
+                # 사람이 초안을 확인하거나 고쳤다. 초안 등급을 남겨 표본 일치율을 낸다
+                entry["draft"] = old.get("draft", old["grade"])
+            entries[key] = entry
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps(self.items, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8"

@@ -9,7 +9,7 @@
 아직 잇지 않는다(`add-related-books`).
 """
 
-from sqlalchemy import ColumnElement, Text, case, func, literal, select
+from sqlalchemy import ColumnElement, Select, Text, case, func, literal, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,12 +38,17 @@ def writer_keys_sql() -> ColumnElement:
 
 
 async def same_author_books(
-    session: AsyncSession, library_id: int, library_book_id: int, *, limit: int = SAME_AUTHOR_LIMIT
+    session: AsyncSession,
+    library_id: int,
+    library_book_id: int,
+    *,
+    limit: int = SAME_AUTHOR_LIMIT,
+    within: Select | None = None,
 ) -> list[LibraryBook]:
     """기준 책과 지은이가 한 명 이상 겹치는, 그 기관의 추천 가능한 다른 책.
 
     겹치는 지은이 수, 표시 서명의 서명 정렬 순서(가나다), id 순서다.
-    다른 기관의 기준 책은 NotFoundError다.
+    다른 기관의 기준 책은 NotFoundError다. within은 순위 전에 거는 기관 도서 id 조건이다.
     """
     await get_owned(session, LibraryBook, library_id, library_book_id, label=LABEL)
     keys = writer_keys_sql().label("keys")
@@ -59,6 +64,7 @@ async def same_author_books(
                 LibraryBook.id != library_book_id,
                 LibraryBook.id.in_(recommendable_ids(library_id)),
                 writer_keys_sql().op("&&")(literal(list(base_keys), ARRAY(Text))),
+                *([LibraryBook.id.in_(within)] if within is not None else []),
             )
             # 서명 순서는 DB의 서명 정렬 순서(가나다)로 정하고, 아래에서는 겹치는 수로만 줄 세운다.
             .order_by(korean_order(func.coalesce(Book.title, LibraryBook.title)), LibraryBook.id)
