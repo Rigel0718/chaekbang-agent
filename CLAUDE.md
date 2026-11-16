@@ -28,7 +28,7 @@ AI 사서 v1(`add-librarian-agent`), 서명·저자 찾기(`add-catalog-search`)
 | --- | --- |
 | `docs/design.md` | 왜 만드는지, 전체 그림. 배경 참고용이며 요구사항의 기준은 아니다 |
 | `app/*/README.md` | 패키지별 역할과 규칙. 패키지를 고칠 때 먼저 읽는다 |
-| `yes24-open-api-guide/` | YES24 API 문서. 문서와 실제 응답이 다른 곳이 있어 새 필드는 실제 응답으로 확인한다 |
+| `api-guides/` | 외부 API 문서. YES24(`yes24-open-api-guide/`), 도서관 정보나루(`data4library.md` 원본, `data4library_project.md` 이 프로젝트에 쓰는 부분, `data4library_ideas.md` 확장 아이디어), 카카오 책 검색(`kakao_search_api_guide.md`). 문서와 실제 응답이 다른 곳이 있어 새 필드는 실제 응답으로 확인한다 |
 | `CLAUDE.md` | 코딩 규칙과 설계 원칙. 모든 change에 적용된다 |
 | `openspec/specs/` | 기능별 요구사항. 현재 시스템이 실제로 하는 일의 기준(source of truth) |
 | `openspec/changes/<change-id>/` | 진행 중인 변경 하나: proposal, 스펙 변경분(delta), design, tasks |
