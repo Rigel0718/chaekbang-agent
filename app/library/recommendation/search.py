@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.models import Book
 from app.core.tenancy import get_owned
-from app.core.text import compact, compact_sql
+from app.core.text import compact, compact_sql, korean_order
 from app.library.models.catalog import Holding, HoldingStatus, LibraryBook
 from app.library.models.library import Library, LoanMode
 
@@ -131,7 +131,7 @@ def ranked_query(library_id: int, words: Sequence[str], within: Select | None = 
     return query.order_by(
         score.desc(),
         (counts.c.available > 0).desc(),
-        func.coalesce(Book.title, LibraryBook.title),
+        korean_order(func.coalesce(Book.title, LibraryBook.title)),
         LibraryBook.id,
     )
 

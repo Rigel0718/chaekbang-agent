@@ -139,6 +139,24 @@ async def test_keyword_scores_add_up(session: AsyncSession, library_a: Tenant) -
     assert await _ids(session, library_a.id, ["공룡", "화석"]) == [both["id"], one["id"]]
 
 
+async def _titles(session: AsyncSession, library_id: int, keywords) -> list[str]:
+    return [c.library_book.title for c in await search_collection(session, library_id, keywords)]
+
+
+async def test_same_score_ganada(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/collection-search] 결과 순서와 개수 / 같은 점수는 가나다순"""
+    for title in ["하늘", "가나다", "나비"]:
+        await add_held_book(session, library_a.id, title=title, description="공룡 이야기")
+    assert await _titles(session, library_a.id, ["공룡"]) == ["가나다", "나비", "하늘"]
+
+
+async def test_same_score_mixed_scripts(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/collection-search] 결과 순서와 개수 / 같은 점수에 숫자·한글·영문"""
+    for title in ["ABC 동화", "하늘", "10대"]:
+        await add_held_book(session, library_a.id, title=title, description="공룡 이야기")
+    assert await _titles(session, library_a.id, ["공룡"]) == ["10대", "하늘", "ABC 동화"]
+
+
 async def test_limit(session: AsyncSession, library_a: Tenant) -> None:
     """[catalog/collection-search] 결과 순서와 개수 / 개수 제한"""
     for i in range(11):
@@ -157,6 +175,13 @@ async def test_browse_without_keywords(session: AsyncSession, library_a: Tenant)
     await add_held_book(session, library_a.id, "lost", title="나")
     assert await _ids(session, library_a.id, []) == [available["id"], on_loan["id"]]
     assert await _ids(session, library_a.id, ["  "]) == [available["id"], on_loan["id"]]
+
+
+async def test_browse_ganada(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/collection-search] 키워드 없는 둘러보기 / 둘러보기는 가나다순"""
+    for title in ["하늘", "가나다", "나비"]:
+        await add_held_book(session, library_a.id, title=title)
+    assert await _titles(session, library_a.id, []) == ["가나다", "나비", "하늘"]
 
 
 async def test_within(session: AsyncSession, library_a: Tenant) -> None:

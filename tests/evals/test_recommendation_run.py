@@ -356,7 +356,9 @@ async def test_runs_without_llm(
     results = json.loads((out / "results.json").read_text(encoding="utf-8"))
     assert set(results) == {"current", "vec-text"}
     assert set(results["vec-text"]) == {"t01", "t02", "t03"}
-    assert results["current"]["t01"][0]["grade"] == 2
+    # `공룡 어린이책`(1)과 `공룡 일반서`(2)는 키워드 점수가 같아 서명 정렬 순서(가나다)로
+    # 어린이책이 먼저다.
+    assert [r["grade"] for r in results["current"]["t01"][:2]] == [1, 2]
 
 
 async def test_unknown_variant(

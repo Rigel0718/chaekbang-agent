@@ -169,6 +169,39 @@ async def test_list_limit_over_max(admin_client: AsyncClient) -> None:
     assert (await admin_client.get("/library-books", params={"limit": 101})).status_code == 422
 
 
+async def _listed_titles(client: AsyncClient) -> list[str]:
+    return [b["title"] for b in (await client.get("/library-books")).json()["items"]]
+
+
+async def test_list_ganada(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/library-books] 기관 도서 단건과 목록 조회 / 목록은 가나다순"""
+    for title in ["하늘", "가나다", "나비"]:
+        await add_library_book(session, library_a.id, None, title=title)
+    assert await _listed_titles(admin_client) == ["가나다", "나비", "하늘"]
+
+
+async def test_list_mixed_scripts(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/library-books] 기관 도서 단건과 목록 조회 / 목록에 숫자·한글·영문"""
+    for title in ["ABC 동화", "하늘", "10대"]:
+        await add_library_book(session, library_a.id, None, title=title)
+    assert await _listed_titles(admin_client) == ["10대", "하늘", "ABC 동화"]
+
+
+async def test_list_orders_by_shown_title(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/library-books] 기관 도서 단건과 목록 조회 / 목록은 표시 서명 기준"""
+    official = await add_book(session, title="하늘")
+    linked = await add_library_book(session, library_a.id, title="가나다", book_id=official["id"])
+    plain = await add_library_book(session, library_a.id, None, title="나비")
+    items = (await admin_client.get("/library-books")).json()["items"]
+    assert [b["id"] for b in items] == [plain["id"], linked["id"]]
+
+
 async def test_filter_unknown_isbn(admin_client: AsyncClient) -> None:
     """[catalog/library-books] 기관 도서 단건과 목록 조회 / 없는 ISBN으로 거르기"""
     await _post(admin_client)

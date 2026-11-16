@@ -108,3 +108,24 @@ async def test_order_by_overlap(session: AsyncSession, library_a: Tenant) -> Non
     assert await _ids(session, library_a.id, base) == [both["id"], one["id"]]
     translator = await unlinked(session, library_a.id, "김주민 역", title="옮긴 책")
     assert await _ids(session, library_a.id, translator) == []
+
+
+async def _co_authored(session: AsyncSession, library_id: int, titles: list[str]) -> dict:
+    """저자가 `김주민` 한 명인 책들. 서명 → 책."""
+    return {t: await unlinked(session, library_id, "김주민", title=t) for t in titles}
+
+
+async def test_same_overlap_ganada(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-contributors] 같은 저자 조회 / 겹치는 지은이 수가 같으면 가나다순"""
+    base = await unlinked(session, library_a.id, "김주민", title="마을 이야기")
+    books = await _co_authored(session, library_a.id, ["하늘", "가나다", "나비"])
+    expected = [books[t]["id"] for t in ["가나다", "나비", "하늘"]]
+    assert await _ids(session, library_a.id, base) == expected
+
+
+async def test_same_overlap_mixed_scripts(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-contributors] 같은 저자 조회 / 겹치는 지은이 수가 같고 숫자·한글·영문"""
+    base = await unlinked(session, library_a.id, "김주민", title="마을 이야기")
+    books = await _co_authored(session, library_a.id, ["ABC 동화", "하늘", "10대"])
+    expected = [books[t]["id"] for t in ["10대", "하늘", "ABC 동화"]]
+    assert await _ids(session, library_a.id, base) == expected

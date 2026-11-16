@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.central.models import Book
 from app.core.errors import ConflictError
 from app.core.tenancy import get_owned
+from app.core.text import korean_order
 from app.library.hooks import notify_official_changed
 from app.library.models.catalog import (
     BIBLIOGRAPHIC_FIELDS,
@@ -155,8 +156,8 @@ async def list_library_books(
             )
         )
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
-    # 정렬은 화면에 보이는 표시 값 기준이다.
-    shown_title = func.coalesce(Book.title, LibraryBook.title)
+    # 정렬은 화면에 보이는 표시 값 기준이고 서명 정렬 순서(가나다)다.
+    shown_title = korean_order(func.coalesce(Book.title, LibraryBook.title))
     rows = await session.execute(
         query.outerjoin(Book, Book.id == LibraryBook.book_id)
         .order_by(shown_title, LibraryBook.id)

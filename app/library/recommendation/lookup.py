@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.models import Book
 from app.core.errors import NotFoundError
-from app.core.text import compact, compact_sql, jamo, jamo_starts, strip_edition
+from app.core.text import compact, compact_sql, jamo, jamo_starts, korean_order, strip_edition
 from app.library.models.catalog import LibraryBook
 from app.library.recommendation.search import LABEL, Candidate, _counts, get_candidates
 
@@ -168,7 +168,13 @@ async def find_books(
     exact = (
         select(books.c.id, stage, literal(1.0).label("score"))
         .where(stage.is_not(None))
-        .order_by(stage, as_typed.desc(), books.c.has_available.desc(), books.c.title, books.c.id)
+        .order_by(
+            stage,
+            as_typed.desc(),
+            books.c.has_available.desc(),
+            korean_order(books.c.title),
+            books.c.id,
+        )
         .limit(limit)
     )
     rows = [(i, s, sc) for i, s, sc in (await session.execute(exact)).all()]
@@ -185,7 +191,12 @@ async def find_books(
         similar = (
             select(inner.c.id, literal(Stage.FUZZY), inner.c.score)
             .where(inner.c.score >= FUZZY_THRESHOLD)
-            .order_by(inner.c.score.desc(), inner.c.has_available.desc(), inner.c.title, inner.c.id)
+            .order_by(
+                inner.c.score.desc(),
+                inner.c.has_available.desc(),
+                korean_order(inner.c.title),
+                inner.c.id,
+            )
             .limit(limit - len(rows))
         )
         rows += [(i, s, sc) for i, s, sc in (await session.execute(similar)).all()]
@@ -210,7 +221,7 @@ async def suggest_books(
     rows = await session.execute(
         select(books.c.id, books.c.title, books.c.author)
         .where(stage.is_not(None))
-        .order_by(stage, books.c.title, books.c.id)
+        .order_by(stage, korean_order(books.c.title), books.c.id)
         .limit(min(limit, SUGGEST_LIMIT))
     )
     return [Suggestion(i, t, a) for i, t, a in rows.all()]
@@ -234,7 +245,7 @@ async def found_in_text(
     books = _keyed(library_id)
     title = _key(books.c.title_starts)
     long_enough = func.char_length(compact_sql(books.c.title)) >= FOUND_MIN_TITLE
-    order = (func.char_length(title).desc(), books.c.title, books.c.id)
+    order = (func.char_length(title).desc(), korean_order(books.c.title), books.c.id)
     contained = (
         select(books.c.id)
         .where(long_enough, func.strpos(literal(message), title) > 0)
@@ -252,7 +263,7 @@ async def found_in_text(
         similar = (
             select(inner.c.id)
             .where(inner.c.score >= FOUND_THRESHOLD)
-            .order_by(func.char_length(inner.c.key).desc(), inner.c.title, inner.c.id)
+            .order_by(func.char_length(inner.c.key).desc(), korean_order(inner.c.title), inner.c.id)
             .limit(limit)
         )
         ids = list(await session.scalars(similar))

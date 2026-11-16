@@ -26,6 +26,11 @@ Python의 `\\s`와 PostgreSQL의 `\\s`는 다르다. PostgreSQL은 줄바꿈 없
   된소리(`ㄲ`)는 한 자판이라 둔다. SQL 쪽은 마이그레이션이 만드는 `ko_jamo`, `ko_jamo_starts`
   함수이고, 표가 같아야 한다. 테스트가 DB에서 두 쪽을 비교한다.
 - `kdc_key`: 분류기호 표기를 KDC 숫자 문자열(`813.7`)로 맞춘다.
+- `korean_order`: 서명 정렬 순서(가나다). 기호·공백, 숫자, 한글, 영문 순서이고 영문은 대소문자를
+  가리지 않는다(같으면 소문자 먼저). 숫자는 글자 순서다(`가나다 10` < `가나다 2`). DB 기본 collation
+  (`en_US.utf8`)은 한글이 가나다순이 아니어서, 정렬할 때만 ICU `ko-x-icu`를 건다. ORDER BY 키에만
+  쓰고 비교·검색(`=`, `LIKE`, 자모 키, 유사도)에는 쓰지 않는다. collation이 있는지는 마이그레이션이
+  본다.
 """
 
 import re
@@ -35,6 +40,7 @@ from sqlalchemy import ColumnElement, func, literal_column
 
 JAMO_FUNCTION = "ko_jamo"  # 마이그레이션이 만드는 SQL 함수
 JAMO_STARTS_FUNCTION = "ko_jamo_starts"  # 찾기 키 생성 열이 쓰는 SQL 함수
+KOREAN_COLLATION = "ko-x-icu"  # 서명 정렬 순서. PostgreSQL ICU collation
 
 # 보이는 공백: 저장할 때는 공백 하나로, 비교할 때는 지운다.
 SPACE_CLASS = r"\s "
@@ -79,6 +85,11 @@ def compact_sql(expr: ColumnElement) -> ColumnElement:
     """`compact`와 같은 규칙의 SQL 식. NULL은 빈 문자열로 본다."""
     cleaned = _nfc_halfwidth_sql(func.coalesce(expr, ""))
     return func.lower(func.regexp_replace(cleaned, COMPACT_PATTERN, "", "g"))
+
+
+def korean_order(expr: ColumnElement) -> ColumnElement:
+    """서명 정렬 순서(가나다)의 정렬 키. ORDER BY에만 쓴다. 비교·검색에는 쓰지 않는다."""
+    return expr.collate(KOREAN_COLLATION)
 
 
 # 이름 맞춤 키에서 남기는 것: 유니코드 글자(L*)와 숫자(N*). 나머지(문장부호, 기호, 공백)는 지운다.
