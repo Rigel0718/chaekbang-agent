@@ -1,14 +1,14 @@
 """응답 상품을 Yes24Item으로 바꾼다. 필드마다 관대하게 읽어 한 필드가 어긋나도 나머지는 쓴다."""
 
-import re
 from dataclasses import dataclass
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from datetime import date
 from typing import Any
 
+from app.central.external.values import clean as _clean
+from app.central.external.values import fit, parse_date, parse_price
 from app.central.external.yes24.definitions import ITEM_FIELDS, SERIES_NAME_KEY
 
-MAX_PRICE = 2**31 - 1  # 정가 열(Integer)의 상한
+__all__ = ["Yes24Item", "parse_date", "parse_item", "parse_price"]
 
 
 @dataclass(frozen=True)
@@ -38,43 +38,11 @@ def _raw(item: dict[str, Any], name: str) -> Any:
 
 def _fit(name: str, value: str | None) -> str | None:
     """저장 길이를 넘는 값은 비운다."""
-    limit = ITEM_FIELDS[name].max_length
-    return None if value is not None and limit is not None and len(value) > limit else value
-
-
-def _clean(value: Any) -> str | None:
-    """빈 문자열은 값 없음이다. 줄바꿈은 \\n으로 통일한다."""
-    if not isinstance(value, str):
-        return None
-    return value.replace("\r\n", "\n").replace("\r", "\n").strip() or None
+    return fit(value, ITEM_FIELDS[name].max_length)
 
 
 def _text(item: dict[str, Any], name: str) -> str | None:
     return _fit(name, _clean(_raw(item, name)))
-
-
-def parse_date(value: Any) -> date | None:
-    """YYYYMMDD와 YYYY-MM-DD를 읽는다. 문서와 실제 응답의 형식이 달라 둘 다 받는다."""
-    text = _clean(value)
-    if text is None or not re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", text):
-        return None
-    try:
-        return datetime.strptime(text.replace("-", ""), "%Y%m%d").date()
-    except ValueError:
-        return None
-
-
-def parse_price(value: Any) -> int | None:
-    """decimal로 오는 정가를 원 단위 정수로 바꾼다. float를 거치지 않는다."""
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        price = Decimal(str(value))
-    except InvalidOperation:
-        return None
-    if not price.is_finite() or price != price.to_integral_value() or not 0 <= price <= MAX_PRICE:
-        return None
-    return int(price)
 
 
 def _series_names(item: dict[str, Any]) -> tuple[str, ...]:

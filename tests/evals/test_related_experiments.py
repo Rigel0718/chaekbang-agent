@@ -357,3 +357,26 @@ def test_sample_agreement(tmp_path: Path) -> None:
         sample[:2],
     )
     assert data[0]["sample"] is True and len(data[0]["books"]) == 2
+
+
+def test_supplement_only_sample(tmp_path: Path) -> None:
+    """[platform/recommendation-experiments] 고정 표본 검수 (보충 라벨만: 백업에 없던 라벨)"""
+    import json
+    import shutil
+
+    from evals.recommendation.sample import new_pairs
+
+    labels = _many_labels(tmp_path)
+    backup = tmp_path / "backup.json"
+    shutil.copy(labels.path, backup)
+    apply_draft(labels, "s03", [f"n{n}" for n in range(6)], {"n0": 2, "n1": 1})
+    only = new_pairs(Labels(labels.path), backup)
+    assert only == {("s03", f"n{n}") for n in range(6)}
+    sample = pick_sample(Labels(labels.path), 3, only)
+    assert {item for item, _ in sample} == {"s03"}
+    assert sorted(labels.grade(i, k) for i, k in sample) == [0, 1, 2]
+    assert sample == pick_sample(Labels(labels.path), 3, only)  # 늘 같다
+    assert json.loads(backup.read_text(encoding="utf-8"))  # 백업은 그대로다
+    assert new_pairs(labels, tmp_path / "없음.json") == {
+        (i, k) for i, entries in labels.items.items() for k in entries
+    }

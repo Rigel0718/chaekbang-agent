@@ -22,7 +22,13 @@ from app.core.config import get_settings
 from evals.recommendation.draft import SETS, load_items
 from evals.recommendation.label import Card
 from evals.recommendation.labels import BEFORE, GRADES, USER, Labels, labels_file
-from evals.recommendation.sample import SAMPLE_SIZES, pick_sample, sample_line
+from evals.recommendation.sample import (
+    SAMPLE_SIZES,
+    SUPPLEMENT_SAMPLE_SIZES,
+    new_pairs,
+    pick_sample,
+    sample_line,
+)
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -150,14 +156,21 @@ def main() -> int:
     parser.add_argument(
         "--sample", action="store_true", help="고정 표본만 본다(라벨은 Claude가 달고 사람은 표본만)"
     )
+    parser.add_argument(
+        "--since",
+        type=Path,
+        help="백업 라벨 파일. 그 뒤에 단 보충 라벨에서만 표본을 뽑는다(--sample과 함께)",
+    )
     args = parser.parse_args()
     labels = Labels(labels_file(args.set))
+    only = new_pairs(labels, args.since) if args.since else None
+    size = SUPPLEMENT_SAMPLE_SIZES[args.set] if args.since else SAMPLE_SIZES[args.set]
     extra = {item_id: list(entries) for item_id, entries in labels.items.items()}
     items = asyncio.run(load_items(get_settings().database_url, args.set, None, extra))
     if not items:
         print("실험 기관이 없습니다. `uv run python scripts/seed_experiment.py`")
         return 1
-    sample = pick_sample(labels, SAMPLE_SIZES[args.set]) if args.sample else None
+    sample = pick_sample(labels, size, only) if args.sample else None
     if sample is not None:
         print(f"표본 {len(sample)}건(등급별 고르게, 해시 순서). 모두 누르면 끝난다.")
     # 한 번에 한 요청만 처리해 라벨 파일 쓰기가 겹치지 않게 한다
@@ -168,7 +181,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print(f"\n단 쪽별 라벨 수: {labels.by_counts()}")
         if sample is not None:
-            print(sample_line(labels, SAMPLE_SIZES[args.set]))
+            print(sample_line(labels, size, only))
     finally:
         server.server_close()
     return 0

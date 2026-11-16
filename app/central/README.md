@@ -7,7 +7,8 @@
 - `books`: ISBN이 있는 책의 공식 서지. 기관 API로는 쓸 수 없다.
 - `book_contributors`: 공식 서지의 기여자(이름, 이름 맞춤 키, 역할, 역할 원문, 순서). 저자 원문에서 다시 만들 수 있는 값이다.
 - `official_book_embeddings`: 공식 서지 벡터. 공식 서지·모델·텍스트 버전·종류마다 하나, 공식 값만으로 만든다. 여러 기관이 함께 쓴다.
-- YES24 호출과 응답 해석
+- 외부 서지 출처 셋의 호출과 응답 해석: 도서관 정보나루, 카카오 책 검색, YES24
+- 세 출처의 값을 필드별 기준 출처로 합치기
 - 서지정보 채움 실행. 운영자가 `scripts/enrich_books.py`로 돌린다.
 - 임베딩 인코더 접점과 임베딩 서버 호출. 인코더는 문자열을 받아 벡터를 돌려줄 뿐이고 어떤 책인지 모른다.
 - 공식 서지 벡터 적재와 두 층이 함께 쓰는 배치 흐름.
@@ -18,8 +19,13 @@
 | --- | --- |
 | `models.py` | `Book`, `BookContributor`, `OfficialBookEmbedding`, `ExternalSource`, `EMBEDDING_DIM` |
 | `contributors.py` | 출처별 저자 해석기 고르기, 기여자 저장 `sync_contributors`, 다시 맞추기 `rebuild_contributors` |
-| `enrichment.py` | 채움 실행 `run_enrichment`, 접점 `EnrichmentTargets` |
+| `enrichment.py` | 채움 실행 `run_enrichment`, 접점 `EnrichmentTargets`, 세 출처를 부르는 조회 `lookup_sources` |
+| `sources.py` | 출처 중립 값 `OfficialValues`, 필드별 기준 출처로 합치기 `merge`, YES24 값 변환 `from_yes24` |
 | `official_books.py` | 공식 서지를 만드는 함수 `create_official`(기여자, 시리즈 키), `series_keys` |
+| `external/http.py` | 출처 공통: 호출 간격 `RateLimiter`, 중단 사유 `StopReason`, 중단 예외 `SourceStopped` |
+| `external/values.py` | 응답 값 읽기 공통 규칙(빈 값, 날짜, 정가, 저장 길이) |
+| `external/data4library/` | 정보나루: `definitions.py`(엔드포인트, 필드, 호출 간격), `client.py`(키 전달, 오류 구분, `get_books_by_isbn`), `parsing.py`(`Data4LibraryRecord`, 서명 나누기) |
+| `external/kakao/` | 카카오 책 검색: 같은 꼴. `parsing.py`(`KakaoRecord`, ISBN 분해, 저자 배열 잇기) |
 | `external/yes24/definitions.py` | 엔드포인트, 응답 필드, 오류 코드 |
 | `external/yes24/client.py` | 인증, 호출 속도 제한, 오류 구분 |
 | `external/yes24/parsing.py` | 응답 상품을 `Yes24Item`으로 변환 |
@@ -37,14 +43,49 @@
 
 - `app/library`, `app/features`를 import하지 않는다. `tests/platform/test_package_layers.py`가 막는다.
 - 기관 모델을 모른다. 대상 ISBN과 연결은 `EnrichmentTargets`로 받고, `app/library/enrichment_targets.py`가 구현한다.
-- 어린이 구분을 모른다. `books.external_category`는 YES24 분류 원문을 사실로만 보관한다.
+- 어린이 구분을 모른다. `books.external_category`(분류 원문)와 `books.addition_symbol`(ISBN 부가기호)은 출처가 준 값을 사실로만 보관한다. 그것을 어린이 근거로 읽는 것은 기관 개별 기능이다.
 - 이미 있는 공식 서지는 고치지 않는다.
+
+## 공식 서지의 출처
+
+채움은 ISBN마다 정보나루 도서 상세(`srchDtlList`), 카카오 책 검색(`target=isbn`), YES24 상품 상세(`itemDetail`)를 한 번씩 부르고 `sources.merge`로 합친다. 필드마다 가장 잘 주는 출처를 먼저 본다(근거는 `add-bibliographic-sources` design 결정 3과 확인 호출).
+
+| 필드 | 1순위 | 2순위 | 3순위 |
+| --- | --- | --- | --- |
+| 서명·부제·저자 원문 | 정보나루 | YES24 | 카카오. 셋은 한 출처에서만 가져온다 |
+| 출판사 | 정보나루 | YES24 | 카카오 |
+| 소개 | YES24(가장 길다) | 정보나루(짧지만 문장이 끝난다) | 카카오(약 250자에서 잘린다) |
+| 목차, 시리즈, 분류 원문 | YES24 | 없음 | 없음 |
+| KDC, KDC 분류명, 부가기호, 권 | 정보나루 | 없음 | 없음 |
+| 출간일 | 카카오 | YES24 | 정보나루(날짜까지 있을 때만. 해만 오면 비운다) |
+| 정가 | 카카오 | YES24 | 없음 |
+| 표지 URL과 상품 링크 | YES24 | 카카오. 둘은 한 출처에서 가져온다 | 없음(정보나루 표지는 쓰지 않는다) |
+
+- `books.external_source`는 서명·저자의 출처다. 나머지 필드의 출처는 `books.field_sources`(열 이름 → 출처 이름, 값이 있는 필드만)에 남긴다. YES24 하나로 만든 옛 행은 `field_sources`가 비어 있다.
+- 요청한 ISBN과 같은 ISBN13의 결과만 쓴다. 같은 ISBN의 결과가 어느 출처에도 없는데 다른 ISBN의 결과가 왔으면 `mismatch`, 서명·저자를 얻지 못하면 `not_found`다.
+- 정보나루 서명은 부제가 ` :` 뒤에 붙어 온다(`아몬드 :손원평 장편소설`). 첫 ` :`에서만 나눈다.
+- 카카오의 저자·역자 배열은 원문 하나로 이어 저장한다(`A, B ;옮긴이: C`). 기관 파일 해석기가 다시 읽는 꼴이라 기여자를 원문에서 다시 만들 수 있다.
+- 채움은 어느 출처든 멈춰야 하는 오류가 나면 멈춘다. 한 출처 없이 만들면 이미 있는 공식 서지는 고치지 않는 규칙 때문에 빠진 값을 나중에 채울 수 없어서다.
+
+### 출처별 이용 조건과 키
+
+- **정보나루**
+  - 키는 API 규칙상 쿼리 파라미터 `authKey`로만 보낸다. 그래서 https로 부르고, 키가 든 URL이 출력·로그·오류에 남지 않게 한다. `httpx` 예외는 사슬 없이 `SourceStopped`로 바꾸고, `external/http.py`가 `httpx`·`httpcore` 로거를 WARNING으로 둔다.
+  - 표지(`bookImageURL`)는 "비영리 서비스의 화면 표시에 한하여" 쓸 수 있고 저장·재배포·AI 입력이 금지다. 읽지 않고 저장하지 않는다.
+  - 오류도 HTTP 200으로 오고 문구로 사유를 가른다(`definitions.py`의 낱말 목록).
+- **카카오**
+  - 키는 `Authorization: KakaoAK <키>` 헤더로만 보낸다.
+  - 판매가(`sale_price`)와 판매 상태(`status`)는 읽지 않고 원본 파일에도 넣지 않는다.
+  - 운영정책이 받은 데이터의 캐시를 "사용자 환경 개선 목적, 최신 유지"로 제한한다. 카카오 값은 정가·출간일과 다른 출처에 없는 책의 보완으로 한정하고, 서비스 전에 카카오에 확인한다(`docs/design.md`).
+- **정보나루 한도**: 하루 500건을 넘게 부르려면 정보나루에 서버 IP를 등록한다(세미콜론으로 최대 3개).
+- 키는 `.env`의 `LIBRARY_BIGDATA_KEY`, `KAKAO_REST_API_KEY`, `YES24_API_KEY`에서만 읽는다. 채움은 셋 다 있어야 돈다.
+- 호출 간격은 정보나루 0.5초, 카카오·YES24 0.2초다. API 문서는 `api-guides/`에 있다.
 
 ## 기여자
 
 - 저자 원문(`Book.author`)은 그대로 두고 표시와 서명·저자 찾기에 쓴다. 기여자는 원문을 역할별 사람으로 푼 파생 값이고, 추천의 "같은 저자" 신호와 역할 표시에 쓴다.
 - **외부 응답으로 공식 서지를 만드는 경로는 `official_books.create_official`을 부른다**: 채움(`enrichment.py`)과 실험 장서 적재(`app/seed/experiment.py`). 외부 값만 쓰고, 이미 있는 공식 서지는 고치지 않고, 기여자(`sync_contributors`)와 시리즈 키를 함께 만든다. 시드(`app/seed/catalog.py`)와 평가 표본 적재(`evals/librarian/catalog.py`)는 응답 상품이 없어 `sync_contributors`만 부른다. 새 경로를 만들면 함께 부른다. 같은 값이면 쓰지 않는다.
-- **시리즈 키**(`books.series_keys`): 응답의 시리즈 목록(`Yes24Item.series_names`)에서 시리즈마다 `match_key`를 계산한다. 빈 키와 중복은 빼고 순서는 지킨다. 표시용 `series_name`(이은 문자열)에서는 만들지 않는다. 시리즈명에 쉼표가 들 수 있어서다. 그래서 다시 계산할 수 없고, `rebuild_contributors.py --check`가 "시리즈 키가 빈 시리즈 있는 공식 서지" 건수를 함께 보고한다. 시드와 평가 표본은 빈 목록이다.
+- **시리즈 키**(`books.series_keys`): 시리즈 목록(`OfficialValues.series_names`, YES24 응답에만 있다)에서 시리즈마다 `match_key`를 계산한다. 빈 키와 중복은 빼고 순서는 지킨다. 표시용 `series_name`(이은 문자열)에서는 만들지 않는다. 시리즈명에 쉼표가 들 수 있어서다. 그래서 다시 계산할 수 없고, `rebuild_contributors.py --check`가 "시리즈 키가 빈 시리즈 있는 공식 서지" 건수를 함께 보고한다. 시드와 평가 표본, YES24에 없는 책은 빈 목록이다(정보나루·카카오는 시리즈를 주지 않는다).
 - 역할 표와 기관 파일 해석기는 `app/core/contributors.py`에 있다(운영자 층과 기관 공통이 함께 쓴다). 역할은 일곱(`author`, `illustrator`, `translator`, `editor`, `supervisor`, `original`, `other`)이다.
 - 역할 표나 이름 맞춤 규칙(`app/core/text.py`의 `match_key`)을 고치면 `uv run python scripts/rebuild_contributors.py`로 다시 맞춘다. `--check`는 차이만 센다.
 - 외국 저자의 다른 음역(`조앤 K. 롤링` / `J.K. 롤링`)과 동명이인은 풀지 않는다.
@@ -52,7 +93,7 @@
 ### 출처별 해석기 더하기
 
 1. `external/<출처>/contributors.py`에 `parse_<출처>_author(author: str) -> list[Contributor]`를 둔다. 묶음 나누기만 출처에 맞게 하고, 역할 읽기·이름 나누기는 `app/core/contributors.py`의 조각(`parse_suffix_group`, `read_roles`, `split_names`)을 쓴다.
-2. `contributors.py`의 `PARSERS`에 `ExternalSource` → 해석기를 더한다. 출처가 없거나 표에 없으면 기관 파일 해석기(`parse_author_text`)를 쓴다.
+2. `contributors.py`의 `PARSERS`에 `ExternalSource` → 해석기를 더한다. 출처가 없거나 표에 없으면 기관 파일 해석기(`parse_author_text`)를 쓴다. 정보나루(이름표 꼴, 괄호 꼴)와 카카오(이은 원문)는 기관 파일 해석기를 그대로 쓴다.
 3. 그 출처의 실제 표기로 테스트를 고정하고, 처음 보는 역할 표기가 있으면 역할 표에 더한다.
 
 ## 임베딩
@@ -114,10 +155,12 @@
 
 ## YES24 이용 조건
 
+YES24는 세 출처 중 하나로 채움에 쓴다(소개, 목차, 시리즈, 분류 원문, 표지).
+
 - 소장 도서의 ISBN만 조회한다. 베스트셀러나 카테고리를 돌며 도서 정보를 쌓지 않는다.
 - 예외는 둘이고 둘 다 한 번만 받아 저장소 밖 파일(`.gitignore`)에 둔다. 서비스 경로에서 부르지 않는다.
   - 상품 검색 `search_items`: 평가 표본 약 100권(`evals/librarian/fetch_sample.py`). 테스트 DB 트랜잭션에서만 쓴다.
-  - 카테고리 스테디셀러 `category.steady_sellers`: 실험 장서 약 500권(`evals/collection/fetch.py`). 개발 DB의 가상 기관에만 넣는다(`scripts/seed_experiment.py`). 파일이 있으면 받기가 멈춘다. 서지 출처를 바꾸는 `add-bibliographic-sources`에서 지운다.
+  - 카테고리 스테디셀러 `category.steady_sellers`: 실험 장서 약 500권(`evals/collection/fetch.py`). 개발 DB의 가상 기관에만 넣는다(`scripts/seed_experiment.py`). 파일이 있으면 받기가 멈춘다. `add-bibliographic-sources`에서도 지우지 않고, 정보나루·카카오 값은 따로 받은 파일(`evals/collection/sources.py`)에 둔다.
 - 판매가, 판매 상태, 포인트, 판매지수, 평점은 저장하지 않는다. 받은 원본 파일에도 넣지 않는다(키 목록은 `definitions.py`의 `VOLATILE_ITEM_KEYS`).
 - 표지는 원본 URL만 저장하고, 조회 응답에 출처와 상품 링크를 함께 돌려준다.
 - 키는 `.env`의 `YES24_API_KEY`에서만 읽고 `X-Api-Key` 헤더로만 보낸다. 출력과 로그에 남기지 않는다.

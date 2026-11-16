@@ -17,7 +17,7 @@ class AudienceSource(StrEnum):
     DEFAULT = "default"  # 근거 없음. 저장하지 않는다
     MANUAL = "manual"  # 관리자 지정
     IMPORT_LABEL = "import_label"  # 가져온 파일의 별치기호·자료실·부가기호
-    EXTERNAL_CATEGORY = "external_category"  # 연결된 공식 서지의 분류 원문
+    EXTERNAL_CATEGORY = "external_category"  # 연결된 공식 서지의 외부 근거(분류 원문, 부가기호)
 
 
 class LibraryBookAudience(TimestampMixin, Base):

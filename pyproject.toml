@@ -31,6 +31,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# 외부 API 문서(마크다운의 코드 예시)는 원문 그대로 둔다
+extend-exclude = ["api-guides"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]

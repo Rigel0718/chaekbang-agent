@@ -12,7 +12,8 @@ from tests.helpers import (
     add_library_book,
     make_isbn,
 )
-from tests.yes24_helpers import FakeYes24, enrich
+from tests.source_helpers import FakeSources, enrich_sources
+from tests.yes24_helpers import FakeYes24, enrich, ok
 
 
 async def _held(session: AsyncSession, library_id: int, isbn: str | None, **overrides):
@@ -72,9 +73,33 @@ async def test_source_and_link(
 ) -> None:
     """[catalog/book-enrichment] 출처 표시 / 출처와 링크"""
     book = await _held(session, library_a.id, VALID_ISBN)
+    await enrich_sources(session)
+    body = (await admin_client.get(f"/library-books/{book['id']}")).json()
+    assert (body["external_source"], body["cover_source"]) == ("yes24", "yes24")
+    assert body["external_url"] == "https://www.yes24.com/product/goods/15320"
+
+
+async def test_cover_source_kakao(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-enrichment] 출처 표시 / 카카오 표지"""
+    book = await _held(session, library_a.id, VALID_ISBN)
+    sources = FakeSources()
+    sources.yes24.responses[VALID_ISBN] = ok()
+    await enrich_sources(session, sources)
+    body = (await admin_client.get(f"/library-books/{book['id']}")).json()
+    assert (body["external_source"], body["cover_source"]) == ("data4library", "kakao")
+    assert body["external_url"] == "https://search.daum.net/search?w=bookpage&bookId=1"
+
+
+async def test_source_of_yes24_official(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/book-enrichment] 출처 표시 / YES24로 만든 공식 서지"""
+    book = await _held(session, library_a.id, VALID_ISBN)
     await enrich(session, FakeYes24().client())
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
-    assert body["external_source"] == "yes24"
+    assert (body["external_source"], body["cover_source"]) == ("yes24", "yes24")
     assert body["external_url"] == "https://www.yes24.com/product/goods/15320"
 
 
@@ -84,4 +109,8 @@ async def test_no_source_without_link(
     """[catalog/book-enrichment] 출처 표시 / 연결이 없는 도서"""
     book = await _held(session, library_a.id, VALID_ISBN)
     body = (await admin_client.get(f"/library-books/{book['id']}")).json()
-    assert (body["external_source"], body["external_url"]) == (None, None)
+    assert (body["external_source"], body["cover_source"], body["external_url"]) == (
+        None,
+        None,
+        None,
+    )

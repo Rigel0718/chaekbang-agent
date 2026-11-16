@@ -15,6 +15,12 @@ CHILDREN_SHELF_WORDS = ("어린이", "아동", "유아")
 CHILDREN_ADDITION_DIGITS = ("6", "7")  # 독자대상기호: 초등 학습참고서, 아동
 
 
+def is_children_addition_code(addition_code: str | None) -> bool:
+    """ISBN 부가기호(5자리)의 첫 자리가 초등 학습참고서나 아동이면 True."""
+    code = (addition_code or "").strip()
+    return len(code) == 5 and code.isdigit() and code[0] in CHILDREN_ADDITION_DIGITS
+
+
 def has_children_label(
     separate_mark: str | None, shelf_location: str | None, addition_code: str | None
 ) -> bool:
@@ -23,12 +29,16 @@ def has_children_label(
         return True
     if shelf_location and any(word in shelf_location for word in CHILDREN_SHELF_WORDS):
         return True
-    code = (addition_code or "").strip()
-    return len(code) == 5 and code.isdigit() and code[0] in CHILDREN_ADDITION_DIGITS
+    return is_children_addition_code(addition_code)
 
 
 def is_children_category(category: str | None) -> bool:
     return category in CHILDREN_CATEGORIES
+
+
+def has_external_evidence(category: str | None, addition_symbol: str | None) -> bool:
+    """공식 서지의 외부 근거: 분류 원문(YES24)이 어린이 분류이거나 부가기호 첫 자리가 6·7이다."""
+    return is_children_category(category) or is_children_addition_code(addition_symbol)
 
 
 # --- 어린이 요청 판단 ---

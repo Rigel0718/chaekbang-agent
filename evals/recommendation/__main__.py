@@ -112,6 +112,18 @@ def git_state() -> str:
     return f"{commit}{' + 고친 파일 있음' if dirty else ''}"
 
 
+async def _source_counts(session: AsyncSession, library_id: int) -> str:
+    """실험 기관이 소장한 공식 서지의 출처(서명·저자의 출처)별 수. 장서 상태를 가리는 지문이다."""
+    rows = await session.execute(
+        select(Book.external_source, func.count(func.distinct(Book.id)))
+        .join(LibraryBook, LibraryBook.book_id == Book.id)
+        .where(LibraryBook.library_id == library_id)
+        .group_by(Book.external_source)
+        .order_by(Book.external_source)
+    )
+    return ", ".join(f"{source or '없음'} {count}" for source, count in rows) or "없음"
+
+
 async def _vector_counts(session: AsyncSession, library_id: int) -> list[str]:
     """실험 기관 범위의 모델·텍스트 버전·종류별 벡터 수(두 층 합)."""
     official = await session.execute(
@@ -494,6 +506,7 @@ async def run_set(
         *fingerprint,
         f"- 실험 기관: {library_name}",
         f"- 추천 가능한 책 {len(recommendable)}권, 어린이 도서 {len(children & recommendable)}권",
+        f"- 공식 서지 출처: {await _source_counts(session, library_id)}",
         *[f"- 벡터 {line}" for line in await _vector_counts(session, library_id)],
         f"- {spec.unit} {len(queries)}개 ({', '.join(SPLIT_NAMES[s] for s in splits)})",
         f"- 라벨: 실행 전 {stages.get('before', 0)}건, 실행 뒤 보충 {stages.get('pool', 0)}건,"
@@ -623,6 +636,10 @@ async def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["compare"]:
+        from evals.recommendation.compare import main as compare_main  # noqa: PLC0415
+
+        return compare_main(sys.argv[2:])
     parser = argparse.ArgumentParser(prog="python -m evals.recommendation")
     parser.add_argument("set", choices=list(VARIANT_SETS), help="요청 종류")
     names = "; ".join(f"{name}: {', '.join(table)}" for name, table in VARIANT_SETS.items())

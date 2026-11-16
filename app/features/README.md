@@ -13,7 +13,7 @@
 | 파일 | 내용 |
 | --- | --- |
 | `children/models.py` | `library_book_audiences`, `Audience`, `AudienceSource` |
-| `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호, 분류 원문, 어린이 요청 판단 |
+| `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호(파일과 공식 서지가 같은 규칙), 분류 원문, 어린이 요청 판단 |
 | `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
 | `children/checks.py` | 어린이 최종 검사 |
 | `children/service.py` | 조회, 지정, 파일 근거, 외부 분류 근거, 갱신 |
@@ -27,7 +27,7 @@
 | --- | --- |
 | `manual` | 관리자가 `PUT /children/books/{id}`로 지정 |
 | `import_label` | 파일의 별치기호·자료실·부가기호. 가져오기 적용 때 |
-| `external_category` | 공식 서지의 분류 원문이 `국내도서-유아`, `국내도서-어린이`, `국내도서-초등학습서`와 정확히 일치. 등록, 가져오기, ISBN 수정, `POST /children/refresh` 때 |
+| `external_category` | 공식 서지의 외부 근거. 부가기호(정보나루) 첫 자리가 6(초등 학습참고서)이나 7(아동)이거나, 분류 원문이 `국내도서-유아`, `국내도서-어린이`, `국내도서-초등학습서`와 정확히 일치(YES24로 만든 공식 서지). 등록, 가져오기, ISBN 수정, `POST /children/refresh` 때 |
 | `default` | 근거 없음. 저장하지 않고, 행이 없으면 `general`, `default`다 |
 
 - 어린이 구분은 기관의 요청에서만 바뀐다. 운영자의 채움 실행은 바꾸지 않으므로, 채움 뒤에는 기관 관리자가 `POST /children/refresh`를 호출한다.

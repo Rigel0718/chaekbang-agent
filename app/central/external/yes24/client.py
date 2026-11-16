@@ -3,14 +3,12 @@
 예외에는 중단 사유만 담는다. 요청 객체나 헤더를 넣지 않아 키가 메시지에 남지 않는다.
 """
 
-import asyncio
-import time
-from collections.abc import Awaitable, Callable
-from enum import StrEnum
 from typing import Any
 
 import httpx
 
+from app.central.external.http import RateLimiter as _RateLimiter
+from app.central.external.http import SourceStopped, StopReason
 from app.central.external.yes24.definitions import (
     API_KEY_HEADER,
     MIN_CALL_INTERVAL_SECONDS,
@@ -18,42 +16,23 @@ from app.central.external.yes24.definitions import (
     Endpoint,
 )
 
+SOURCE_NAME = "yes24"
 
-class StopReason(StrEnum):
-    RATE_LIMITED = "rate_limited"
-    AUTH_FAILED = "auth_failed"
-    UPSTREAM_UNAVAILABLE = "upstream_unavailable"
+__all__ = ["RateLimiter", "StopReason", "Yes24Client", "Yes24Stopped"]
 
 
-class Yes24Stopped(Exception):
-    """실행을 멈춰야 하는 외부 오류."""
+class Yes24Stopped(SourceStopped):
+    """실행을 멈춰야 하는 YES24 오류."""
 
     def __init__(self, reason: StopReason) -> None:
-        super().__init__(reason.value)
-        self.reason = reason
+        super().__init__(SOURCE_NAME, reason)
 
 
-class RateLimiter:
-    """호출 사이를 min_interval초 이상 벌린다."""
+class RateLimiter(_RateLimiter):
+    """YES24 기본 간격을 쓰는 호출 간격 제한."""
 
-    def __init__(
-        self,
-        min_interval: float = MIN_CALL_INTERVAL_SECONDS,
-        *,
-        clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    ) -> None:
-        self._min_interval = min_interval
-        self._clock = clock
-        self._sleep = sleep
-        self._last_call: float | None = None
-
-    async def wait(self) -> None:
-        if self._last_call is not None:
-            remaining = self._min_interval - (self._clock() - self._last_call)
-            if remaining > 0:
-                await self._sleep(remaining)
-        self._last_call = self._clock()
+    def __init__(self, min_interval: float = MIN_CALL_INTERVAL_SECONDS, **kwargs: Any) -> None:
+        super().__init__(min_interval, **kwargs)
 
 
 class Yes24Client:

@@ -41,7 +41,8 @@ OFFICIAL_ONLY_FIELDS = (
     "subtitle",
     "table_of_contents",
     "series_name",
-    "external_source",
+    "external_source",  # 서명·저자의 출처
+    "cover_source",  # 표지 URL의 출처(`Book.cover_source`)
     "external_url",
     "external_category",
 )

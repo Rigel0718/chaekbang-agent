@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.children.models import Audience, AudienceSource, LibraryBookAudience
-from app.features.children.rules import has_children_label, is_children_category
+from app.features.children.rules import has_children_label, has_external_evidence
 from app.features.children.schemas import AudienceRead
 from app.library.models.catalog import LibraryBook
 from app.library.services.library_books import get_library_book
@@ -53,9 +53,11 @@ async def _store(
 async def _apply_category(
     session: AsyncSession, library_book: LibraryBook, stored: LibraryBookAudience | None
 ) -> bool:
-    """연결된 공식 서지의 분류 원문으로 맞춘다. 대상 구분이 바뀌면 True다."""
+    """연결된 공식 서지의 외부 근거(분류 원문, 부가기호)로 맞춘다. 대상 구분이 바뀌면 True다."""
     book = library_book.book
-    children = book is not None and is_children_category(book.external_category)
+    children = book is not None and has_external_evidence(
+        book.external_category, book.addition_symbol
+    )
     if children and stored is None:
         await _store(session, library_book, Audience.CHILDREN, AudienceSource.EXTERNAL_CATEGORY)
         return True

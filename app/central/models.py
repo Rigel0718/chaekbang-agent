@@ -17,7 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.contributors import ContributorRole
@@ -28,8 +28,15 @@ from app.core.text import JAMO_STARTS_FUNCTION
 EMBEDDING_DIM = 1024
 
 
+ADDITION_SYMBOL_PATTERN = "^[0-9]{5}$"  # ISBN 부가기호: 독자대상 1, 발행형태 1, 내용분류 3
+
+
 class ExternalSource(StrEnum):
+    """공식 서지의 출처. 채움은 셋을 함께 부르고 필드별 기준 출처로 합친다(`sources.py`)."""
+
     YES24 = "yes24"
+    DATA4LIBRARY = "data4library"
+    KAKAO = "kakao"
 
 
 class Book(TimestampMixin, Base):
@@ -39,6 +46,9 @@ class Book(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(f"isbn ~ '{ISBN_PATTERN}'", name="isbn_format"),
         CheckConstraint("list_price >= 0", name="list_price_nonnegative"),
+        CheckConstraint(
+            f"addition_symbol ~ '{ADDITION_SYMBOL_PATTERN}'", name="addition_symbol_format"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -56,6 +66,7 @@ class Book(TimestampMixin, Base):
     published_date: Mapped[date | None] = mapped_column(Date)
     list_price: Mapped[int | None] = mapped_column(Integer)
     kdc: Mapped[str | None] = mapped_column(String(20))
+    kdc_name: Mapped[str | None] = mapped_column(String(200))  # KDC 분류명 원문(정보나루)
     cover_url: Mapped[str | None] = mapped_column(String(1000))
     description: Mapped[str | None] = mapped_column(Text)
     subtitle: Mapped[str | None] = mapped_column(String(500))
@@ -66,11 +77,27 @@ class Book(TimestampMixin, Base):
     series_keys: Mapped[list[str]] = mapped_column(
         ARRAY(Text), server_default=text("'{}'"), default=list
     )
+    # ISBN 부가기호 5자리. 첫 자리(독자대상)가 어린이 구분의 외부 근거다
+    addition_symbol: Mapped[str | None] = mapped_column(CHAR(5))
+    volume: Mapped[str | None] = mapped_column(String(50))  # 권 표기 원문
+    # 서명·저자의 출처. 나머지 필드의 출처는 `field_sources`에 있다
     external_source: Mapped[ExternalSource | None] = mapped_column(
         str_enum(ExternalSource, "external_source")
     )
+    # 값이 있는 필드마다 출처 이름(`{"list_price": "kakao"}`). YES24 하나로 만든 옛 행은 비어 있다
+    field_sources: Mapped[dict[str, str]] = mapped_column(
+        JSONB, server_default=text("'{}'"), default=dict
+    )
     external_url: Mapped[str | None] = mapped_column(String(1000))
     external_category: Mapped[str | None] = mapped_column(String(100))  # 외부 분류 원문
+
+    @property
+    def cover_source(self) -> ExternalSource | None:
+        """표지 URL의 출처. 필드별 출처가 없는 옛 행(YES24 하나)은 공식 서지의 출처다."""
+        if not self.field_sources:
+            return self.external_source
+        source = self.field_sources.get("cover_url")
+        return ExternalSource(source) if source else None
 
 
 class BookContributor(TimestampMixin, Base):

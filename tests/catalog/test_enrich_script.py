@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from scripts.enrich_books import EXIT_OK, EXIT_PRECONDITION, EXIT_STOPPED, execute, parse_args, run
 from tests.conftest import Tenant
 from tests.helpers import VALID_ISBN, add_holding, add_library_book
-from tests.yes24_helpers import TEST_API_KEY, FakeYes24, error
+from tests.source_helpers import TEST_D4L_KEY, TEST_KAKAO_KEY, FakeSources, d4l_error
 
 
 async def _pending(session: AsyncSession, library_id: int) -> None:
@@ -39,9 +39,18 @@ def test_default_args() -> None:
     assert parse_args(["--retry-failed", "--limit", "5"]).retry_failed
 
 
-@pytest.mark.parametrize("key", [None, SecretStr("")])
+@pytest.mark.parametrize(
+    ("keys", "missing"),
+    [
+        ((None, "k", "y"), ["LIBRARY_BIGDATA_KEY"]),
+        (("d", "", "y"), ["KAKAO_REST_API_KEY"]),
+        (("d", "k", None), ["YES24_API_KEY"]),
+        (("", None, ""), ["LIBRARY_BIGDATA_KEY", "KAKAO_REST_API_KEY", "YES24_API_KEY"]),
+    ],
+)
 async def test_missing_key(
-    key,
+    keys: tuple,
+    missing: list[str],
     session: AsyncSession,
     library_a: Tenant,
     monkeypatch: pytest.MonkeyPatch,
@@ -49,9 +58,18 @@ async def test_missing_key(
 ) -> None:
     """[catalog/book-enrichment] API 키 보호 / 키 미설정"""
     await _pending(session, library_a.id)
-    monkeypatch.setattr(get_settings(), "yes24_api_key", key)
+    names = ("library_bigdata_key", "kakao_rest_api_key", "yes24_api_key")
+    for name, key in zip(names, keys, strict=True):
+        monkeypatch.setattr(get_settings(), name, SecretStr(key) if key is not None else None)
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("키가 없으면 외부를 부르지 않는다")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", no_network)
     assert await run(argparse.Namespace(limit=1, retry_failed=False)) == EXIT_PRECONDITION
-    assert "YES24_API_KEY" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    for name in ("LIBRARY_BIGDATA_KEY", "KAKAO_REST_API_KEY", "YES24_API_KEY"):
+        assert (name in err) == (name in missing)
     assert await session.scalar(text("SELECT enrichment_status FROM library_books")) == "pending"
 
 
@@ -60,7 +78,7 @@ async def test_exit_ok_and_summary(
 ) -> None:
     """[catalog/book-enrichment] 나눠서 처리 / limit만큼 처리 (결과 출력)"""
     await _pending(session, library_a.id)
-    code = await execute(session, FakeYes24().client(), limit=1, retry_failed=False)
+    code = await execute(session, FakeSources().lookup(), limit=1, retry_failed=False)
     assert code == EXIT_OK
     out = capsys.readouterr().out
     assert "처리 1건" in out and "남은 처리 대기 0건" in out
@@ -74,14 +92,16 @@ async def test_exit_stopped_without_key(
 ) -> None:
     """[catalog/book-enrichment] API 키 보호 / 오류에 키 없음"""
     await _pending(session, library_a.id)
-    yes24 = FakeYes24()
-    yes24.responses[VALID_ISBN] = error(401, "AUTH_002")
+    sources = FakeSources()
+    sources.data4library.responses[VALID_ISBN] = d4l_error("인증정보가 일치하지 않습니다.")
     with caplog.at_level(logging.DEBUG):
-        code = await execute(session, yes24.client(), limit=1, retry_failed=False)
+        code = await execute(session, sources.lookup(), limit=1, retry_failed=False)
     captured = capsys.readouterr()
     assert code == EXIT_STOPPED
-    assert "auth_failed" in captured.err
-    assert TEST_API_KEY not in captured.out + captured.err + caplog.text
+    assert "data4library auth_failed" in captured.err
+    output = captured.out + captured.err + caplog.text
+    assert TEST_D4L_KEY not in output
+    assert TEST_KAKAO_KEY not in output
 
 
 async def test_exit_stopped_on_network_error(
@@ -89,8 +109,8 @@ async def test_exit_stopped_on_network_error(
 ) -> None:
     """[catalog/book-enrichment] 외부 장애 시 중단 / 네트워크 오류 (종료 코드)"""
     await _pending(session, library_a.id)
-    yes24 = FakeYes24()
-    yes24.responses[VALID_ISBN] = httpx.ConnectError("연결 실패")
-    code = await execute(session, yes24.client(), limit=1, retry_failed=False)
+    sources = FakeSources()
+    sources.kakao.responses[VALID_ISBN] = httpx.ConnectError("연결 실패")
+    code = await execute(session, sources.lookup(), limit=1, retry_failed=False)
     assert code == EXIT_STOPPED
-    assert "upstream_unavailable" in capsys.readouterr().err
+    assert "kakao upstream_unavailable" in capsys.readouterr().err

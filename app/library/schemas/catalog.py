@@ -70,7 +70,8 @@ class LibraryBookRead(ReadModel):
     subtitle: str | None
     table_of_contents: str | None
     series_name: str | None
-    external_source: ExternalSource | None
+    external_source: ExternalSource | None  # 서명·저자의 출처
+    cover_source: ExternalSource | None  # 표지의 출처
     external_url: str | None
     external_category: str | None
 

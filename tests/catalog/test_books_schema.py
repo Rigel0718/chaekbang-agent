@@ -50,6 +50,21 @@ async def test_rejects_negative_price(session: AsyncSession) -> None:
     await add_book(session, list_price=None)
 
 
+async def test_rejects_malformed_addition_symbol(session: AsyncSession) -> None:
+    """[catalog/books] 도서 저장 제약 / 잘못된 부가기호 직접 저장 (비어 있는 부가기호는 허용)"""
+    for code in ("7485A", "7485 "):
+        await assert_rejected(
+            session,
+            "books",
+            isbn=VALID_ISBN,
+            title="t",
+            author="a",
+            addition_symbol=code,
+            match="addition_symbol_format",
+        )
+    await add_book(session, addition_symbol="74850")
+
+
 async def test_rejects_missing_isbn(session: AsyncSession) -> None:
     """[catalog/books] 도서 저장 제약 / ISBN 없는 행 직접 저장"""
     await assert_rejected(session, "books", title="t", author="a", match="isbn")

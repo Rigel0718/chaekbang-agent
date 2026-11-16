@@ -12,7 +12,12 @@ from app.library.recommendation.search import RECOMMENDABLE_STATUSES, Candidate,
 from app.library.schemas.catalog import BookSummary
 from app.library.schemas.librarian import BookCard
 
-COVER_SOURCES = {ExternalSource.YES24: "YES24"}
+# 화면에 보여 주는 출처 이름
+SOURCE_NAMES = {
+    ExternalSource.YES24: "YES24",
+    ExternalSource.DATA4LIBRARY: "도서관 정보나루",
+    ExternalSource.KAKAO: "카카오",
+}
 
 
 def unique_recommendations(answer: Any) -> list[Any]:
@@ -63,9 +68,7 @@ def _summary(candidate: Candidate, shelf: Shelf) -> dict[str, Any]:
         "shelf_location": shelf[0],
         "call_number": shelf[1],
         "cover_url": book.shown("cover_url"),
-        "cover_source": COVER_SOURCES.get(official.external_source)
-        if official is not None and official.external_source is not None
-        else None,
+        "cover_source": SOURCE_NAMES.get(official.cover_source) if official is not None else None,
         "product_url": official.external_url if official is not None else None,
         "status_synced_at": candidate.status_synced_at,
     }
