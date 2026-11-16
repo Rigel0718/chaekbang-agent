@@ -5,6 +5,7 @@ import unicodedata
 import uuid
 from datetime import date, time
 
+import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
@@ -13,8 +14,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import clock
-from app.core.migrations import alembic_config
-from app.core.text import JAMO_FUNCTION, jamo_starts
+from app.core.migrations import alembic_config, require_collation
+from app.core.text import JAMO_FUNCTION, KOREAN_COLLATION, jamo_starts
 from app.models import SHARED_TABLES, TENANT_TABLES, Base
 from tests.conftest import Tenant
 from tests.helpers import (
@@ -73,6 +74,23 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     assert "fuzzystrmatch" in extensions
     assert "vector" in extensions
     assert JAMO_FUNCTION in functions
+
+
+async def test_korean_collation_present(engine: AsyncEngine) -> None:
+    """[platform/database-schema] 한국어 정렬 규칙 확인 / 정렬 규칙이 있는 DB
+
+    head까지 올린 DB(migrated_db)의 테이블 수는 test_upgrade_creates_all_tables가 본다.
+    """
+    async with engine.connect() as conn:
+        await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
+    assert len(await _table_names(engine)) == 22
+
+
+async def test_korean_collation_missing(engine: AsyncEngine) -> None:
+    """[platform/database-schema] 한국어 정렬 규칙 확인 / 정렬 규칙이 없는 DB"""
+    async with engine.connect() as conn:
+        with pytest.raises(RuntimeError, match="ko-x-nonexistent-icu"):
+            await conn.run_sync(lambda c: require_collation(c, "ko-x-nonexistent-icu"))
 
 
 async def test_lookup_keys_follow_title(session: AsyncSession, library_a: Tenant) -> None:

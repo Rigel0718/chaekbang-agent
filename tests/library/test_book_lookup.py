@@ -162,6 +162,33 @@ async def test_available_first_in_same_stage(session: AsyncSession, library_a: T
     assert await _found(session, library_a.id, "공룡") == ["공룡 나", "공룡 가"]
 
 
+async def test_same_stage_ganada(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 찾기 결과 순서 / 같은 방식 안에서는 가나다순"""
+    for title in ["하늘", "가나다", "나비"]:
+        await add_held_book(session, library_a.id, title=title, author="김하늘")
+    found = await find_books(session, library_a.id, "김하늘")
+    assert [f.candidate.library_book.title for f in found] == ["가나다", "나비", "하늘"]
+    assert {f.stage for f in found} == {Stage.AUTHOR_CONTAINS}
+
+
+async def test_same_stage_mixed_scripts(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 찾기 결과 순서 / 같은 방식 안에서 숫자·한글·영문"""
+    for title in ["ABC 동화", "하늘", "10대"]:
+        await add_held_book(session, library_a.id, title=title, author="김하늘")
+    found = await find_books(session, library_a.id, "김하늘")
+    assert [f.candidate.library_book.title for f in found] == ["10대", "하늘", "ABC 동화"]
+    assert {f.stage for f in found} == {Stage.AUTHOR_CONTAINS}
+
+
+async def test_korean_order_keeps_comparison(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/text-normalization] 서명 정렬 순서 / 비교는 그대로"""
+    await add_held_book(session, library_a.id, title="Apple")
+    found = await find_books(session, library_a.id, "apple")
+    assert [(f.candidate.library_book.title, f.stage) for f in found] == [
+        ("Apple", Stage.TITLE_EXACT)
+    ]
+
+
 # --- 자동완성 ---
 
 
@@ -188,6 +215,17 @@ async def test_suggest_title_prefix_first(session: AsyncSession, library_a: Tena
     await add_held_book(session, library_a.id, title="우리 동네 공룡")
     await add_held_book(session, library_a.id, title="공룡 백과")
     assert await _suggested(session, library_a.id, "공룡") == ["공룡 백과", "우리 동네 공룡"]
+
+
+async def test_suggest_same_stage_ganada(session: AsyncSession, library_a: Tenant) -> None:
+    """[catalog/book-lookup] 자동완성 / 같은 단계 안에서는 가나다순"""
+    for title in ["공룡 하늘", "공룡 가나다", "공룡 나비"]:
+        await add_held_book(session, library_a.id, title=title)
+    assert await _suggested(session, library_a.id, "공룡") == [
+        "공룡 가나다",
+        "공룡 나비",
+        "공룡 하늘",
+    ]
 
 
 async def test_suggest_no_typo(session: AsyncSession, library_a: Tenant) -> None:

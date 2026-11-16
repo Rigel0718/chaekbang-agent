@@ -3,7 +3,7 @@
 import unicodedata
 
 import pytest
-from sqlalchemy import literal, select
+from sqlalchemy import String, column, literal, select, values
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.text import (
@@ -16,6 +16,7 @@ from app.core.text import (
     jamo_starts,
     jamo_starts_sql,
     kdc_key,
+    korean_order,
     match_key,
     strip_edition,
 )
@@ -249,3 +250,37 @@ def test_kdc_key_unreadable() -> None:
     """[platform/text-normalization] KDC 키 / 읽을 수 없는 값"""
     for value in ("문학", "81", "아 813", "8131", "", None):
         assert kdc_key(value) is None, value
+
+
+# --- 서명 정렬 순서 ---
+
+
+async def _korean_sorted(session: AsyncSession, titles: list[str]) -> list[str]:
+    rows = values(column("title", String), name="t").data([(t,) for t in titles])
+    query = select(rows.c.title).order_by(korean_order(rows.c.title))
+    return list(await session.scalars(query))
+
+
+async def test_korean_order_ganada(session: AsyncSession) -> None:
+    """[platform/text-normalization] 서명 정렬 순서 / 가나다순"""
+    assert await _korean_sorted(session, ["하늘", "가나다", "나비"]) == ["가나다", "나비", "하늘"]
+
+
+async def test_korean_order_mixed_scripts(session: AsyncSession) -> None:
+    """[platform/text-normalization] 서명 정렬 순서 / 숫자·한글·영문이 섞인 서명"""
+    titles = ["ABC 동화", "하늘", "10대", "가나다"]
+    assert await _korean_sorted(session, titles) == ["10대", "가나다", "하늘", "ABC 동화"]
+
+
+async def test_korean_order_latin_case(session: AsyncSession) -> None:
+    """[platform/text-normalization] 서명 정렬 순서 / 영문 대소문자"""
+    assert await _korean_sorted(session, ["Banana", "Apple", "apple"]) == [
+        "apple",
+        "Apple",
+        "Banana",
+    ]
+
+
+async def test_korean_order_digits_as_text(session: AsyncSession) -> None:
+    """[platform/text-normalization] 서명 정렬 순서 / 숫자는 글자 순서"""
+    assert await _korean_sorted(session, ["가나다 2", "가나다 10"]) == ["가나다 10", "가나다 2"]

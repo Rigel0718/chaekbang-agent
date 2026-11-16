@@ -13,9 +13,10 @@ from sqlalchemy import ColumnElement, Text, case, func, literal, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.central.models import BookContributor
+from app.central.models import Book, BookContributor
 from app.core.contributors import WRITER_ROLES
 from app.core.tenancy import get_owned
+from app.core.text import korean_order
 from app.library.models.catalog import LibraryBook
 from app.library.recommendation.search import LABEL, recommendable_ids
 
@@ -41,7 +42,8 @@ async def same_author_books(
 ) -> list[LibraryBook]:
     """기준 책과 지은이가 한 명 이상 겹치는, 그 기관의 추천 가능한 다른 책.
 
-    겹치는 지은이 수, 서명, id 순서다. 다른 기관의 기준 책은 NotFoundError다.
+    겹치는 지은이 수, 표시 서명의 서명 정렬 순서(가나다), id 순서다.
+    다른 기관의 기준 책은 NotFoundError다.
     """
     await get_owned(session, LibraryBook, library_id, library_book_id, label=LABEL)
     keys = writer_keys_sql().label("keys")
@@ -50,17 +52,18 @@ async def same_author_books(
         return []
     rows = (
         await session.execute(
-            select(LibraryBook, keys).where(
+            select(LibraryBook, keys)
+            .outerjoin(Book, Book.id == LibraryBook.book_id)
+            .where(
                 LibraryBook.library_id == library_id,
                 LibraryBook.id != library_book_id,
                 LibraryBook.id.in_(recommendable_ids(library_id)),
                 writer_keys_sql().op("&&")(literal(list(base_keys), ARRAY(Text))),
             )
+            # 서명 순서는 DB의 서명 정렬 순서(가나다)로 정하고, 아래에서는 겹치는 수로만 줄 세운다.
+            .order_by(korean_order(func.coalesce(Book.title, LibraryBook.title)), LibraryBook.id)
         )
     ).all()
     wanted = set(base_keys)
-    ranked = sorted(
-        rows,
-        key=lambda row: (-len(wanted & set(row[1])), row[0].shown("title"), row[0].id),
-    )
+    ranked = sorted(rows, key=lambda row: -len(wanted & set(row[1])))  # 안정 정렬
     return [book for book, _ in ranked[:limit]]
