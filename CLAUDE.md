@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 <!-- 이 절은 세 줄까지만. 결정·수치·미룬 일은 docs/roadmap.md에 쓴다. -->
-진행 중: 없음(직전 `add-topic-search-tool` archive 끝) · 다음: `add-recommendation-evals`
+진행 중: 없음(직전 `add-recommendation-evals` archive 끝) · 다음: `add-admin-agent`
 change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾기, 비슷한 책, 최근 기록), 미룬 일은 `docs/roadmap.md`에 있다.
 
 ## OpenSpec 작업 규칙
@@ -85,6 +85,7 @@ uv run python scripts/embed_books.py --incremental     # 운영자: 두 층 임�
 uv run python scripts/embedding_search.py "질의" --sample  # 임베딩 확인: 표본 적재 후 상위 5권 (--library-id N)
 uv run python scripts/rebuild_contributors.py         # 운영자: 기여자·저자 키를 지금 규칙으로 (--check는 차이만)
 uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표본 필요, LLM 없음)
+uv run python -m evals.conversation           # 대화 추천 평가 (LLM 호출, 승인 먼저. 실험 장서·임베딩 서버 필요)
 ```
 
 추천 실험과 실험 장서 명령은 `evals/recommendation/README.md`, `evals/collection/README.md`에 있다.
