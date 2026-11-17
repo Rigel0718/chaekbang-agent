@@ -4,6 +4,7 @@
 우선순위는 manual, import_label, external_category, default 순이다.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import Select, func, or_, select
@@ -112,6 +113,25 @@ def children_book_ids(library_id: int) -> Select:
         LibraryBookAudience.library_id == library_id,
         LibraryBookAudience.audience == Audience.CHILDREN,
     )
+
+
+async def related_scope(
+    session: AsyncSession, library_id: int, base_ids: Sequence[int]
+) -> Select | None:
+    """관련 책 범위 제공자: 기준 책이 모두 그 기관의 어린이 도서이면 어린이 도서로 좁힌다.
+
+    기준 책이 없거나 하나라도 어린이 도서가 아니면 좁히지 않는다(섞인 기록의 어린이 판단은
+    대화 추천 평가에서 정한다).
+    """
+    wanted = set(base_ids)
+    if not wanted:
+        return None
+    children = set(
+        await session.scalars(
+            children_book_ids(library_id).where(LibraryBookAudience.library_book_id.in_(wanted))
+        )
+    )
+    return children_book_ids(library_id) if children == wanted else None
 
 
 async def refresh(session: AsyncSession, library_id: int) -> int:

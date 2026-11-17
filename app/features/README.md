@@ -14,9 +14,9 @@
 | --- | --- |
 | `children/models.py` | `library_book_audiences`, `Audience`, `AudienceSource` |
 | `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호(파일과 공식 서지가 같은 규칙), 분류 원문, 어린이 요청 판단 |
-| `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
+| `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`, `find_related_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
 | `children/checks.py` | 어린이 최종 검사 |
-| `children/service.py` | 조회, 지정, 파일 근거, 외부 분류 근거, 갱신 |
+| `children/service.py` | 조회, 지정, 파일 근거, 외부 분류 근거, 갱신, 관련 책 범위 제공자(`related_scope`) |
 | `children/hook.py` | 기관 공통의 사건을 service로 잇는다 |
 | `children/api.py` | `/children` 라우터 |
 | `children/schemas.py` | Pydantic 스키마 |
@@ -37,9 +37,16 @@
 **AI 사서의 어린이 요청**
 
 - 판단은 코드가 한다(`rules.is_children_request`). 13세 이하 나이나 어린이 표현이 있으면 어린이 요청이고, 14세 이상·청소년·부모가 읽을 책 표현은 근거로 보지 않는다. 판단은 대화 안에서 유지되고 `제가 읽을` 같은 어른 표현으로 풀린다. 문장 판단이 애매하면 어린이 쪽으로 간다.
-- 이번 실행에서 `search_children_books`를 썼어도 어린이 요청이다. LLM의 신호는 켜는 쪽으로만 쓴다.
+- 이번 실행에서 `search_children_books`나 `find_related_children_books`를 썼어도 어린이 요청이다. LLM의 신호는 켜는 쪽으로만 쓴다.
 - 어린이 요청의 답에 그 기관의 어린이 도서가 아닌 책이 있으면 어린이 검사가 답을 막는다. 분류 행이 없는 책은 일반 도서다.
 - `app/main.py`에서 `children_extension()`을 빼면 tool, 검사, 프롬프트 문구가 함께 빠지고 AI 사서는 그대로 돈다.
+- `find_related_children_books`는 관련 책 tool(`find_related_books`)과 입력·방식이 같고 범위만 그 기관의 어린이 도서다.
+- 프롬프트 문구는 어린이 요청의 뜻을 판단 규칙과 같게 적는다. 아이나 나이를 말하지 않은 주제 요청(공룡 책)과 부모가 읽을 육아·훈육 책에는 어린이 tool을 쓰지 않는다. 이 문구 없이 관련 책 tool 줄만 더했을 때 LLM이 일반 요청에도 어린이 tool을 썼다(`add-related-books` 평가).
+
+**관련 책 범위**
+
+- `related_scope`를 `app/library/hooks.register_related_scope`로 등록한다(`app/main.py`, 평가 진입점 `evals/librarian`). 기준 책이 **모두** 그 기관의 어린이 도서이면 관련 책 결과(비슷한 책 API, 관련 책 tool)를 그 기관의 어린이 도서로 좁힌다. 그림책에서 비슷한 책을 보면 그림책이 나온다.
+- 기준 책이 없거나 하나라도 어린이 도서가 아니면(섞인 기록) 좁히지 않는다. 섞인 기록의 어린이 판단은 대화 추천 평가(`add-recommendation-evals`)에서 정한다. 대화의 어린이 요청은 이 범위와 상관없이 어린이 tool과 최종 검사가 지킨다.
 
 ## 규칙
 
