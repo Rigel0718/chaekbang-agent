@@ -76,87 +76,28 @@ docker compose up -d db                      # DB 실행
 uv run alembic upgrade head                  # 마이그레이션 적용
 uv run alembic revision --autogenerate -m "" # 마이그레이션 생성
 uv run python scripts/seed.py                # 시드 데이터
+uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
+uv run pytest                                # 테스트
+uv run ruff check . && uv run ruff format .  # 린트·포맷
 uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움, 정보나루·카카오·YES24 세 키 필요 (--limit, --retry-failed)
-uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표본 필요, LLM 없음)
 docker compose --profile embedding up -d embedder      # 임베딩 서버 (메모리 약 4GB, 처음에 모델 2.3GB 내려받기)
 uv run python scripts/embed_books.py --incremental     # 운영자: 두 층 임베딩 적재 (--full, --layer official|library, --library-id, --batch-size, --kind)
 uv run python scripts/embedding_search.py "질의" --sample  # 임베딩 확인: 표본 적재 후 상위 5권 (--library-id N)
 uv run python scripts/rebuild_contributors.py         # 운영자: 기여자·저자 키를 지금 규칙으로 (--check는 차이만)
-uv run python -m evals.collection.fetch --dry-run     # 실험 장서 받기 미리 보기 (실제 받기는 한 번만, 파일이 있으면 멈춤)
-uv run python -m evals.collection.sources --dry-run  # 실험 장서의 정보나루·카카오 값 받기 미리 보기 (출처마다 이어 받기, 다 받으면 멈춤)
-uv run python -m evals.collection.compare            # 실험 장서의 출처끼리 같은 ISBN 비교 (건수만)
-uv run python -m evals.collection.loans --dry-run    # 실험 장서의 정보나루 대출 신호(이용 분석·인기) 받기 미리 보기 (이어 받기, 다 받으면 멈춤. --overlap은 소장 겹침만)
-uv run python scripts/seed_experiment.py             # 운영자: 실험 장서를 개발 DB의 가상 기관에 넣기 (다시 돌려도 같음. --purge 지우기, --sources 합칠 출처 고르기)
-uv run python -m evals.recommendation topic --split all --variants current,vec-text,hybrid   # 추천 실험: 주제로 찾기 (LLM 없음, 질의 벡터 캐시)
-uv run python -m evals.recommendation similar --split all --variants sim-vec,sim-rrf,sim-best   # 추천 실험: 비슷한 책 (history도. 저장된 벡터만 써서 임베딩 서버 필요 없음. 함께 대출 변형은 대출 신호 파일을 읽음(--loan-signals), --holdout은 남겨 둔 분야 세트와 정해 둔 변형만)
-uv run python -m evals.recommendation compare <기준 실행> <새 실행>   # 추천 실험: 같은 세트의 두 실행을 지금 라벨로 짝 비교 (장서 값을 바꾸기 전후)
-uv run python -m evals.recommendation.threshold <비슷한 책 실행>   # 벡터 근거만 있는 책의 최소 유사도 진단 (라벨 등급별 코사인, 결과는 실행 폴더의 threshold.md)
-uv run python -m evals.recommendation.review topic    # 라벨 검수 화면 http://127.0.0.1:8765 (similar·history도. --sample은 고정 표본만, --since <백업 라벨 파일>은 그 뒤 보충 라벨만, --size는 표본 수, --holdout은 남겨 둔 분야 라벨. 초안은 draft, 직접 달기는 label)
-uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
-uv run pytest                                # 테스트
-uv run ruff check . && uv run ruff format .  # 린트·포맷
+uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표본 필요, LLM 없음)
 ```
+
+추천 실험과 실험 장서 명령은 `evals/recommendation/README.md`, `evals/collection/README.md`에 있다.
 
 ## 디렉터리 구조
 
-```
-app/
-├── main.py       # 조립: 라우터 포함, 기관 개별 기능 등록
-├── models.py     # 조립: 모든 모델 등록, Base, 테이블 구분 (Alembic·테스트용)
-├── core/         # config(설정), db(세션), security(비밀번호·토큰), clock(기관 시간대 오늘), holidays(공휴일),
-│                 # isbn(정규화·검증), text(저장용·비교용·이름 맞춤 정규화, 자모 규칙, KDC 키, 서명 정렬 순서),
-│                 # contributors(역할 표, 기관 파일 저자 해석, 저자 키), embedding_text(임베딩 텍스트 조립 규칙·버전·종류),
-│                 # kdc(KDC 주류 이름), migrations, model_base, errors, tenancy, schemas(페이지)
-├── central/      # 운영자 층: 공식 서지와 외부 연동. 기관 모델을 모른다
-│   ├── models.py     # Book, BookContributor(공식 서지 기여자), OfficialBookEmbedding(공식 서지 벡터)
-│   ├── enrichment.py # 서지 채움 실행, 접점(EnrichmentTargets)
-│   ├── sources.py    # 출처 중립 값(OfficialValues), 세 출처를 필드별 기준 출처로 합치기(merge)
-│   ├── official_books.py # 공식 서지를 만드는 함수(create_official: 기여자, 시리즈 키, 필드별 출처)
-│   ├── contributors.py # 출처별 저자 해석기, 기여자 저장(sync_contributors)
-│   ├── embedding.py  # 임베딩 인코더 접점(Embedder: 문서·질의 인코딩), 두 층의 배치 흐름(run_layer)
-│   ├── embedding_text.py # 공식 서지 벡터의 텍스트(공식 값만)
-│   ├── official_embeddings.py # 공식 서지 벡터 적재
-│   └── external/     # 외부 API: http(출처 공통 호출 간격·중단), values(응답 값 읽기 공통),
-│                     # data4library(정보나루: 키는 쿼리로만, 서명 정리), kakao(책 검색: ISBN 분해, 저자 배열 잇기),
-│                     # yes24(엔드포인트·필드 정의를 한곳에, 저자 해석, 카테고리는 실험 장서 받기 전용), tei(임베딩 서버 어댑터)
-├── library/      # 기관 공통
-│   ├── api/      # 라우터: auth, library, guide(안내·휴관일), staff, library_books, catalog(찾기·자동완성·비슷한 책),
-│   │             # holdings, members, loans, librarian
-│   │             # (이후 curations, requests ...)
-│   ├── services/ # 비즈니스 로직 (REST API와 에이전트 tool이 함께 사용). related: 관련 책 제품 경로(비슷한 책, 대화 세션의 책)
-│   ├── models/   # library(기관·직원·세션), catalog(기관 도서·사본), circulation(회원·대출), guide(안내),
-│   │             # embedding(기관 도서 벡터: 공식 서지 없는 책만)
-│   ├── schemas/  # Pydantic 스키마
-│   ├── importing/ # 장서 가져오기: 엑셀·CSV 파싱, 머리글 인식, ISBN 정규화
-│   ├── recommendation/ # 서명·저자 찾기와 자동완성(lookup), 주제 검색(search), 소장 검사, 카드, 노출 기록.
-│   │                   # 주제로 찾기 순위(topic: 키워드+벡터 RRF, 제품에는 아직 잇지 않음), 순위 함수(ranking: RRF, 시리즈 묶기, MMR).
-│   │                   # 비슷한 책·최근 기록·우리 도서관 인기(related: 같은 시리즈·저자·KDC 세목·벡터 이웃, 판본 제외, 최소 유사도), 근거 코드·문구(basis).
-│   │                   # 기관 도서 벡터의 텍스트(embedding_text), 기관 도서 벡터 적재와 두 층 유사도 조회·저장된 벡터로 이웃 조회(embeddings),
-│   │                   # 같은 저자(authors).
-│   │                   # 어린이 필터는 기능에 둔다.
-│   ├── deps.py   # 현재 직원·기관, 역할
-│   ├── hooks.py  # 기관 개별 기능 접점(사건, 관련 책 범위 제공자)
-│   └── enrichment_targets.py # 운영자 접점 구현, 처리 현황
-├── features/     # 기관 개별 기능 (패키지마다 README.md가 있다)
-│   └── children/ # 어린이 구분: 규칙, 저장소, service, 훅, API
-├── seed/         # 조립: 시드 데이터 생성 (scripts/seed.py가 실행), 실험 장서 적재(experiment, scripts/seed_experiment.py가 실행)
-└── agent/        # 공통 실행기: tool calling 루프, 최종 검사, 실행 기록, (이후) 승인 대기·재개.
-                  # 어떤 tool이 있는지 모른다. tool은 패키지별 tools.py가 내놓고 main.py가 조립한다
-migrations/       # Alembic
-scripts/seed.py   # 더미 데이터 (Faker)
-scripts/enrich_books.py  # 운영자용 공식 서지 채움
-scripts/embed_books.py   # 운영자용 두 층 임베딩 적재
-scripts/seed_experiment.py  # 운영자용 실험 장서 적재(개발 DB)
-scripts/embedding_search.py  # 임베딩 확인용 유사도 조회
-scripts/rebuild_contributors.py  # 운영자용 기여자·저자 키 다시 만들기
-docker/embedder/start.sh # 임베딩 서버 시작(모델 받기, 입력 한도 낮추기)
-evals/            # 장서 가져오기·AI 사서·찾기 평가, 실험 장서 받기(collection: YES24 원본, 정보나루·카카오 값, 출처 비교, 정보나루 대출 신호), 추천 실험(recommendation: 세트 셋과 남겨 둔 분야 세트, 라벨 초안·검수·고정 표본, 변형, 지표, 대출 신호 파일 읽기), (이후 단계) 대화 추천 평가와 채점
-tests/
-docs/design.md
-openspec/
-├── specs/        # 기능별 현재 스펙 (archive된 change가 여기에 반영됨)
-└── changes/      # 진행 중인 change
-```
+코드 배치는 저장소를 읽어 확인한다. 패키지마다 `README.md`(역할과 규칙)가 있고, 그 패키지 파일을 다루면 패키지의 `CLAUDE.md`가 README를 불러온다. 코드만 봐서는 알기 어려운 것만 적는다.
+
+- `app/central/`(운영자 층), `app/library/`(기관 공통), `app/features/`(기관 개별), `app/agent/`(공통 실행기), `app/core/`(공통 도구). 조립은 `app/main.py`(라우터, 기능 등록, 프로필)와 `app/models.py`(모든 모델 등록, Alembic·테스트용)다.
+- `app/agent/`는 어떤 tool이 있는지 모른다. tool은 패키지별 `tools.py`가 내놓고 `app/main.py`가 조립한다.
+- 어린이 필터는 기능(`app/features/children/`)에 두고, 공통의 추천 코드(`app/library/recommendation/`)는 훅(`app/library/hooks.py`)으로만 부른다.
+- 운영자 실행은 `scripts/`(채움, 임베딩 적재, 기여자 다시 만들기, 실험 장서 적재)에 있고 기관 API에는 실행 경로가 없다.
+- `evals/`는 평가와 추천 실험이다. 받은 원본과 라벨(`evals/*/data/`)은 저장소에 넣지 않는다.
 
 ## 설계 원칙 (반드시 지킬 것)
 
@@ -176,6 +117,7 @@ openspec/
 - 금액은 `int`(원 단위)로 다룬다. float 금지.
 - ISBN은 하이픈 없는 13자리 문자열로 저장한다.
 - 상태 값은 `StrEnum`으로 정의한다.
+- 서명으로 줄 세우는 코드는 `app/core/text.py`의 `korean_order`(ICU `ko-x-icu`)를 쓴다. DB 기본 collation은 바꾸지 않는다.
 - 외부 API 키, DB URL은 `.env`에서 읽고 코드에 하드코딩하지 않는다. `.env.example`을 함께 관리한다.
 - 외부 도서 API의 표지 이미지는 저장하지 않고 원본 URL로만 표시하며, 출처를 함께 보여준다.
 - 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 평가 표본 약 100권(`evals/librarian/data/`)과 실험 장서 525권(`evals/collection/data/`, 개발 DB의 가상 기관에만)만 예외이고, 둘 다 한 번만 받고 저장소에 넣지 않는다. 실험 장서는 `add-bibliographic-sources`에서도 지우지 않았고, 같은 ISBN의 정보나루·카카오 값을 따로 받은 파일(`sources_collection.json`, 출처마다 이어 받기)을 함께 쓴다. `add-loan-signals`부터 같은 ISBN의 정보나루 대출 신호(함께 대출·마니아·다독자 ISBN 순위, 연령 묶음별 인기 ISBN 순위와 대출 수)를 받은 파일(`loan_signals.json`)도 쓴다. ISBN 순위와 수만 남기고 서명·표지는 남기지 않는다. 카카오 판매가·판매 상태와 정보나루 표지(비영리 화면 표시만 허용)는 저장하지 않는다.
@@ -185,30 +127,21 @@ openspec/
 
 ## 도메인 용어
 
-- **작은도서관**: 주민센터·아파트 등에 있는 소규모 도서관. 전담 사서가 없고 담당자나 자원봉사자가 운영하는 경우가 많다.
-- **운영자 층 / 기관 공통 / 기관 개별**: 코드의 세 층. 운영자 층은 어느 기관에도 속하지 않는 공식 서지와 외부 연동, 기관 공통은 모든 기관이 쓰는 기능, 기관 개별은 기관 유형에 따라 필요한 기능(어린이 구분)이다.
-- **공식 서지(book)**: 서비스 운영자 층의 서지정보. ISBN이 있는 책만 두고 세 출처(정보나루·카카오·YES24)의 값을 필드별 기준 출처로 합쳐 공식으로 본다. 기관은 쓸 수 없다.
-- **필드별 출처(field sources)**: 공식 서지의 필드마다 어느 출처에서 왔는지(`books.field_sources`, 열 이름 → `data4library`·`kakao`·`yes24`). 서명·저자의 출처는 `external_source`다. 출처 표시(표지 출처 등)가 이것을 읽는다.
-- **부가기호(addition symbol)**: ISBN 부가기호 5자리. 첫 자리가 독자 대상이고 6(초등 학습참고서)·7(아동)이 어린이 도서 근거다. 기관 파일의 부가기호와 공식 서지의 부가기호(정보나루)가 같은 규칙을 쓴다. 필드 이름은 `addition_symbol`.
-- **기여자(contributor)**: 공식 서지 저자 원문을 역할별로 푼 사람. 역할은 `author`(글·지은이), `illustrator`(그림), `translator`(옮김), `editor`(엮음), `supervisor`(감수), `original`(원저·원작), `other`(기획·사진 등)이다. 원문은 그대로 두고 표시는 원문으로 한다. 테이블 `book_contributors`.
-- **시리즈 키(series keys)**: 공식 서지의 시리즈마다 이름 맞춤 키를 둔 목록. 외부 응답의 시리즈 목록에서 만든다(이은 표시용 `series_name`에서는 만들지 않는다). 필드 이름은 `series_keys`.
-- **공식 서지 벡터 / 기관 도서 벡터**: 임베딩 벡터의 두 층. 공식 서지에 연결된 책은 공식 서지 벡터(`official_book_embeddings`, 운영자 층, 공식 값만, 여러 기관이 함께 씀), 연결되지 않은 책(ISBN 없음, 못 찾음)은 기관 도서 벡터(`book_embeddings`)를 쓴다. 책 하나는 한 층에만 속한다. 벡터마다 텍스트 버전과 종류(`kind`)가 있다. 제품은 `full`만 쓰고, `with_author`·`description`·`title`·`category`는 실험 비교용이다.
-- **실험 장서(experiment collection)**: 추천 실험용 525권(YES24 카테고리 스테디셀러로 고른 ISBN, 같은 ISBN의 정보나루·카카오 값을 더 받음). 세 출처를 합쳐 공식 서지로 만들고 개발 DB의 `실험용 가상 작은도서관`이 소장한다. 서비스 데이터가 아니다.
-- **저자 키(author keys)**: 기관 도서의 저자 원문에서 지은이(`author`·`original`)만 뽑은 이름 맞춤 키 목록. 공식 서지가 없는 책의 "같은 저자"에 쓴다. 필드 이름은 `author_keys`.
-- **이름 맞춤 키(name key)**: 사람·단체 이름과 시리즈명을 맞춰 보는 값. 공백·문장부호를 지우고 소문자로 바꾼다(`J.K. Rowling` → `jkrowling`). 다른 음역과 동명이인은 풀지 않는다.
-- **기관 도서(library book)**: 이 도서관의 그 책. 파일·입력 값과 ISBN 없는 책이 여기 있다. ISBN이 같은 공식 서지가 있으면 연결하고, 표시할 때 공식 값을 먼저 쓴다. 필드 이름은 `library_book_id`.
-- **장서 / 소장 사본(holding)**: 같은 기관 도서라도 여러 권을 가질 수 있다. 대출은 사본 단위로 한다.
-- **등록번호(accession number)**: 도서관이 사본마다 붙이는 고유 번호. 장서 가져오기에서 사본을 식별하는 기준이다. 필드 이름은 `accession_number`.
-- **청구기호(call number)**: 서가에서 책을 찾는 주소(분류기호·저자기호·권차, 예: `813.7-한232ㅊ`). 같은 책의 복본은 같은 값일 수 있다. 사본 식별에는 쓰지 않는다. 필드 이름은 `call_number`.
-- **입수 구분(acquisition type)**: 사본이 들어온 경로. `purchased`(매입·공식 납품, 구입가와 ISBN 필수), `donated`(기증, 기증처만 선택으로 기록), `unknown`(가져온 파일에 정보가 없음)이다. 가져온 매입 사본은 구입가나 ISBN이 없어도 오류가 아니라 빠진 정보(`missing_fields`)로 표기한다. 같은 책이라도 사본마다 다를 수 있어 사본에 둔다. 필드 이름은 `acquisition_type`, `purchase_price`, `donor`.
-- **제적(withdrawn)**: 장서에서 빠진 사본. 가져온 파일에서 사라지면 이 상태가 되고, 추천·소장 권수에서 빠지며 대출 기록은 남는다.
-- **회원번호(member number)**: 기관이 이용자에게 붙이는 번호. 대출과 희망도서 신청에만 쓴다. 필드 이름은 `member_number`.
-- **운영 방식(loan_mode)**: `imported`는 기존 대출 프로그램의 내보내기를 가져와 쓰는 기관, `internal`은 AI 사서가 대출까지 처리하는 기관.
-- **어린이 도서(audience)**: 영유아·초등학생 대상 도서. 책을 `children`(어린이 도서)과 `general`(일반 도서)로만 나눈다. 나이를 세밀하게 나누지 않는다. 기관 개별 기능이고, 기관 도서마다 근거(`manual` 관리자 지정, `import_label` 별치기호·자료실·부가기호, `external_category` 공식 서지의 외부 근거: 분류 원문이나 부가기호)를 함께 저장한다. 같은 책이라도 기관마다 다를 수 있다.
-- **별치기호**: 일반 자료와 따로 배가하는 자료에 붙이는 기호. 아동 자료 표시가 어린이 도서 분류 근거가 된다.
-- **희망도서**: 이용자가 도서관에 구입을 요청한 책.
-- **보충 구매 요청서**: 관리자가 납품처(동네 책방)에 보낼 구매 목록. 금액은 코드로 계산한다.
-- **권차 / 판본**: 시리즈 순서 표기("2권", "Ⅱ", "하")와 개정판·리커버 같은 판본 차이. 장서 등록 시 정규화 대상이다.
+세부 규칙과 저장 위치는 `docs/glossary.md`에 있다.
+
+- **운영자 층 / 기관 공통 / 기관 개별**: 코드의 세 층(`central` / `library` / `features`).
+- **공식 서지(book)**: 운영자 층의 서지. ISBN이 있는 책만, 세 출처를 필드별로 합친 값. 기관은 쓸 수 없다. 필드마다 출처를 `books.field_sources`에 둔다.
+- **기관 도서(library book)**: 이 도서관의 그 책. 파일·입력 값과 ISBN 없는 책. 공식 서지가 있으면 연결하고 공식 값을 먼저 쓴다.
+- **사본(holding)**: 기관 도서의 한 권. 대출 단위. 등록번호(`accession_number`)로 식별하고 청구기호(`call_number`)로는 식별하지 않는다.
+- **제적(withdrawn)**: 장서에서 빠진 사본. 추천·소장 권수에서 빠지고 대출 기록은 남는다.
+- **입수 구분(acquisition type)**: `purchased`·`donated`·`unknown`. 가져온 매입 사본의 빠진 값은 오류가 아니라 `missing_fields`다.
+- **어린이 도서(audience)**: `children` / `general` 둘만. 근거(`manual` > `import_label` > `external_category`)를 함께 저장하고, 확실하지 않으면 `general`.
+- **부가기호(addition symbol)**: ISBN 부가기호 5자리. 첫 자리 6·7이 어린이 도서 근거다.
+- **기여자(contributor) / 저자 키 / 이름 맞춤 키 / 시리즈 키**: 저자 원문을 역할별로 푼 사람(`book_contributors`), 기관 도서의 지은이 키(`author_keys`), 공백·문장부호를 지우고 소문자로 바꾼 맞춤 값, 시리즈마다의 맞춤 키(`series_keys`).
+- **공식 서지 벡터 / 기관 도서 벡터**: 임베딩 두 층. 책 하나는 한 층에만 속한다. 제품은 종류 `full`만 쓴다.
+- **운영 방식(loan_mode)**: `imported`(기존 프로그램에서 가져옴) / `internal`(AI 사서가 대출 처리).
+- **회원번호(member number)**: 대출과 희망도서 신청에만 쓴다.
+- **실험 장서**: 추천 실험용 525권. 개발 DB의 `실험용 가상 작은도서관`만 소장하고 서비스 데이터가 아니다.
 
 ## 하지 말 것
 

@@ -22,6 +22,7 @@ uv run python -m evals.recommendation similar --split all --variants sim-rrf,sim
 uv run python -m evals.recommendation.pick --holdout       # 남겨 둔 분야 기준 책 8권·최근 기록 4개 (한 번)
 uv run python -m evals.recommendation similar --holdout --variants sim-vec,sim-rrf,sim-best   # 남겨 둔 분야 세트 (정해 둔 변형만)
 uv run python -m evals.recommendation.review similar --sample --since <백업> --size 12   # 표본 수를 바꿔 보충 표본
+uv run python -m evals.recommendation.threshold <비슷한 책 실행 폴더>   # 벡터 근거만 있는 책의 최소 유사도 진단 (결과는 실행 폴더의 threshold.md)
 ```
 
 - 개발 DB(`DATABASE_URL`)의 `실험용 가상 작은도서관`(이름으로 찾는다)에서 읽기만 한다. 실험 장서는 `scripts/seed_experiment.py`가 넣는다.
