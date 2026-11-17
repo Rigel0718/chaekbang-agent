@@ -110,21 +110,27 @@ async def run_scenario(
     catalog: SampleCatalog,
     scenario: Scenario,
     encoder: Embedder | None = None,
+    picks: Sequence[int] = (),
 ) -> ScenarioResult:
+    """picks는 첫 턴 전에 차례로 고를 책이다(대화 추천 평가의 기준 책·최근 기록)."""
     await setup_guide(session, catalog.library_id, scenario.guide)
     basis = await guide_basis(session, catalog.library_id, scenario.guide)
     session_id = None
     texts: list[str] = []
     turns: list[TurnResult] = []
-    selected: tuple[int, ...] = ()
     picked = _picked(scenario, catalog)
-    if picked is not None:
+    selected = tuple(picks) if picked is None else (picked, *picks)
+    for book_id in selected:
         prepared = await chat.prepare_turn(
-            session, catalog.library_id, None, None, profile_name=PROFILE_NAME, selected_id=picked
+            session,
+            catalog.library_id,
+            session_id,
+            None,
+            profile_name=PROFILE_NAME,
+            selected_id=book_id,
         )
         session_id = prepared.session_id
         _ = [e async for e in chat.stream_turn(session, llm, profile, prepared)]  # LLM 없음
-        selected = (picked,)
     for raw in scenario.turns:
         text = fill(raw, catalog)
         prepared = await chat.prepare_turn(

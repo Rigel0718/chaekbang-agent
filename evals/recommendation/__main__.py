@@ -76,6 +76,7 @@ from evals.collection.loans import LOANS_FILE
 from evals.recommendation.cache import CachedEmbedder
 from evals.recommendation.keys import DATA_DIR, HOLDOUT_FIELDS, library_keys, load_fields
 from evals.recommendation.labels import Labels, labels_file
+from evals.recommendation.llm_keywords import keywords_line, with_llm_keywords
 from evals.recommendation.metrics import QueryScore, compare, mean, score_query
 from evals.recommendation.sample import SAMPLE_SIZES, sample_line
 from evals.recommendation.sets import (
@@ -711,6 +712,8 @@ async def run(args: argparse.Namespace) -> int:
     try:
         if args.set == "topic":
             spec, items = TOPIC_SPEC, load_topic(set_file, holdout)
+            if getattr(args, "keywords_from", None) is not None:
+                items, skipped = with_llm_keywords(items, args.keywords_from)
         elif fields is None:
             print(
                 "실험 장서 파일이 없습니다(기준 책의 분야를 읽는다). "
@@ -750,6 +753,8 @@ async def run(args: argparse.Namespace) -> int:
         f"- 라벨 해시: {file_hash(path)}",
         f"- 커밋: {git_state()}",
     ]
+    if args.set == "topic" and getattr(args, "keywords_from", None) is not None:
+        fingerprint.append(keywords_line(args.keywords_from, skipped))
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     try:
         async with (
@@ -802,6 +807,11 @@ def main() -> int:
     parser.add_argument("--holdout", action="store_true", help="남겨 둔 분야 세트(정해 둔 변형만)")
     parser.add_argument(
         "--loan-signals", type=Path, default=LOANS_FILE, help="정보나루 대출 신호 파일"
+    )
+    parser.add_argument(
+        "--keywords-from",
+        type=Path,
+        help="주제: 대화 추천 평가 실행의 실제 LLM 낱말(첫 검색)로 낱말을 바꾼다",
     )
     return asyncio.run(run(parser.parse_args()))
 

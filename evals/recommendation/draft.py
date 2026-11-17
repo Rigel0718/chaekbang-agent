@@ -283,6 +283,21 @@ def _pool(
     return 0
 
 
+CONVERSATION_RUNS = Path(__file__).parent.parent / "conversation" / "data" / "runs"
+
+
+def read_pool_results(pool: Path, set_name: str) -> dict:
+    """보충할 실행 결과. 실험 실행은 `results.json`, 대화 추천 평가 실행은 세트마다
+    `results-<세트>.json`(변형 `chat`)이다. 폴더 이름만 주면 두 실행 폴더에서 찾는다."""
+    run = next(
+        (p for p in (pool, DATA_DIR / "runs" / pool, CONVERSATION_RUNS / pool) if p.exists()), pool
+    )
+    path = run / f"results-{set_name}.json"
+    if not path.exists():
+        path = run / "results.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.recommendation.draft")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -301,8 +316,7 @@ def main() -> int:
     labels = Labels(labels_file(args.set, args.holdout))
     wanted: dict[str, list[str]] = {}
     if args.pool is not None:
-        run = args.pool if args.pool.exists() else DATA_DIR / "runs" / args.pool
-        results = json.loads((run / "results.json").read_text(encoding="utf-8"))
+        results = read_pool_results(args.pool, args.set)
         names = [name for name in args.variants.split(",") if name] or list(results)
         wanted = pool_keys(results, names, labels)
     items = asyncio.run(

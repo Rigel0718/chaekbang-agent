@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.central.models import OfficialBookEmbedding
 from app.library.models.embedding import BookEmbedding
 from evals.librarian.__main__ import vector_line
-from evals.librarian.catalog import Sample, _load_vectors, load_catalog
+from evals.librarian.catalog import Sample, load_catalog, load_vectors
 from evals.recommendation.cache import CachedEmbedder
 from tests.embedding_helpers import FakeEmbedder
 from tests.helpers import make_isbn
@@ -49,7 +49,7 @@ async def test_sample_loads_vectors_and_reuses_cache(session: AsyncSession, tmp_
 
     again = FakeEmbedder()
     second = CachedEmbedder(again, tmp_path / "queries.json", tmp_path / "docs.json")
-    assert await _load_vectors(session, second, catalog.library_id) == catalog.vectors
+    assert await load_vectors(session, second, catalog.library_id) == catalog.vectors
     assert again.document_calls == [] and second.encoded_documents == 0
     assert second.cached_documents == catalog.vectors
     assert "새로 인코딩 0" in vector_line(second, catalog.vectors)
