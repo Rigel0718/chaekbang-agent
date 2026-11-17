@@ -19,8 +19,9 @@ CLAUDE = "claude"
 USER = "user"
 
 
-def labels_file(set_name: str) -> Path:
-    return LABELS_DIR / f"{set_name}.json"
+def labels_file(set_name: str, holdout: bool = False) -> Path:
+    """세트의 라벨 파일. 남겨 둔 분야 세트는 `holdout-<세트>.json`으로 따로 둔다."""
+    return LABELS_DIR / (f"holdout-{set_name}.json" if holdout else f"{set_name}.json")
 
 
 class Labels:

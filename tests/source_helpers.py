@@ -162,3 +162,57 @@ async def enrich_sources(session, sources: FakeSources | None = None, **options:
     return await run_enrichment(
         session, sources.lookup(), LibraryEnrichmentTargets(session), **options
     )
+
+
+# --- 대출 신호 (`add-loan-signals`): 매뉴얼 꼴. 확인 호출 뒤 실제 꼴로 고친다 ---
+
+
+def d4l_list_book(isbn: str, **overrides: Any) -> dict[str, Any]:
+    values = {
+        "bookname": "함께 빌린 책",
+        "authors": "정세랑 (지은이)",
+        "publisher": "민음사",
+        "publication_year": "2020",
+        "isbn13": isbn,
+        "vol": "",
+        "loanCnt": "120",
+        "bookImageURL": "https://image.example/d4l/list.jpg",
+    }
+    return {**values, **overrides}
+
+
+def d4l_usage(
+    co_loans: list[dict[str, Any]],
+    mania: list[dict[str, Any]] = (),
+    reader: list[dict[str, Any]] = (),
+    loan_count: str | int = "321",
+) -> httpx.Response:
+    body = {
+        "response": {
+            "request": {},
+            "book": {"bookname": "기준 책", "loanCnt": loan_count, "bookImageURL": "https://x"},
+            "loanHistory": [{"loan": {"month": "2026-10", "loanCnt": "3"}}],
+            "keywords": [{"keyword": {"word": "우정", "weight": "8"}}],
+            "coLoanBooks": [{"book": book} for book in co_loans],
+            "maniaRecBooks": [{"book": book} for book in mania],
+            "readerRecBooks": [{"book": book} for book in reader],
+        }
+    }
+    return httpx.Response(200, json=body)
+
+
+def d4l_popular_doc(isbn: str, ranking: int, loan_count: int = 500) -> dict[str, Any]:
+    return {
+        "ranking": str(ranking),
+        "bookname": "인기 책",
+        "authors": "지은이",
+        "isbn13": isbn,
+        "loan_count": str(loan_count),
+        "bookImageURL": "https://image.example/d4l/popular.jpg",
+        "bookDtlUrl": "https://data4library.kr/x",
+    }
+
+
+def d4l_popular(*docs: dict[str, Any]) -> httpx.Response:
+    body = {"response": {"request": {}, "numFound": len(docs), "docs": [{"doc": d} for d in docs]}}
+    return httpx.Response(200, json=body)

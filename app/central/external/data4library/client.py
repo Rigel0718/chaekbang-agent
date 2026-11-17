@@ -4,16 +4,19 @@
 담고 있어 사슬 없이 `SourceStopped`로 바꾼다(키가 오류 메시지에 남지 않게).
 """
 
+from datetime import date
 from typing import Any
 
 import httpx
 
 from app.central.external.data4library.definitions import (
+    AGE_PARAM,
     API_KEY_PARAM,
     AUTH_ERROR_WORDS,
     BOOK_DETAIL,
     BOOK_KEY,
     DETAIL_KEY,
+    END_PARAM,
     ERROR_CODE_KEY,
     ERROR_KEY,
     FORMAT_JSON,
@@ -22,11 +25,23 @@ from app.central.external.data4library.definitions import (
     LIMIT_ERROR_WORDS,
     MIN_CALL_INTERVAL_SECONDS,
     NOT_FOUND_ERROR_CODES,
+    PAGE_SIZE_PARAM,
+    POPULAR_LOANS,
     RESPONSE_KEY,
     SOURCE_NAME,
+    START_PARAM,
+    USAGE_ANALYSIS,
+    AgeGroup,
     Endpoint,
 )
-from app.central.external.data4library.parsing import Data4LibraryRecord, parse_book
+from app.central.external.data4library.parsing import (
+    Data4LibraryRecord,
+    PopularLoans,
+    UsageAnalysis,
+    parse_book,
+    parse_popular,
+    parse_usage,
+)
 from app.central.external.http import RateLimiter, SourceStopped, StopReason
 
 
@@ -101,3 +116,23 @@ async def raw_books_by_isbn(client: Data4LibraryClient, isbn: str) -> list[dict[
 async def get_books_by_isbn(client: Data4LibraryClient, isbn: str) -> list[Data4LibraryRecord]:
     """ISBN으로 도서 상세를 조회한다. 찾지 못하면 빈 목록이다."""
     return [parse_book(book) for book in await raw_books_by_isbn(client, isbn)]
+
+
+async def usage_analysis(client: Data4LibraryClient, isbn: str) -> UsageAnalysis | None:
+    """도서별 이용 분석의 ISBN 순위. 찾지 못한 도서면 None이다."""
+    data = await client.get(USAGE_ANALYSIS, {ISBN_PARAM: isbn})
+    return parse_usage(data) if data else None
+
+
+async def popular_loans(
+    client: Data4LibraryClient, age: AgeGroup, start: date, end: date, page_size: int
+) -> PopularLoans:
+    """전국 인기대출도서의 순위. 결과가 없으면 빈 순위다."""
+    params = {
+        START_PARAM: start.isoformat(),
+        END_PARAM: end.isoformat(),
+        PAGE_SIZE_PARAM: str(page_size),
+    }
+    if age.age is not None:
+        params[AGE_PARAM] = age.age
+    return parse_popular(await client.get(POPULAR_LOANS, params))

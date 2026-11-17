@@ -18,6 +18,10 @@ uv run python -m evals.recommendation.draft dump similar   # 후보: data/draft/
 uv run python -m evals.recommendation.review similar --sample   # 고정 표본 검수 (history도)
 uv run python -m evals.recommendation.review topic --sample --since <백업 라벨 파일>   # 그 백업 뒤에 단 보충 라벨에서만 표본
 uv run python -m evals.recommendation compare <기준 실행 폴더> <새 실행 폴더>   # 같은 세트의 두 실행을 지금 라벨로 짝 비교
+uv run python -m evals.recommendation similar --split all --variants sim-rrf,sim-best-co   # 함께 대출 변형: 대출 신호 파일을 읽는다(--loan-signals <파일>)
+uv run python -m evals.recommendation.pick --holdout       # 남겨 둔 분야 기준 책 8권·최근 기록 4개 (한 번)
+uv run python -m evals.recommendation similar --holdout --variants sim-vec,sim-rrf,sim-best   # 남겨 둔 분야 세트 (정해 둔 변형만)
+uv run python -m evals.recommendation.review similar --sample --since <백업> --size 12   # 표본 수를 바꿔 보충 표본
 ```
 
 - 개발 DB(`DATABASE_URL`)의 `실험용 가상 작은도서관`(이름으로 찾는다)에서 읽기만 한다. 실험 장서는 `scripts/seed_experiment.py`가 넣는다.
@@ -35,12 +39,17 @@ uv run python -m evals.recommendation compare <기준 실행 폴더> <새 실행
 | `data/seeds.json` | 비슷한 책의 기준 책, 아무 조건 없음의 최근 기록(책 키) | 뺀다 |
 | `data/labels/<세트>.json` | 어울림 라벨. `{"t01": {"isbn:978…": {"grade": 2, "stage": "before", "by": "user"}}}` | 뺀다 |
 | `data/query_vectors.json` | 질의 벡터 캐시 | 뺀다 |
+| `sets/topic-holdout.json` | 남겨 둔 분야 주제 질의 8개(모두 `check`) | 넣는다 |
+| `data/seeds-holdout.json` | 남겨 둔 분야 기준 책 8권·최근 기록 4개 | 뺀다 |
+| `data/labels/holdout-<세트>.json` | 남겨 둔 분야 라벨(기존 라벨 해시가 흔들리지 않게 따로) | 뺀다 |
+| `evals/collection/data/loan_signals.json` | 정보나루 대출 신호(ISBN 순위·수만). 함께 대출·인기를 쓰는 변형만 읽고, 없으면 받기 명령을 출력하고 종료 코드 1. 받지 않은 ISBN은 빈 신호로 보고 요약에 수를 적는다 | 뺀다 |
 | `data/runs/<시각>/` | `summary.md`(표), `results.json`(질의·변형별 상위 10권) | 뺀다 |
 
 - `data/`는 책 키가 실험 장서를 가리켜 저장소에 넣지 않는다. **라벨은 다시 만들 수 없으니 `data/labels/`를 따로 백업한다.**
 - 책 키는 `isbn:<13자리>`, ISBN이 없으면 `acc:<가장 앞선 등록번호>`다. DB의 id는 장서를 다시 넣으면 바뀌어서 쓰지 않는다.
 - 저장소의 질의 파일에 ISBN이나 등록번호 모양의 값이 있으면 세트 검사가 실패한다.
 - 남겨 둔 분야(종교·예술·건강 취미·여행)는 질의의 관련 분야, 기준 책, 최근 기록에 쓸 수 없다(세트 검사가 거부). 그 책들은 후보로는 남는다.
+- **남겨 둔 분야 세트**(`--holdout`, `add-loan-signals`)는 반대로 남겨 둔 분야를 반드시 담고, 모든 항목이 확인 세트다. 기본값을 모두 정한 뒤 정해 둔 변형만 한 번 돌려 방향(같음·반대·차이 없음)만 읽는다. 이 결과로 설정을 바꾸지 않는다.
 
 ## 라벨
 

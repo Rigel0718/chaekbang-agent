@@ -60,3 +60,40 @@ BOOK_FIELDS = {
 TITLE_MAX_LENGTH = 500
 SUBTITLE_MAX_LENGTH = 500
 ADDITION_SYMBOL_LENGTH = 5
+
+# --- 대출 신호 (`add-loan-signals`) ---
+# 도서별 이용 분석(8번): 함께 대출된 책·마니아 추천·다독자 추천(최근 36개월, 최대 10권씩)
+USAGE_ANALYSIS = Endpoint("/usageAnalysisList")
+# 인기대출도서(3번): 전국 공공도서관, 연령·기간 조건
+POPULAR_LOANS = Endpoint("/loanItemSrch")
+
+USAGE_BOOK_KEY = "book"  # 기준 책
+USAGE_LOAN_COUNT_KEY = "loanCnt"
+CO_LOANS_KEY = "coLoanBooks"
+MANIA_KEY = "maniaRecBooks"
+READER_KEY = "readerRecBooks"
+POPULAR_DOCS_KEY = "docs"
+POPULAR_DOC_KEY = "doc"
+POPULAR_LOAN_COUNT_KEY = "loan_count"
+LIST_ISBN_KEY = "isbn13"
+
+AGE_PARAM = "age"
+START_PARAM = "startDt"
+END_PARAM = "endDt"
+PAGE_SIZE_PARAM = "pageSize"
+
+
+@dataclass(frozen=True)
+class AgeGroup:
+    """인기대출도서의 연령 묶음. `age`가 None이면 연령 조건이 없다(전체)."""
+
+    key: str
+    age: str | None
+
+
+# 어린이 조건은 나이를 나누지 않으므로 영유아·유아·초등을 한 번에 부른다
+AGE_ALL = AgeGroup("all", None)
+AGE_CHILDREN = AgeGroup("children", "0;6;8")
+AGE_TEEN = AgeGroup("teen", "14")
+AGE_ADULT = AgeGroup("adult", "20;30;40;50;60")
+AGE_GROUPS = (AGE_ALL, AGE_CHILDREN, AGE_TEEN, AGE_ADULT)

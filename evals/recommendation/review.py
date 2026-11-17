@@ -161,12 +161,18 @@ def main() -> int:
         type=Path,
         help="백업 라벨 파일. 그 뒤에 단 보충 라벨에서만 표본을 뽑는다(--sample과 함께)",
     )
+    parser.add_argument("--holdout", action="store_true", help="남겨 둔 분야 세트")
+    parser.add_argument("--size", type=int, help="표본 수(기본은 세트별 고정값)")
     args = parser.parse_args()
-    labels = Labels(labels_file(args.set))
+    labels = Labels(labels_file(args.set, args.holdout))
     only = new_pairs(labels, args.since) if args.since else None
-    size = SUPPLEMENT_SAMPLE_SIZES[args.set] if args.since else SAMPLE_SIZES[args.set]
+    size = args.size or (
+        SUPPLEMENT_SAMPLE_SIZES[args.set] if args.since else SAMPLE_SIZES[args.set]
+    )
     extra = {item_id: list(entries) for item_id, entries in labels.items.items()}
-    items = asyncio.run(load_items(get_settings().database_url, args.set, None, extra))
+    items = asyncio.run(
+        load_items(get_settings().database_url, args.set, None, extra, args.holdout)
+    )
     if not items:
         print("실험 기관이 없습니다. `uv run python scripts/seed_experiment.py`")
         return 1

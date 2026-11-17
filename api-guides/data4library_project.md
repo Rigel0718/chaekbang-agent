@@ -14,7 +14,7 @@
 
 ## 공통 규칙
 
-- 호출은 `http://data4library.kr/api/{엔드포인트}?authKey=…&format=json` 꼴이다. 키는 `.env`의 `LIBRARY_BIGDATA_KEY`에 둔다.
+- 호출은 `https://data4library.kr/api/{엔드포인트}?authKey=…&format=json` 꼴이다(https로 부른다). 키는 `.env`의 `LIBRARY_BIGDATA_KEY`에 둔다.
 - `format`이 없으면 XML로 온다. 원문에 JSON 예시가 없어, 배열이 어떤 키 구조로 오는지는 실제 호출로 확인해야 한다.
 - ISBN 파라미터 `isbn13`에는 10자리와 13자리를 섞어 넣을 수 있다.
 - 다중 선택 값은 `;`로 나눈다(예 `age=6;8`).
@@ -37,6 +37,7 @@
 - `coLoanBooks > book[]`: `bookname`, `authors`, `publisher`, `publication_year`, `isbn13`, `vol`, `loanCnt`(명세에는 없고 예시에 있다). 최근 36개월의 동시 대출 빈도 순으로 최대 10권이다.
 - `maniaRecBooks`·`readerRecBooks`: 최근 36개월, 조건부 확률로 고른 책 최대 10권(필드는 `coLoanBooks`와 같고 `loanCnt`가 없다).
 - `loanGrps`의 `age`·`gender`는 코드가 아니라 한글 명칭이다(`40대`, `여성`).
+- 실제 응답(2026-11-17 확인): JSON에서 세 목록은 `[{"book": {…}}]` 꼴로 10권씩 온다. 함께 대출 원소에는 `loanCnt`가 없다. 기준 책 `loanCnt`는 정수다.
 
 ## 3. 인기대출도서 조회 `loanItemSrch`
 
@@ -46,6 +47,7 @@
   - `dtl_kdc`를 주면 `kdc`는 하나만 고를 수 있다.
 - `pageSize` 기본 200이고 최대 5,000권까지 준다(ISBN 기준 집계).
 - `docs > doc[]`: `ranking`, `bookname`, `authors`, `publisher`, `publication_year`, `isbn13`, `addition_symbol`, `vol`, `class_no`, `class_nm`, `bookImageURL`, `bookDtlUrl`, `loan_count`
+- 실제 응답(2026-11-17 확인): `{"response": {"resultNum": 1000, "numFound": 5000, "docs": [{"doc": {…}}]}}`. `ranking`·`loan_count`는 문자열이다. `age=0;6;8`처럼 여러 연령을 한 번에 줄 수 있다.
 
 ## 코드
 
