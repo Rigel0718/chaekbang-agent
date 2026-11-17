@@ -24,7 +24,7 @@
 | `official_books.py` | 공식 서지를 만드는 함수 `create_official`(기여자, 시리즈 키), `series_keys` |
 | `external/http.py` | 출처 공통: 호출 간격 `RateLimiter`, 중단 사유 `StopReason`, 중단 예외 `SourceStopped` |
 | `external/values.py` | 응답 값 읽기 공통 규칙(빈 값, 날짜, 정가, 저장 길이) |
-| `external/data4library/` | 정보나루: `definitions.py`(엔드포인트, 필드, 호출 간격), `client.py`(키 전달, 오류 구분, `get_books_by_isbn`), `parsing.py`(`Data4LibraryRecord`, 서명 나누기) |
+| `external/data4library/` | 정보나루: `definitions.py`(엔드포인트, 필드, 호출 간격), `client.py`(키 전달, 오류 구분, `get_books_by_isbn`, 대출 신호 `usage_analysis`·`popular_loans`), `parsing.py`(`Data4LibraryRecord`, 서명 나누기, 대출 신호 `UsageAnalysis`·`PopularLoans`) |
 | `external/kakao/` | 카카오 책 검색: 같은 꼴. `parsing.py`(`KakaoRecord`, ISBN 분해, 저자 배열 잇기) |
 | `external/yes24/definitions.py` | 엔드포인트, 응답 필드, 오류 코드 |
 | `external/yes24/client.py` | 인증, 호출 속도 제한, 오류 구분 |
@@ -52,7 +52,7 @@
 
 | 필드 | 1순위 | 2순위 | 3순위 |
 | --- | --- | --- | --- |
-| 서명·부제·저자 원문 | 정보나루 | YES24 | 카카오. 셋은 한 출처에서만 가져온다 |
+| 서명·부제·저자 원문 | YES24 | 정보나루(서명 정리 규칙) | 카카오. 셋은 한 출처에서만 가져온다 |
 | 출판사 | 정보나루 | YES24 | 카카오 |
 | 소개 | YES24(가장 길다) | 정보나루(짧지만 문장이 끝난다) | 카카오(약 250자에서 잘린다) |
 | 목차, 시리즈, 분류 원문 | YES24 | 없음 | 없음 |
@@ -66,6 +66,12 @@
 - 정보나루 서명은 부제가 ` :` 뒤에 붙어 온다(`아몬드 :손원평 장편소설`). 첫 ` :`에서만 나눈다.
 - 카카오의 저자·역자 배열은 원문 하나로 이어 저장한다(`A, B ;옮긴이: C`). 기관 파일 해석기가 다시 읽는 꼴이라 기여자를 원문에서 다시 만들 수 있다.
 - 채움은 어느 출처든 멈춰야 하는 오류가 나면 멈춘다. 한 출처 없이 만들면 이미 있는 공식 서지는 고치지 않는 규칙 때문에 빠진 값을 나중에 채울 수 없어서다.
+
+### 정보나루 대출 신호
+
+- 도서별 이용 분석(`usageAnalysisList`)에서 함께 대출된 책·마니아 추천·다독자 추천의 ISBN 순위(최근 36개월, 최대 10권씩)와 기준 책 대출 수를, 인기대출도서(`loanItemSrch`)에서 연령 묶음(`AGE_GROUPS`: 전체, 어린이 `0;6;8`, 청소년, 성인)과 기간마다 순위 순서의 ISBN과 대출 수를 읽는다.
+- ISBN은 13자리로 정리하고(10자리는 바꾼다), 정리할 수 없으면 버리며, 같은 ISBN은 처음 순위만 둔다. 서명·저자·표지·키워드·이용자 그룹은 읽지 않는다.
+- 전국 공공도서관 기준이다. 기관이 가진 책만 남기는 것은 기관 공통(`app/library/recommendation/related.py`의 `held_ranking`)이 한다. 지금은 실험 장서 파일(`evals/collection/loans.py`)에만 받아 두고, 운영자 층 테이블은 채택되면 `add-related-books`에서 만든다.
 
 ### 출처별 이용 조건과 키
 

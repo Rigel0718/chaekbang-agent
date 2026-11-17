@@ -11,6 +11,11 @@
 - 최근 기록: 책 2~3권 목록 10개. 같은 분야 4, 분야가 섞인 것 3, 어린이 3. 이 대화에서 찾은·고른
   책을 흉내 낸다(익명).
 - 조정·확인: 묶음마다 세 번째 항목을 확인으로 둔다.
+
+`--holdout`은 남겨 둔 분야 세트(`data/seeds-holdout.json`, `add-loan-signals` design 결정 11)를
+고른다. 기준 책은 남겨 둔 분야마다 2권(같은 지은이·시리즈의 책이 있는 책을 먼저 1권, 없는 책 1권),
+ISBN 없는 책 1권 이상. 최근 기록은 같은 분야 3개와, 남겨 둔 분야 책 1권 + 다른 분야 책 1권인 섞인
+기록 1개. 모두 확인 세트다.
 """
 
 import argparse
@@ -36,12 +41,15 @@ from app.library.recommendation.search import recommendable_ids
 from app.seed.experiment import LIBRARY_NAME, CollectionMissingError
 from evals.collection.fetch import DATA_FILE as COLLECTION_FILE
 from evals.recommendation.keys import HOLDOUT_FIELDS, library_keys, load_fields
-from evals.recommendation.sets import SEEDS_FILE, parse_seeds
+from evals.recommendation.sets import CHECK, HOLDOUT_SEEDS_FILE, SEEDS_FILE, parse_seeds
 
 SEED_PLAN = ((True, True, 4), (True, False, 4), (False, True, 6), (False, False, 6))
 MIN_WITHOUT_ISBN = 2
 HISTORY_MAX = 3  # 최근 기록 한 목록의 최대 권수
 HISTORY_PLAN = ("same", "same", "same", "same", "mixed", "mixed", "mixed") + ("children",) * 3
+HOLDOUT_PER_FIELD = 2
+HOLDOUT_SAME = 3  # 남겨 둔 분야 세트의 같은 분야 기록 수
+HOLDOUT_MIN_WITHOUT_ISBN = 1
 
 
 @dataclass(frozen=True)
@@ -123,6 +131,48 @@ def pick(books: Sequence[BookInfo]) -> dict:
     return {"version": 1, "similar": similar, "history": history}
 
 
+def pick_holdout(books: Sequence[BookInfo]) -> dict:
+    """남겨 둔 분야 세트의 기준 책과 최근 기록. 같은 책 목록이면 늘 같은 결과다."""
+    ordered = sorted(books, key=lambda b: _order(b.key))
+    held = [b for b in ordered if b.field in HOLDOUT_FIELDS]
+    fields = sorted({b.field for b in held}, key=_order)
+    seeds: list[BookInfo] = []
+    for field in fields:
+        group = [b for b in held if b.field == field]
+        chosen = [
+            next((b for b in group if b.related), None),
+            next((b for b in group if not b.related), None),
+        ]
+        chosen = [b for b in chosen if b is not None]
+        chosen += [b for b in group if b not in chosen][: HOLDOUT_PER_FIELD - len(chosen)]
+        seeds += chosen[:HOLDOUT_PER_FIELD]
+    if sum(b.key.startswith("acc:") for b in seeds) < HOLDOUT_MIN_WITHOUT_ISBN:
+        spare = [b for b in held if b.key.startswith("acc:") and b not in seeds]
+        for i in range(len(seeds) - 1, -1, -1):
+            swap = next((b for b in spare if b.field == seeds[i].field), None)
+            if swap is not None:
+                seeds[i] = swap
+                break
+    similar = [
+        {"id": f"hs{n:02d}", "book": book.key, "split": CHECK}
+        for n, book in enumerate(seeds, start=1)
+    ]
+    used = {b.key for b in seeds}
+    rest = [b for b in held if b.key not in used]
+    history = []
+    for n, field in enumerate(fields[:HOLDOUT_SAME], start=1):
+        keys = [b.key for b in rest if b.field == field][: 2 + n % 2]
+        if len(keys) >= 2:
+            history.append({"id": f"hh{n:02d}", "books": keys, "split": CHECK})
+    taken = {key for row in history for key in row["books"]}
+    last = [b for b in rest if b.key not in taken and b.field == fields[-1]]
+    other = [b for b in ordered if b.field not in HOLDOUT_FIELDS and not b.children]
+    if last and other:
+        books_ = [last[0].key, other[0].key]
+        history.append({"id": f"hh{len(history) + 1:02d}", "books": books_, "split": CHECK})
+    return {"version": 1, "similar": similar, "history": history}
+
+
 async def book_infos(
     session: AsyncSession, library_id: int, fields: Mapping[str, str]
 ) -> list[BookInfo]:
@@ -159,7 +209,7 @@ def _save(path: Path, document: dict) -> None:
     path.write_text(json.dumps(document, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-async def run(path: Path = SEEDS_FILE) -> int:
+async def run(path: Path = SEEDS_FILE, holdout: bool = False) -> int:
     try:
         fields = load_fields(COLLECTION_FILE)
     except CollectionMissingError as exc:
@@ -174,10 +224,11 @@ async def run(path: Path = SEEDS_FILE) -> int:
             if library_id is None:
                 print("실험 기관이 없습니다. `uv run python scripts/seed_experiment.py`")
                 return 1
-            document = pick(await book_infos(session, library_id, fields))
+            infos = await book_infos(session, library_id, fields)
+            document = pick_holdout(infos) if holdout else pick(infos)
     finally:
         await engine.dispose()
-    parse_seeds(document, fields)  # 남겨 둔 분야가 섞이지 않았는지 다시 본다
+    parse_seeds(document, fields, holdout)  # 남겨 둔 분야 규칙을 다시 본다
     _save(path, document)
     print(f"기준 책 {len(document['similar'])}권, 최근 기록 {len(document['history'])}개: {path}")
     return 0
@@ -186,11 +237,13 @@ async def run(path: Path = SEEDS_FILE) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.recommendation.pick")
     parser.add_argument("--force", action="store_true", help="있는 파일을 덮어쓴다")
+    parser.add_argument("--holdout", action="store_true", help="남겨 둔 분야 세트를 고른다")
     args = parser.parse_args()
-    if SEEDS_FILE.exists() and not args.force:
-        print(f"이미 있습니다: {SEEDS_FILE}\n고친 파일이 기준입니다. 다시 고르려면 --force.")
+    path = HOLDOUT_SEEDS_FILE if args.holdout else SEEDS_FILE
+    if path.exists() and not args.force:
+        print(f"이미 있습니다: {path}\n고친 파일이 기준입니다. 다시 고르려면 --force.")
         return 1
-    return asyncio.run(run())
+    return asyncio.run(run(path, args.holdout))
 
 
 if __name__ == "__main__":

@@ -19,10 +19,16 @@ from app.core.embedding_text import TextKind
 from app.library.recommendation.ranking import Ranked
 from app.library.recommendation.related import (
     AUTHOR,
+    CO_LOAN,
     KDC,
+    LOAN_KINDS,
+    MANIA,
+    POPULAR_ALL,
+    READER,
     SERIES,
     VECTOR,
     HistorySettings,
+    LoanSignals,
     SimilarSettings,
     find_from_history,
     find_similar,
@@ -54,6 +60,8 @@ async def run_variant(
     library_id: int,
     query,
     within: Select | None,
+    loan_signals: LoanSignals | None = None,
+    popular_group: str = POPULAR_ALL,
 ) -> Sequence[Ranked]:
     """변형 하나로 항목 하나의 상위 `DEEP`권. 어린이 조건(`within`)은 부르는 쪽이 넘긴다.
 
@@ -71,6 +79,7 @@ async def run_variant(
             library_book_id=query.base_ids[0],
             within=within,
             settings=replace(variant.settings, limit=DEEP),
+            loan_signals=loan_signals,
         )
     if isinstance(variant.settings, HistorySettings):
         return await find_from_history(
@@ -80,6 +89,8 @@ async def run_variant(
             library_book_ids=query.base_ids,
             within=within,
             settings=replace(variant.settings, limit=DEEP),
+            loan_signals=loan_signals,
+            popular_group=popular_group,
         )
     return await find_by_topic(
         session,
@@ -90,6 +101,18 @@ async def run_variant(
         within=within,
         settings=replace(variant.settings, limit=DEEP),
     )
+
+
+def needs_loans(variant: Variant) -> bool:
+    """정보나루 대출 신호(함께 대출·마니아·다독자)를 쓰는 변형인지."""
+    settings = variant.settings
+    if isinstance(settings, HistorySettings):
+        if settings.method == "per-book":
+            return needs_loans(Variant(variant.name, "", settings.similar))
+        return settings.signals.get(CO_LOAN, 0) > 0
+    if isinstance(settings, SimilarSettings):
+        return any(settings.signals.get(kind, 0) > 0 for kind in LOAN_KINDS)
+    return False
 
 
 def _current(split_text: bool) -> Runner:
@@ -172,13 +195,17 @@ def _all() -> list[Variant]:
 VARIANTS: dict[str, Variant] = {variant.name: variant for variant in _all()}
 DEFAULT_VARIANTS = ("current", "vec-text", "hybrid", "best")
 
-# --- 비슷한 책 (`add-related-book-experiments` design 결정 6) ---
+# --- 비슷한 책 (`add-related-book-experiments` design 결정 6, `add-loan-signals` 결정 6·10) ---
 # 단계의 승자 (실행 결과를 보고 고친다)
 BEST_SIM_KIND = "full"  # 단계 1: 벡터 이웃의 텍스트 종류
 BEST_SIM_FUSION = "rrf"  # 단계 3: rrf / priority
 BEST_SIM_RULE_WEIGHT = 1.0  # 단계 3: 규칙 신호(시리즈·저자·KDC) 가중치
 BEST_SIM_SERIES_CAP: int | None = None  # 단계 4
 BEST_SIM_MMR: float | None = None  # 단계 4
+BEST_SIM_KDC_LEVEL = "section"  # 단계 5: section / three / nested
+BEST_SIM_KDC_ORDER = "title"  # 단계 5: title / vector
+BEST_SIM_KDC_WEIGHT = 1.0  # 단계 5: KDC 가중치(0이면 끔)
+BEST_SIM_CO_LOAN = 0.0  # 단계 6: 함께 대출 가중치(0이면 끔)
 
 
 def _sim_vector(kind: str = BEST_SIM_KIND, **changes) -> SimilarSettings:
@@ -194,13 +221,36 @@ def _sim_fused(rule_weight: float = BEST_SIM_RULE_WEIGHT, **changes) -> SimilarS
     return replace(base, **changes)
 
 
+def _sim_signals(kdc: float = 1.0, **more: float) -> dict[str, float]:
+    """규칙 신호(가중치 BEST_SIM_RULE_WEIGHT) + 벡터 1, KDC 가중치를 따로, 더 켤 신호."""
+    rule = BEST_SIM_RULE_WEIGHT
+    signals = {SERIES: rule, AUTHOR: rule, KDC: kdc * rule, VECTOR: 1.0, **more}
+    return {name: weight for name, weight in signals.items() if weight > 0}
+
+
+def _sim_kdc_best(**changes) -> SimilarSettings:
+    """단계 5의 승자: 규칙 + 벡터에 KDC 단위·순서·가중치."""
+    base = {
+        "signals": _sim_signals(BEST_SIM_KDC_WEIGHT),
+        "kdc_level": BEST_SIM_KDC_LEVEL,
+        "kdc_order": BEST_SIM_KDC_ORDER,
+    }
+    return _sim_fused(**{**base, **changes})
+
+
 def _sim_best(**changes) -> SimilarSettings:
-    return _sim_fused(series_cap=BEST_SIM_SERIES_CAP, mmr_lambda=BEST_SIM_MMR, **changes)
+    base = {
+        "signals": _sim_signals(BEST_SIM_KDC_WEIGHT, **{CO_LOAN: BEST_SIM_CO_LOAN}),
+        "series_cap": BEST_SIM_SERIES_CAP,
+        "mmr_lambda": BEST_SIM_MMR,
+    }
+    return _sim_kdc_best(**{**base, **changes})
 
 
 def _similar() -> list[Variant]:
     rules = {SERIES: 1.0, AUTHOR: 1.0, KDC: 1.0}
     no_kdc = {SERIES: BEST_SIM_RULE_WEIGHT, AUTHOR: BEST_SIM_RULE_WEIGHT, VECTOR: 1.0}
+    with_loans = _sim_best().signals
     return [
         Variant("sim-vec", "0 기준: 벡터 이웃만, full", _sim_vector("full")),
         Variant("sim-vec-author", "1 벡터 이웃만, 저자 넣기", _sim_vector("author")),
@@ -229,24 +279,65 @@ def _similar() -> list[Variant]:
         Variant(
             "sim-mmr0.7", "4 MMR λ 0.7", _sim_fused(series_cap=BEST_SIM_SERIES_CAP, mmr_lambda=0.7)
         ),
-        Variant("sim-best", "채택한 설정", _sim_best()),
-        Variant("sim-best-kdc0", "확인: 채택한 설정에서 KDC 신호를 뺌", _sim_best(signals=no_kdc)),
+        # 단계 5: KDC (`sim-rrf` 위에서 하나씩 바꾼다)
+        Variant("sim-rrf-kdc0", "5 KDC의 몫: `sim-rrf`에서 KDC를 뺌", _sim_fused(signals=no_kdc)),
+        Variant("sim-kdc", "5 진단: KDC 신호만, 벡터 없음", SimilarSettings(signals={KDC: 1.0})),
+        Variant("sim-rrf-kdc3", "5 KDC 단위 세 자리", _sim_fused(kdc_level="three")),
+        Variant(
+            "sim-rrf-kdcn", "5 KDC 단위 계층(세목 먼저, 세 자리)", _sim_fused(kdc_level="nested")
+        ),
+        Variant("sim-rrf-kdcv", "5 KDC 세목 안 벡터 순서", _sim_fused(kdc_order="vector")),
+        Variant("sim-rrf-kdc-w0.5", "5 KDC 가중치 0.5", _sim_fused(signals=_sim_signals(0.5))),
+        Variant("sim-rrf-kdc-w2", "5 KDC 가중치 2", _sim_fused(signals=_sim_signals(2.0))),
+        Variant(
+            "sim-vec-kdc",
+            "5 진단: 벡터 이웃을 같은 KDC 세목 안으로",
+            _sim_vector(kdc_scope=True),
+        ),
+        Variant("sim-kdc-best", "5 확인: KDC 단계의 승자를 합친 설정", _sim_kdc_best()),
+        # 단계 6: 함께 대출 (단계 5 승자 위에)
+        Variant(
+            "sim-best-co",
+            "6 단계 5 승자 + 함께 대출 1:1",
+            _sim_kdc_best(signals={**_sim_signals(BEST_SIM_KDC_WEIGHT), CO_LOAN: 1.0}),
+        ),
+        Variant("sim-co", "6 진단: 함께 대출만", SimilarSettings(signals={CO_LOAN: 1.0})),
+        Variant(
+            "sim-best-mania",
+            "6 진단: 단계 5 승자 + 마니아 추천 1:1",
+            _sim_kdc_best(signals={**_sim_signals(BEST_SIM_KDC_WEIGHT), MANIA: 1.0}),
+        ),
+        Variant(
+            "sim-best-reader",
+            "6 진단: 단계 5 승자 + 다독자 추천 1:1",
+            _sim_kdc_best(signals={**_sim_signals(BEST_SIM_KDC_WEIGHT), READER: 1.0}),
+        ),
+        Variant("sim-best", "채택한 설정", _sim_best(signals=with_loans)),
+        Variant(
+            "sim-best-kdc0",
+            "확인: 채택한 설정에서 KDC 신호를 뺌",
+            _sim_best(signals={k: v for k, v in with_loans.items() if k != KDC}),
+        ),
     ]
 
 
 SIMILAR_VARIANTS: dict[str, Variant] = {variant.name: variant for variant in _similar()}
 DEFAULT_SIMILAR = ("sim-vec", "sim-rrf", "sim-best")
 
-# --- 최근 기록 (design 결정 7) ---
+# --- 최근 기록 (`add-related-book-experiments` design 결정 7, `add-loan-signals` 결정 9) ---
 # 단계 1: mean / per-book. 2026-11-16: 벡터 평균. 책별 RRF는 k 60이면 크게 낮고 k 1이면 차이 없음
 BEST_HIST_METHOD = "mean"
 BEST_HIST_SERIES_CAP: int | None = None  # 단계 2
 BEST_HIST_MMR: float | None = None  # 단계 2
+BEST_HIST_SIGNALS: dict[str, float] = {VECTOR: 1.0}  # 단계 3: 벡터 평균과 합칠 기록 신호
 
 
 def _hist(**changes) -> HistorySettings:
     base = HistorySettings(
-        method=BEST_HIST_METHOD, similar=_sim_best(), weights=KINDS[BEST_SIM_KIND]
+        method=BEST_HIST_METHOD,
+        similar=_sim_best(),
+        weights=KINDS[BEST_SIM_KIND],
+        kdc_level=BEST_SIM_KDC_LEVEL,
     )
     return replace(base, **changes)
 
@@ -270,15 +361,41 @@ def _history() -> list[Variant]:
             "hist-mmr0.7", "2 MMR λ 0.7", _hist(series_cap=BEST_HIST_SERIES_CAP, mmr_lambda=0.7)
         ),
         Variant(
+            "hist-mean-rules",
+            "3 벡터 평균 + 기록 책들의 KDC·겹치는 저자 RRF",
+            _hist(method="mean", signals={VECTOR: 1.0, KDC: 1.0, AUTHOR: 1.0}),
+        ),
+        Variant(
+            "hist-mean-co",
+            "3 벡터 평균 + 기록 책들의 함께 대출 RRF",
+            _hist(method="mean", signals={VECTOR: 1.0, CO_LOAN: 1.0}),
+        ),
+        Variant(
+            "hist-mean-all",
+            "3 벡터 평균 + KDC·겹치는 저자·함께 대출 RRF",
+            _hist(method="mean", signals={VECTOR: 1.0, KDC: 1.0, AUTHOR: 1.0, CO_LOAN: 1.0}),
+        ),
+        Variant(
             "hist-best",
             "채택한 설정",
-            _hist(series_cap=BEST_HIST_SERIES_CAP, mmr_lambda=BEST_HIST_MMR),
+            _hist(
+                series_cap=BEST_HIST_SERIES_CAP,
+                mmr_lambda=BEST_HIST_MMR,
+                signals=dict(BEST_HIST_SIGNALS),
+            ),
         ),
     ]
 
 
 HISTORY_VARIANTS: dict[str, Variant] = {variant.name: variant for variant in _history()}
 DEFAULT_HISTORY = ("hist-mean", "hist-per-book", "hist-best")
+
+# 남겨 둔 분야 세트에서 돌리는 변형(`add-loan-signals` design 결정 11). 결과를 본 뒤 더하지 않는다
+HOLDOUT_VARIANTS: dict[str, tuple[str, ...]] = {
+    "topic": ("current", "hybrid-k60"),
+    "similar": ("sim-vec", "sim-rrf", "sim-best"),
+    "history": ("hist-mean", "hist-best"),
+}
 
 VARIANT_SETS: dict[str, dict[str, Variant]] = {
     "topic": VARIANTS,

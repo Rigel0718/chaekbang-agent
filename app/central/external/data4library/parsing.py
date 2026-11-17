@@ -1,4 +1,4 @@
-"""정보나루 도서 상세 응답을 Data4LibraryRecord로 바꾼다. 필드마다 관대하게 읽는다."""
+"""정보나루 응답 해석: 도서 상세는 Data4LibraryRecord로, 대출 신호는 ISBN 순위로 관대하게 읽는다."""
 
 import html
 import re
@@ -9,10 +9,20 @@ from typing import Any
 from app.central.external.data4library.definitions import (
     ADDITION_SYMBOL_LENGTH,
     BOOK_FIELDS,
+    CO_LOANS_KEY,
+    LIST_ISBN_KEY,
+    MANIA_KEY,
+    POPULAR_DOC_KEY,
+    POPULAR_DOCS_KEY,
+    POPULAR_LOAN_COUNT_KEY,
+    READER_KEY,
     SUBTITLE_MAX_LENGTH,
     TITLE_MAX_LENGTH,
+    USAGE_BOOK_KEY,
+    USAGE_LOAN_COUNT_KEY,
 )
 from app.central.external.values import clean, fit, parse_date
+from app.core.isbn import InvalidIsbnError, isbn10_to_13, normalize_isbn
 from app.core.text import kdc_key
 
 
@@ -93,3 +103,89 @@ def parse_book(book: dict[str, Any]) -> Data4LibraryRecord:
         volume=_text(book, "volume"),
         description=_description(book),
     )
+
+
+# --- 대출 신호 (`add-loan-signals`) ---
+
+
+@dataclass(frozen=True)
+class UsageAnalysis:
+    """도서별 이용 분석에서 읽은 ISBN 순위와 기준 책 대출 수. 다른 값은 읽지 않는다."""
+
+    co_loans: tuple[str, ...]
+    mania: tuple[str, ...]
+    reader: tuple[str, ...]
+    loan_count: int | None
+
+
+@dataclass(frozen=True)
+class PopularLoans:
+    """인기대출도서의 순위 순서 ISBN과 대출 수(같은 순서)."""
+
+    isbns: tuple[str, ...]
+    loan_counts: tuple[int | None, ...]
+
+
+def list_isbn(raw: Any) -> str | None:
+    """목록 원소의 ISBN을 하이픈 없는 13자리로. 10자리는 13자리로 바꾼다. 정리할 수 없으면 None."""
+    text = clean(raw) if isinstance(raw, str) else None
+    if text is None:
+        return None
+    for convert in (normalize_isbn, isbn10_to_13):
+        try:
+            return convert(text)
+        except InvalidIsbnError:
+            continue
+    return None
+
+
+def _count(raw: Any) -> int | None:
+    if isinstance(raw, int):
+        return raw
+    text = clean(raw) if isinstance(raw, str) else None
+    return int(text) if text and text.isdigit() else None
+
+
+def _entries(value: Any, item_key: str) -> list[dict[str, Any]]:
+    """목록 꼴을 관대하게 푼다: `[{key: {...}}]`, `{key: [...]}`, `{key: {...}}`, `[{...}]`."""
+    if isinstance(value, dict):
+        value = value.get(item_key, value)
+    items = value if isinstance(value, list) else [value]
+    entries = []
+    for item in items:
+        inner = item.get(item_key, item) if isinstance(item, dict) else None
+        if isinstance(inner, dict):
+            entries.append(inner)
+    return entries
+
+
+def _ranked(entries: list[dict[str, Any]], count_key: str) -> tuple[list[str], list[int | None]]:
+    isbns: list[str] = []
+    counts: list[int | None] = []
+    for entry in entries:
+        isbn = list_isbn(entry.get(LIST_ISBN_KEY))
+        if isbn is None or isbn in isbns:
+            continue  # 정리할 수 없는 ISBN은 버리고, 같은 ISBN은 처음 순위만 둔다
+        isbns.append(isbn)
+        counts.append(_count(entry.get(count_key)))
+    return isbns, counts
+
+
+def parse_usage(data: dict[str, Any]) -> UsageAnalysis:
+    def ranking(key: str) -> tuple[str, ...]:
+        return tuple(_ranked(_entries(data.get(key), USAGE_BOOK_KEY), USAGE_LOAN_COUNT_KEY)[0])
+
+    book = data.get(USAGE_BOOK_KEY)
+    return UsageAnalysis(
+        co_loans=ranking(CO_LOANS_KEY),
+        mania=ranking(MANIA_KEY),
+        reader=ranking(READER_KEY),
+        loan_count=_count(book.get(USAGE_LOAN_COUNT_KEY)) if isinstance(book, dict) else None,
+    )
+
+
+def parse_popular(data: dict[str, Any]) -> PopularLoans:
+    isbns, counts = _ranked(
+        _entries(data.get(POPULAR_DOCS_KEY), POPULAR_DOC_KEY), POPULAR_LOAN_COUNT_KEY
+    )
+    return PopularLoans(tuple(isbns), tuple(counts))

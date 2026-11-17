@@ -2,6 +2,7 @@
 
     uv run python -m evals.recommendation topic|similar|history [--variants a,b,…]
                                                 [--split tune|check|all] [--reference <변형>]
+                                                [--holdout] [--loan-signals <파일>]
 
 개발 DB(`DATABASE_URL`)의 실험 기관(`실험용 가상 작은도서관`, 이름으로 찾는다)에서 읽기만 한다.
 같은 평가 세트(`sets/topic.json`, `data/seeds.json`)와 라벨(`data/labels/<세트>.json`)로 변형을
@@ -15,6 +16,10 @@
   종료 코드가 1이다.
 - 결과는 `data/runs/<시각>/`에 쓴다(`summary.md`, `results.json`). 책 키가 실험 장서를 가리켜
   저장소에서 뺀 폴더다. 같은 데이터에서 같은 명령은 시각과 걸린 시간 줄만 빼고 요약이 같다.
+- 함께 대출·마니아·다독자를 쓰는 변형만 정보나루 대출 신호 파일(`evals/collection/loans.py`가 받은
+  것)을 읽는다. 파일이 없으면 받기 명령을 알리고 종료 코드 1이다.
+- `--holdout`은 남겨 둔 분야 세트(`sets/topic-holdout.json`, `data/seeds-holdout.json`, 라벨
+  `data/labels/holdout-<세트>.json`)를 정해 둔 변형으로만 돈다(`variants.HOLDOUT_VARIANTS`).
 - 장서는 YES24 스테디셀러이고 기관은 가상이다. 수치를 실제 서비스 성능으로 쓰지 않는다.
 
 종료 코드: 0 완료, 1 전제 조건·인자 문제나 규칙 위반, 2 임베딩 서버 장애.
@@ -38,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.central.embedding import Embedder, EmbeddingError, EmbeddingFailure
+from app.central.external.data4library.definitions import AGE_CHILDREN
 from app.central.external.tei import TeiEmbedder
 from app.central.models import Book, OfficialBookEmbedding
 from app.core.config import get_settings
@@ -48,21 +54,33 @@ from app.library.models.library import Library
 from app.library.recommendation.authors import writer_keys_sql
 from app.library.recommendation.related import (
     AUTHOR,
+    CO_LOAN,
     KDC,
+    MANIA,
+    POPULAR_ALL,
+    READER,
     SERIES,
     VECTOR,
+    SimilarSettings,
+    held_ranking,
+    history_co_loan_ranking,
+    kdc_ranking,
+    national_popular_ranking,
     popular_ranking,
     similar_rankings,
 )
 from app.library.recommendation.search import recommendable_ids
 from app.seed.experiment import LIBRARY_NAME, CollectionMissingError
 from evals.collection.fetch import DATA_FILE as COLLECTION_FILE
+from evals.collection.loans import LOANS_FILE
 from evals.recommendation.cache import CachedEmbedder
 from evals.recommendation.keys import DATA_DIR, HOLDOUT_FIELDS, library_keys, load_fields
 from evals.recommendation.labels import Labels, labels_file
 from evals.recommendation.metrics import QueryScore, compare, mean, score_query
 from evals.recommendation.sample import SAMPLE_SIZES, sample_line
 from evals.recommendation.sets import (
+    HOLDOUT_SEEDS_FILE,
+    HOLDOUT_TOPIC_FILE,
     SEEDS_FILE,
     TOPIC_FILE,
     History,
@@ -73,14 +91,21 @@ from evals.recommendation.sets import (
     load_seeds,
     load_topic,
 )
+from evals.recommendation.signals import (
+    FETCH_COMMAND,
+    FileLoanSignals,
+    LoanSignalsMissingError,
+)
 from evals.recommendation.variants import (
     DEFAULT_SETS,
     DEFAULT_VARIANTS,
     HISTORY_VARIANTS,
+    HOLDOUT_VARIANTS,
     SIMILAR_VARIANTS,
     VARIANT_SETS,
     VARIANTS,
     Variant,
+    needs_loans,
     run_variant,
 )
 
@@ -252,7 +277,7 @@ class SetSpec:
     sample_size: int = 0  # 고정 표본 검수의 표본 수. 0이면 요약에 적지 않는다
     # (session, library_id, 책 키 → id, 어린이 도서 id) → 항목. None이면 넘겨받은 항목 그대로다
     resolve: Callable[..., Awaitable[Sequence[Any]]] | None = None
-    # (session, embedder, library_id, 항목) → 요약에 넣을 신호 건수 줄
+    # (session, embedder, library_id, 항목, loan_signals) → 요약에 넣을 신호 건수 줄
     signal_lines: Callable[..., Awaitable[list[str]]] | None = None
 
 
@@ -296,19 +321,34 @@ def similar_spec(seeds: Sequence[Seed]) -> SetSpec:
             items.append(BaseItem(seed.id, seed.split, (base,), base in children, group))
         return items
 
-    async def signal_lines(session, embedder, library_id, items) -> list[str]:
-        sizes: dict[str, list[int]] = {name: [] for name in (SERIES, AUTHOR, KDC, VECTOR)}
+    async def signal_lines(session, embedder, library_id, items, loan_signals=None) -> list[str]:
+        names = (SERIES, AUTHOR, KDC, VECTOR, *((CO_LOAN, MANIA, READER) if loan_signals else ()))
+        sizes: dict[str, list[int]] = {name: [] for name in names}
+        levels: dict[str, list[int]] = {"three": [], "nested": []}
+        settings = SimilarSettings(signals=dict.fromkeys(names, 1.0))
         for item in items:
+            within = children_book_ids(library_id) if item.children else None
             rankings = await similar_rankings(
                 session,
                 embedder.name,
                 library_id=library_id,
                 library_book_id=item.base_ids[0],
-                within=children_book_ids(library_id) if item.children else None,
+                within=within,
+                settings=settings,
+                loan_signals=loan_signals,
             )
             for name, ranking in rankings.items():
                 sizes[name].append(len(ranking))
-        return [_signal_line(SIGNAL_NAMES[name], counts) for name, counts in sizes.items()]
+            for level, counts in levels.items():
+                found = await kdc_ranking(
+                    session, library_id, item.base_ids[0], within=within, level=level
+                )
+                counts.append(len(found))
+        lines = [_signal_line(SIGNAL_NAMES[name], counts) for name, counts in sizes.items()]
+        lines += [_signal_line(SIGNAL_NAMES[f"kdc-{lv}"], counts) for lv, counts in levels.items()]
+        if loan_signals is not None:
+            lines += await _loan_lines(session, library_id, items, loan_signals)
+        return lines
 
     groups = (
         ("어린이", lambda i: i.children),
@@ -338,9 +378,11 @@ def history_spec(histories: Sequence[History], fields: Mapping[str, str]) -> Set
             items.append(BaseItem(history.id, history.split, bases, all_children, group))
         return items
 
-    async def signal_lines(session, embedder, library_id, items) -> list[str]:
+    async def signal_lines(session, embedder, library_id, items, loan_signals=None) -> list[str]:
         sizes: dict[str, list[int]] = {name: [] for name in (SERIES, AUTHOR, KDC, VECTOR)}
         popular = []
+        co_loans: list[int] = []
+        national: list[int] = []
         for item in items:
             within = children_book_ids(library_id) if item.children else None
             merged: dict[str, set[int]] = {name: set() for name in sizes}
@@ -358,8 +400,23 @@ def history_spec(histories: Sequence[History], fields: Mapping[str, str]) -> Set
             for name, found in merged.items():
                 sizes[name].append(len(found))
             popular.append(len(await popular_ranking(session, library_id, within=within)))
+            if loan_signals is not None:
+                found = await history_co_loan_ranking(
+                    session, library_id, item.base_ids, loan_signals, within=within
+                )
+                co_loans.append(len(found))
+                group = AGE_CHILDREN.key if item.children else POPULAR_ALL
+                found = await national_popular_ranking(
+                    session, library_id, loan_signals, age_group=group, within=within
+                )
+                national.append(len(found))
         lines = [_signal_line(SIGNAL_NAMES[name], counts) for name, counts in sizes.items()]
-        return [*lines, _signal_line("우리 도서관 인기", popular)]
+        lines.append(_signal_line("우리 도서관 인기", popular))
+        if loan_signals is not None:
+            lines.append(_signal_line(SIGNAL_NAMES[CO_LOAN], co_loans))
+            lines.append(_signal_line("정보나루 인기(채우기 깊이 30)", national))
+            lines += await _loan_lines(session, library_id, items, loan_signals)
+        return lines
 
     groups = (
         ("같은 분야", lambda i: i.group == "same"),
@@ -381,8 +438,66 @@ SIGNAL_NAMES = {
     SERIES: "같은 시리즈",
     AUTHOR: "같은 저자",
     KDC: "같은 KDC 세목",
+    "kdc-three": "같은 KDC 세 자리",
+    "kdc-nested": "같은 KDC 계층",
     VECTOR: "벡터 이웃",
+    CO_LOAN: "함께 대출",
+    MANIA: "마니아 추천(진단)",
+    READER: "다독자 추천(진단)",
 }
+
+
+async def _isbns_of(session: AsyncSession, ids: Sequence[int]) -> dict[int, str]:
+    """기관 도서 id → ISBN(공식 서지 먼저). ISBN 없는 책은 빠진다."""
+    rows = await session.execute(
+        select(LibraryBook.id, func.coalesce(Book.isbn, LibraryBook.isbn))
+        .outerjoin(Book, Book.id == LibraryBook.book_id)
+        .where(LibraryBook.id.in_(list(ids)))
+    )
+    return {book_id: isbn for book_id, isbn in rows if isbn}
+
+
+async def _loan_lines(
+    session: AsyncSession, library_id: int, items: Sequence[Any], loan_signals: FileLoanSignals
+) -> list[str]:
+    """대출 신호 파일의 순위 길이와, 그중 실험 기관이 가진 책·추천 가능한 책 수."""
+    bases = sorted({base for item in items for base in item.base_ids})
+    isbns = await _isbns_of(session, bases)
+    lines = [f"- 대출 신호 파일: {loan_signals.fingerprint()}"]
+    for kind in (CO_LOAN, MANIA, READER):
+        length = held = usable = 0
+        for base in bases:
+            ranking = await loan_signals.co_loans(isbns[base], kind) if base in isbns else []
+            length += len(ranking)
+            held += len(await _held(session, library_id, ranking))
+            usable += len(await held_ranking(session, library_id, ranking))
+        lines.append(
+            f"- {SIGNAL_NAMES[kind]} 순위: 길이 합 {length}, 실험 기관이 가진 책 {held}권,"
+            f" 추천 가능 {usable}권 (기준 책 {len(bases)}권, ISBN 있음 {len(isbns)}권)"
+        )
+    for key, ranking in sorted(loan_signals.popular_conditions().items()):
+        held = len(await _held(session, library_id, ranking))
+        usable = len(await held_ranking(session, library_id, ranking, depth=len(ranking)))
+        lines.append(
+            f"- 정보나루 인기 `{key}`: 길이 {len(ranking)}, 가진 책 {held}권, 추천 가능 {usable}권"
+        )
+    return lines
+
+
+async def _held(session: AsyncSession, library_id: int, isbns: Sequence[str]) -> set[str]:
+    """그 기관이 가진(추천 가능 여부와 상관없이) ISBN."""
+    if not isbns:
+        return set()
+    rows = await session.scalars(
+        select(func.coalesce(Book.isbn, LibraryBook.isbn))
+        .select_from(LibraryBook)
+        .outerjoin(Book, Book.id == LibraryBook.book_id)
+        .where(
+            LibraryBook.library_id == library_id,
+            func.coalesce(Book.isbn, LibraryBook.isbn).in_(list(isbns)),
+        )
+    )
+    return set(rows)
 
 
 def _signal_line(label: str, sizes: Sequence[int]) -> str:
@@ -426,8 +541,12 @@ async def run_set(
     library_name: str = LIBRARY_NAME,
     fingerprint: Sequence[str] = (),
     fields: Mapping[str, str] | None = None,
+    loan_signals: FileLoanSignals | None = None,
 ) -> int:
-    """변형들을 한 세트에 돌려 요약과 항목별 결과를 쓰고 종료 코드를 돌려준다."""
+    """변형들을 한 세트에 돌려 요약과 항목별 결과를 쓰고 종료 코드를 돌려준다.
+
+    대출 신호(loan_signals)는 그것을 쓰는 변형에만 넘긴다.
+    """
     variants = spec.variants
     unknown = [name for name in variant_names if name not in variants]
     if unknown:
@@ -469,7 +588,11 @@ async def run_set(
         for query in queries:
             within = children_book_ids(library_id) if query.children else None
             started = time.perf_counter()
-            ranked = await run_variant(session, embedder, variants[name], library_id, query, within)
+            uses = loan_signals if needs_loans(variants[name]) else None
+            group = AGE_CHILDREN.key if query.children else POPULAR_ALL
+            ranked = await run_variant(
+                session, embedder, variants[name], library_id, query, within, uses, group
+            )
             elapsed[name].append((time.perf_counter() - started) * 1000)
             ids = [item.library_book_id for item in ranked]
             violations["추천할 수 없는 책"] += sum(1 for i in ids if i not in recommendable)
@@ -519,11 +642,16 @@ async def run_set(
     if fields is not None:
         held_out = sum(1 for key in labels.book_keys() if fields.get(key) in HOLDOUT_FIELDS)
         lines.append(f"- 남겨 둔 분야의 책에 달린 라벨 {held_out}건(후보로만 남는다)")
+    if loan_signals is not None:
+        lines.append(
+            f"- 대출 신호: {loan_signals.fingerprint()}."
+            f" 받지 않은 ISBN {loan_signals.pending_isbns()}건(그 책의 신호는 비어 있다)"
+        )
     lines += [f"- 기준 변형: `{reference}`", "", "## 변형", ""]
     lines += [_settings_line(variants[name]) for name in variant_names]
     if spec.signal_lines is not None:
         lines += ["", "## 신호 건수", ""]
-        lines += await spec.signal_lines(session, embedder, library_id, queries)
+        lines += await spec.signal_lines(session, embedder, library_id, queries, loan_signals)
     lines += ["", "## 규칙 위반", ""]
     lines += [f"- {kind}: {count}건" for kind, count in violations.items()]
     for name in splits:
@@ -562,11 +690,13 @@ class NamedModel:
 
 async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
-    path = labels_file(args.set)
+    holdout = bool(getattr(args, "holdout", False))
+    path = labels_file(args.set, holdout)
     if not path.exists():
+        flag = " --holdout" if holdout else ""
         print(
             f"라벨 파일이 없습니다: {path}\n실행 전 라벨을 먼저 답니다: "
-            f"`uv run python -m evals.recommendation.draft dump {args.set}`",
+            f"`uv run python -m evals.recommendation.draft dump {args.set}{flag}`",
             file=sys.stderr,
         )
         return EXIT_PRECONDITION
@@ -574,10 +704,13 @@ async def run(args: argparse.Namespace) -> int:
         fields = load_fields(COLLECTION_FILE)
     except CollectionMissingError:
         fields = None
-    set_file = TOPIC_FILE if args.set == "topic" else SEEDS_FILE
+    if args.set == "topic":
+        set_file = HOLDOUT_TOPIC_FILE if holdout else TOPIC_FILE
+    else:
+        set_file = HOLDOUT_SEEDS_FILE if holdout else SEEDS_FILE
     try:
         if args.set == "topic":
-            spec, items = TOPIC_SPEC, load_topic(TOPIC_FILE)
+            spec, items = TOPIC_SPEC, load_topic(set_file, holdout)
         elif fields is None:
             print(
                 "실험 장서 파일이 없습니다(기준 책의 분야를 읽는다). "
@@ -586,18 +719,37 @@ async def run(args: argparse.Namespace) -> int:
             )
             return EXIT_PRECONDITION
         else:
-            seeds, histories = load_seeds(fields)
+            seeds, histories = load_seeds(fields, set_file, holdout)
             spec = similar_spec(seeds) if args.set == "similar" else history_spec(histories, fields)
             items = ()
     except (OSError, SetError) as exc:
         print(f"평가 세트를 읽을 수 없습니다: {exc}", file=sys.stderr)
         return EXIT_PRECONDITION
+    names = [name for name in args.variants.split(",") if name] or list(
+        HOLDOUT_VARIANTS[args.set] if holdout else DEFAULT_SETS[args.set]
+    )
+    if holdout:
+        allowed = HOLDOUT_VARIANTS[args.set]
+        stray = [name for name in names if name not in allowed]
+        if stray:
+            print(
+                f"남겨 둔 분야 세트에서 정해 두지 않은 변형: {', '.join(stray)}\n"
+                f"쓸 수 있는 변형: {', '.join(allowed)}"
+            )
+            return EXIT_PRECONDITION
+    loan_signals = None
+    table = spec.variants
+    if any(needs_loans(table[name]) for name in names if name in table):
+        try:
+            loan_signals = FileLoanSignals.load(args.loan_signals)
+        except LoanSignalsMissingError as exc:
+            print(f"{exc}\n대출 신호를 먼저 받습니다: `{FETCH_COMMAND}`", file=sys.stderr)
+            return EXIT_PRECONDITION
     fingerprint = [
-        f"- 평가 세트 해시: {file_hash(set_file)}",
+        f"- 평가 세트 해시: {file_hash(set_file)}" + (" (남겨 둔 분야 세트)" if holdout else ""),
         f"- 라벨 해시: {file_hash(path)}",
         f"- 커밋: {git_state()}",
     ]
-    names = [name for name in args.variants.split(",") if name] or list(DEFAULT_SETS[args.set])
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     try:
         async with (
@@ -623,6 +775,7 @@ async def run(args: argparse.Namespace) -> int:
                 reference=args.reference,
                 fingerprint=fingerprint,
                 fields=fields,
+                loan_signals=loan_signals,
             )
     except EmbeddingError as exc:
         print(
@@ -646,6 +799,10 @@ def main() -> int:
     parser.add_argument("--variants", default="", help=f"변형 이름(쉼표로). {names}")
     parser.add_argument("--split", choices=["tune", "check", "all"], default="tune")
     parser.add_argument("--reference", help="짝 비교의 기준 변형(없으면 첫 변형)")
+    parser.add_argument("--holdout", action="store_true", help="남겨 둔 분야 세트(정해 둔 변형만)")
+    parser.add_argument(
+        "--loan-signals", type=Path, default=LOANS_FILE, help="정보나루 대출 신호 파일"
+    )
     return asyncio.run(run(parser.parse_args()))
 
 

@@ -91,6 +91,7 @@ async def load_topic_items(
     database_url: str,
     length: int | None,
     extra: Mapping[str, Sequence[str]] | None = None,
+    holdout: bool = False,
 ) -> list[tuple[TopicQuery, list[Card]]]:
     """주제 질의마다 실행 전 후보의 카드. 실험 기관이 없으면 빈 목록.
 
@@ -108,7 +109,7 @@ async def load_topic_items(
             key_ids = await library_keys(session, library_id)
             id_keys = {book_id: key for key, book_id in key_ids.items()}
             items = []
-            for query in load_topic():
+            for query in load_topic(holdout=holdout):
                 ids = await topic_candidates(session, library_id, query, fields, key_ids)
                 more = sorted(
                     {key_ids[k] for k in (extra or {}).get(query.id, ()) if k in key_ids} - set(ids)
@@ -125,6 +126,7 @@ async def load_related_items(
     set_name: str,
     length: int | None,
     extra: Mapping[str, Sequence[str]] | None = None,
+    holdout: bool = False,
 ) -> list[tuple[RelatedItem, list[Card]]]:
     """비슷한 책(`similar`)이나 최근 기록(`history`) 항목마다 실행 전 후보의 카드.
 
@@ -132,7 +134,7 @@ async def load_related_items(
     어린이 도서만). extra가 있으면 후보 밖의 그 책들(보충 라벨)도 뒤에 붙인다.
     """
     fields = load_fields(COLLECTION_FILE)
-    seeds, histories = load_seeds(fields)
+    seeds, histories = load_seeds(fields, holdout=holdout)
     rows = (
         [(seed.id, seed.split, [seed.book]) for seed in seeds]
         if set_name == "similar"
@@ -178,11 +180,12 @@ async def load_items(
     set_name: str,
     length: int | None,
     extra: Mapping[str, Sequence[str]] | None = None,
+    holdout: bool = False,
 ) -> list:
-    """세트의 (항목, 후보 카드) 목록. 실험 기관이 없으면 빈 목록."""
+    """세트의 (항목, 후보 카드) 목록. 실험 기관이 없으면 빈 목록. holdout은 남겨 둔 분야 세트."""
     if set_name == "topic":
-        return await load_topic_items(database_url, length, extra)
-    return await load_related_items(database_url, set_name, length, extra)
+        return await load_topic_items(database_url, length, extra, holdout)
+    return await load_related_items(database_url, set_name, length, extra, holdout)
 
 
 def _line(card: Card, length: int | None) -> str:
@@ -215,7 +218,9 @@ def _dump_related(
     print(f"{path} (책 {len(books)}권)")
 
 
-def _dump(items: Sequence[tuple[TopicQuery, Sequence[Card]]], length: int) -> None:
+def _dump(
+    items: Sequence[tuple[TopicQuery, Sequence[Card]]], length: int, prefix: str = ""
+) -> None:
     """후보를 같은 후보 묶음끼리 한 파일로 쓴다(어린이 질의는 같은 책을 되풀이해 본다)."""
     DRAFT_DIR.mkdir(parents=True, exist_ok=True)
     groups: dict[tuple[str, ...], list[TopicQuery]] = {}
@@ -233,7 +238,7 @@ def _dump(items: Sequence[tuple[TopicQuery, Sequence[Card]]], length: int) -> No
                 f"{card.key} | {card.title} | {card.author} | {card.category} | "
                 f"{card.description[:length]}"
             )
-        path = DRAFT_DIR / f"{'-'.join(group)}.txt"
+        path = DRAFT_DIR / f"{prefix}{'-'.join(group)}.txt"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"{path} ({len(queries)}개 질의, {len(cards_of[group])}권)")
 
@@ -259,7 +264,8 @@ def _pool(
                 f"{card.description[: args.length]}"
                 for card in pool
             ]
-        path = DRAFT_DIR / f"{args.set}-pool.txt"
+        prefix = "holdout-" if args.holdout else ""
+        path = DRAFT_DIR / f"{prefix}{args.set}-pool.txt"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"{path} (라벨 없는 책 {sum(len(keys) for keys in wanted.values())}건)")
         return 0
@@ -289,26 +295,30 @@ def main() -> int:
     for command in (dump, apply):
         command.add_argument("--pool", type=Path, help="보충: 실행 폴더(상위 10권 중 라벨 없는 책)")
         command.add_argument("--variants", default="", help="보충에 쓸 변형 이름(쉼표로)")
+        command.add_argument("--holdout", action="store_true", help="남겨 둔 분야 세트")
     args = parser.parse_args()
 
-    labels = Labels(labels_file(args.set))
+    labels = Labels(labels_file(args.set, args.holdout))
     wanted: dict[str, list[str]] = {}
     if args.pool is not None:
         run = args.pool if args.pool.exists() else DATA_DIR / "runs" / args.pool
         results = json.loads((run / "results.json").read_text(encoding="utf-8"))
         names = [name for name in args.variants.split(",") if name] or list(results)
         wanted = pool_keys(results, names, labels)
-    items = asyncio.run(load_items(get_settings().database_url, args.set, None, wanted))
+    items = asyncio.run(
+        load_items(get_settings().database_url, args.set, None, wanted, args.holdout)
+    )
     if not items:
         print("실험 기관이 없습니다. `uv run python scripts/seed_experiment.py`")
         return 1
     if args.pool is not None:
         return _pool(args, items, wanted, labels)
     if args.command == "dump":
+        prefix = "holdout-" if args.holdout else ""
         if args.set == "topic":
-            _dump(items, args.length)
+            _dump(items, args.length, prefix)
         else:
-            _dump_related(args.set, items, args.length)
+            _dump_related(f"{prefix}{args.set}", items, args.length)
         return 0
     picks = json.loads(args.file.read_text(encoding="utf-8"))
     unknown = sorted(set(picks) - {query.id for query, _ in items})

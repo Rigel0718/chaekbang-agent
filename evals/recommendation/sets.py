@@ -4,6 +4,10 @@
 - 기준 책과 최근 기록(`data/seeds.json`): 책 키가 실험 장서를 가리켜 저장소 밖에 둔다.
 
 남겨 둔 분야(holdout)는 질의의 관련 분야, 기준 책, 최근 기록에 쓸 수 없다.
+
+남겨 둔 분야 세트(`sets/topic-holdout.json`, `data/seeds-holdout.json`, `add-loan-signals`)는
+반대로 남겨 둔 분야를 반드시 담는다. 질의는 관련 분야에 남겨 둔 분야가 하나 이상, 기준 책은 남겨
+둔 분야의 책, 최근 기록은 남겨 둔 분야의 책이 한 권 이상이다. 모든 항목이 확인 세트다.
 """
 
 import hashlib
@@ -18,6 +22,9 @@ from evals.recommendation.keys import DATA_DIR, FIELD_KEYS, HOLDOUT_FIELDS
 
 TOPIC_FILE = Path(__file__).parent / "sets" / "topic.json"
 SEEDS_FILE = DATA_DIR / "seeds.json"
+HOLDOUT_TOPIC_FILE = Path(__file__).parent / "sets" / "topic-holdout.json"
+HOLDOUT_SEEDS_FILE = DATA_DIR / "seeds-holdout.json"
+CHECK = "check"
 STYLES = ("topic", "mood")  # 주제어 요청 / 상황·기분 요청
 SPLITS = ("tune", "check")  # 조정 / 확인
 _BOOK_VALUE = re.compile(r"97[89]\d{10}|EX\d{5}|isbn:|acc:")
@@ -71,13 +78,15 @@ def _unique(item_id: str, seen: set[str]) -> None:
     seen.add(item_id)
 
 
-def _split(row: Mapping[str, Any], item_id: str) -> str:
+def _split(row: Mapping[str, Any], item_id: str, holdout: bool = False) -> str:
     if row["split"] not in SPLITS:
         raise SetError(item_id, f"정의되지 않은 구분 `{row['split']}` ({', '.join(SPLITS)})")
+    if holdout and row["split"] != CHECK:
+        raise SetError(item_id, "남겨 둔 분야 세트는 모두 확인 세트(`check`)다")
     return row["split"]
 
 
-def parse_topic(document: Mapping[str, Any]) -> list[TopicQuery]:
+def parse_topic(document: Mapping[str, Any], holdout: bool = False) -> list[TopicQuery]:
     queries, seen = [], set()
     for row in document.get("queries", []):
         item_id = str(row.get("id") or "(id 없음)")
@@ -90,8 +99,10 @@ def parse_topic(document: Mapping[str, Any]) -> list[TopicQuery]:
         for field in row["fields"]:
             if field not in FIELD_KEYS:
                 raise SetError(item_id, f"없는 분야 `{field}`")
-            if field in HOLDOUT_FIELDS:
+            if field in HOLDOUT_FIELDS and not holdout:
                 raise SetError(item_id, f"남겨 둔 분야 `{field}`는 질의에 쓰지 않는다")
+        if holdout and not set(row["fields"]) & HOLDOUT_FIELDS:
+            raise SetError(item_id, "남겨 둔 분야 세트의 질의에 남겨 둔 분야가 없다")
         for value in (row["text"], *row["keywords"]):
             if _BOOK_VALUE.search(str(value)):
                 raise SetError(item_id, "ISBN이나 등록번호 모양의 값이 있다(저장소에 넣지 않는다)")
@@ -103,46 +114,53 @@ def parse_topic(document: Mapping[str, Any]) -> list[TopicQuery]:
                 children=row["children"],
                 style=row["style"],
                 fields=tuple(row["fields"]),
-                split=_split(row, item_id),
+                split=_split(row, item_id, holdout),
             )
         )
     return queries
 
 
-def load_topic(path: Path = TOPIC_FILE) -> list[TopicQuery]:
-    return parse_topic(json.loads(path.read_text(encoding="utf-8")))
+def load_topic(path: Path | None = None, holdout: bool = False) -> list[TopicQuery]:
+    path = path or (HOLDOUT_TOPIC_FILE if holdout else TOPIC_FILE)
+    return parse_topic(json.loads(path.read_text(encoding="utf-8")), holdout)
 
 
-def _check_book(item_id: str, key: str, fields: Mapping[str, str]) -> None:
+def _check_book(item_id: str, key: str, fields: Mapping[str, str], holdout: bool = False) -> str:
     field = fields.get(key)
     if field is None:
         raise SetError(item_id, f"실험 장서에 없는 책 `{key}`")
-    if field in HOLDOUT_FIELDS:
+    if field in HOLDOUT_FIELDS and not holdout:
         raise SetError(item_id, f"남겨 둔 분야 `{field}`의 책 `{key}`는 쓰지 않는다")
+    return field
 
 
 def parse_seeds(
-    document: Mapping[str, Any], fields: Mapping[str, str]
+    document: Mapping[str, Any], fields: Mapping[str, str], holdout: bool = False
 ) -> tuple[list[Seed], list[History]]:
-    """fields는 책 키별 분야(`keys.load_fields`)다. 남겨 둔 분야의 책을 거부한다."""
+    """fields는 책 키별 분야(`keys.load_fields`)다. 기존 세트는 남겨 둔 분야의 책을 거부하고,
+    남겨 둔 분야 세트(holdout)는 남겨 둔 분야의 책을 반드시 담는다."""
     seeds, histories, seen = [], [], set()
     for row in document.get("similar", []):
         item_id = str(row.get("id") or "(id 없음)")
         _need(row, item_id, "id", "book", "split")
         _unique(item_id, seen)
-        _check_book(item_id, row["book"], fields)
-        seeds.append(Seed(item_id, row["book"], _split(row, item_id)))
+        field = _check_book(item_id, row["book"], fields, holdout)
+        if holdout and field not in HOLDOUT_FIELDS:
+            raise SetError(item_id, f"남겨 둔 분야 세트의 기준 책이 `{field}` 분야다")
+        seeds.append(Seed(item_id, row["book"], _split(row, item_id, holdout)))
     for row in document.get("history", []):
         item_id = str(row.get("id") or "(id 없음)")
         _need(row, item_id, "id", "books", "split")
         _unique(item_id, seen)
-        for key in row["books"]:
-            _check_book(item_id, key, fields)
-        histories.append(History(item_id, tuple(row["books"]), _split(row, item_id)))
+        found = [_check_book(item_id, key, fields, holdout) for key in row["books"]]
+        if holdout and not set(found) & HOLDOUT_FIELDS:
+            raise SetError(item_id, "남겨 둔 분야 세트의 기록에 남겨 둔 분야의 책이 없다")
+        histories.append(History(item_id, tuple(row["books"]), _split(row, item_id, holdout)))
     return seeds, histories
 
 
 def load_seeds(
-    fields: Mapping[str, str], path: Path = SEEDS_FILE
+    fields: Mapping[str, str], path: Path | None = None, holdout: bool = False
 ) -> tuple[list[Seed], list[History]]:
-    return parse_seeds(json.loads(path.read_text(encoding="utf-8")), fields)
+    path = path or (HOLDOUT_SEEDS_FILE if holdout else SEEDS_FILE)
+    return parse_seeds(json.loads(path.read_text(encoding="utf-8")), fields, holdout)

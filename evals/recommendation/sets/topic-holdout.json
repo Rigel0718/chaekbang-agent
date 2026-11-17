@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "queries": [
+  {"id": "ht01", "text": "성경을 쉽게 읽고 싶은데 도움이 될 책 있어요?", "keywords": ["성경"], "children": false, "style": "topic", "fields": ["religion"], "split": "check"},
+  {"id": "ht02", "text": "마음이 복잡할 때 불교 이야기로 위로받고 싶어요", "keywords": ["불교", "마음"], "children": false, "style": "mood", "fields": ["religion", "humanities"], "split": "check"},
+  {"id": "ht03", "text": "그림 그리기를 처음 배워 보고 싶어요", "keywords": ["드로잉", "그림"], "children": false, "style": "topic", "fields": ["art"], "split": "check"},
+  {"id": "ht04", "text": "미술관 가기 전에 가볍게 읽을 미술 이야기", "keywords": ["미술"], "children": false, "style": "mood", "fields": ["art"], "split": "check"},
+  {"id": "ht05", "text": "허리랑 목이 아픈데 집에서 관리하는 법을 알고 싶어요", "keywords": ["허리", "목"], "children": false, "style": "topic", "fields": ["health"], "split": "check"},
+  {"id": "ht06", "text": "건강하게 먹고 싶은데 식단 바꾸는 데 도움 될 책", "keywords": ["식단", "다이어트"], "children": false, "style": "mood", "fields": ["health", "home"], "split": "check"},
+  {"id": "ht07", "text": "일본 여행 준비하는데 볼 만한 책", "keywords": ["일본", "도쿄", "오사카"], "children": false, "style": "topic", "fields": ["travel", "health"], "split": "check"},
+  {"id": "ht08", "text": "어디론가 떠나고 싶을 때 읽을 여행 에세이", "keywords": ["여행"], "children": false, "style": "mood", "fields": ["travel", "essay"], "split": "check"}
+ ]
+}
