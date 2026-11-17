@@ -560,8 +560,8 @@
 | --- | --- | --- |
 | `add-loan-signals` (2026-11-17 archive) | 끝남. 정보나루가 막혀 미룬 D.1(남은 11회, 인기 기간)·D.2(`s10` 다시 재기)는 `add-loan-signal-store`로, D.3(남겨 둔 분야)·D.4(문서)는 `add-related-books`에서 했다 | design(add-loan-signals) 결과, design(add-related-books) 결정 2 |
 | `add-related-books` (구현 끝) | 비슷한 책 API·관련 책 tool·대화 세션의 책·어린이 범위, 남겨 둔 분야 실행, 최소 유사도 진단(문턱 없음). 시리즈 상한 1은 켜지 않음 | design(add-related-books) |
-| `add-topic-search-tool` (구현 끝) | 주제로 찾기를 AI 사서 검색 tool에 이음, 질의 인코더(시간 제한·쉬기·모델 확인), 꺼졌을 때 키워드 순위로, 벡터 질의는 LLM 낱말(확인 실험), 키워드 근거 없음 표시(문턱 없음), 평가 표본 벡터, LLM 평가 전후 비교 | design(add-topic-search-tool) |
-| `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 모델 비교. 어린이 지표 둘(책 분류 / 요청 판단). 실제 LLM이 고른 낱말로 `vec-kw` 다시 보기. 사람만 단 라벨 표본으로 Claude 라벨과의 일치도. 섞인 기록의 어린이 판단 | design(add-recommendation-experiments) 결과·결정 9, `add-librarian-agent` tasks.md 끝, design(add-related-book-experiments) Open Questions |
+| `add-topic-search-tool` (2026-11-17 archive) | 주제로 찾기를 AI 사서 검색 tool에 이음, 질의 인코더(시간 제한·쉬기·모델 확인), 꺼졌을 때 키워드 순위로, 벡터 질의는 LLM 낱말(확인 실험), 키워드 근거 없음 표시(문턱 없음), 평가 표본 벡터, LLM 평가 전후 비교 | design(add-topic-search-tool) |
+| `add-recommendation-evals` (다음) | 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 모델 비교. 어린이 지표 둘(책 분류 / 요청 판단). 실제 LLM이 고른 낱말로 벡터 질의 입력(지금 제품은 낱말) 다시 보기. 주제 요청의 빈 결과 규칙. `related-anything` 검사 판정. 사람만 단 라벨 표본으로 Claude 라벨과의 일치도. 섞인 기록의 어린이 판단 | design(add-recommendation-experiments) 결과·결정 9, `add-librarian-agent` tasks.md 끝, design(add-related-book-experiments) Open Questions |
 | `add-loan-signal-store` (정보나루 약관 확인 뒤) | 함께 대출·정보나루 인기의 운영자 층 테이블과 갱신 실행, 제품의 대출 신호 공급, 미룬 일 D.1·D.2(정보나루 11회: 이용 분석 3, 인기 8조건) | design(add-loan-signals) 결정 5, design(add-related-books) 결정 2 |
 
 ### 9.2 Open Questions 목록
