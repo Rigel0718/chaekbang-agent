@@ -11,7 +11,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 
 포지션은 '기존 시스템 위에 얹는 AI 사서'다. 장서는 기관이 이미 쓰는 대출 프로그램의 엑셀·CSV 내보내기를 가져오는 것이 기본이고, 자체 대출은 대출 프로그램이 없는 기관과 데모용이다.
 
-자세한 설계는 `docs/design.md`를 참고한다. 설계와 다르게 구현해야 할 이유가 생기면 먼저 물어본다.
+자세한 설계는 `docs/design.md`(전체 그림)와 그 문서가 가리키는 주제별 문서를 참고한다. 설계와 다르게 구현해야 할 이유가 생기면 먼저 물어본다.
 
 ## 현재 단계
 
@@ -27,7 +27,7 @@ change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾�
 
 | 위치 | 역할 |
 | --- | --- |
-| `docs/design.md` | 왜 만드는지, 전체 그림. 배경 참고용이며 요구사항의 기준은 아니다 |
+| `docs/design.md` | 왜 만드는지, 전체 그림. 배경 참고용이며 요구사항의 기준은 아니다. 주제별 문서(`recommendation`, `data-sources`, `roadmap`, `backlog`, `glossary`)는 같은 `docs/`에 있다 |
 | `app/*/README.md` | 패키지별 역할과 규칙. 패키지 파일을 다루면 그 패키지의 `CLAUDE.md`(`@README.md` 한 줄)가 불러온다. 새 패키지에 README를 두면 같은 `CLAUDE.md`도 둔다 |
 | `api-guides/` | 외부 API 문서. YES24(`yes24-open-api-guide/`), 도서관 정보나루(`data4library.md` 원본, `data4library_project.md` 이 프로젝트에 쓰는 부분, `data4library_ideas.md` 확장 아이디어), 카카오 책 검색(`kakao_search_api_guide.md`). 문서와 실제 응답이 다른 곳이 있어 새 필드는 실제 응답으로 확인한다 |
 | `CLAUDE.md` | 코딩 규칙과 설계 원칙. 모든 change에 적용된다 |
@@ -120,7 +120,7 @@ uv run python -m evals.catalog_search        # 서명·저자 찾기 평가 (표
 - 서명으로 줄 세우는 코드는 `app/core/text.py`의 `korean_order`(ICU `ko-x-icu`)를 쓴다. DB 기본 collation은 바꾸지 않는다.
 - 외부 API 키, DB URL은 `.env`에서 읽고 코드에 하드코딩하지 않는다. `.env.example`을 함께 관리한다.
 - 외부 도서 API의 표지 이미지는 저장하지 않고 원본 URL로만 표시하며, 출처를 함께 보여준다.
-- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 평가 표본 약 100권(`evals/librarian/data/`)과 실험 장서 525권(`evals/collection/data/`, 개발 DB의 가상 기관에만)만 예외이고, 둘 다 한 번만 받고 저장소에 넣지 않는다. 실험 장서는 `add-bibliographic-sources`에서도 지우지 않았고, 같은 ISBN의 정보나루·카카오 값을 따로 받은 파일(`sources_collection.json`, 출처마다 이어 받기)을 함께 쓴다. `add-loan-signals`부터 같은 ISBN의 정보나루 대출 신호(함께 대출·마니아·다독자 ISBN 순위, 연령 묶음별 인기 ISBN 순위와 대출 수)를 받은 파일(`loan_signals.json`)도 쓴다. ISBN 순위와 수만 남기고 서명·표지는 남기지 않는다. 카카오 판매가·판매 상태와 정보나루 표지(비영리 화면 표시만 허용)는 저장하지 않는다.
+- 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 받은 원본은 저장소에 넣지 않는다. 예외(평가 표본, 실험 장서, 출처 값, 대출 신호 파일)와 저장하지 않는 값(카카오 판매가·판매 상태, 정보나루 표지)은 `docs/data-sources.md`에 있다.
 - 에이전트는 공통 실행기 하나에 프로필(프롬프트, tool 묶음, 권한)만 바꿔 쓴다. tool은 같은 프로세스에서 service를 감싸고, 이름·설명·JSON Schema로 정의한다. `library_id`는 실행기가 코드로 주입하고 LLM이 정하지 않는다.
 - 기관 개별 기능의 값은 공통 테이블과 공통 API에 넣지 않는다. 기능은 `app/main.py`에서 등록하고, 서버를 거치지 않는 새 진입점을 만들면 등록을 함께 챙긴다.
 - 새 service 함수에는 테스트를 같이 작성한다. 기관 분리(다른 기관 데이터가 보이지 않는지) 테스트를 빠뜨리지 않는다.
