@@ -220,11 +220,11 @@ async def load_catalog(
     catalog.children = set(stored)
     await session.commit()
     if embedder is not None:
-        catalog.vectors = await _load_vectors(session, embedder, library.id)
+        catalog.vectors = await load_vectors(session, embedder, library.id)
     return catalog
 
 
-async def _load_vectors(session: AsyncSession, embedder: Embedder, library_id: int) -> int:
+async def load_vectors(session: AsyncSession, embedder: Embedder, library_id: int) -> int:
     official = select(LibraryBook.book_id).where(
         LibraryBook.library_id == library_id, LibraryBook.book_id.is_not(None)
     )

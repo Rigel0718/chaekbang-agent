@@ -273,7 +273,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         ("아무거나 추천해 줘",),
         Expect.RELATED,
         children=False,
-        traces=(f"{RELATED} / 아무거나", GENERAL_NO_PERSONAL),
+        traces=(f"{RELATED} / 아무거나", f"{RELATED} / 아무거나 뒤 검색", GENERAL_NO_PERSONAL),
         related=RelatedCall.EMPTY,
     ),
     Scenario(

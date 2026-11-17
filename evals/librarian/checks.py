@@ -40,6 +40,7 @@ BOOK_TOOLS = (
     "find_related_children_books",
 )
 RELATED_TOOLS = ("find_related_books", "find_related_children_books")
+SEARCH_TOOLS = ("search_collection", "search_children_books")
 # 관련 책 이유에 흔히 지어내는 정보. 그 책의 서지 글(소개 포함)에 없으면 위반이다
 _INVENTED_BASIS = re.compile(r"수상|상을 받|베스트셀러|판매|만\s*부|\d+\s*위|1위|추천도서")
 # "어렵다"만으로는 보지 않는다. "내용이 어렵지 않아요"처럼 소개가 있는 답에도 나온다
@@ -154,7 +155,8 @@ def invented_basis(turn: TurnResult, catalog: SampleCatalog) -> list[str]:
 def related_met(result: ScenarioResult) -> bool:
     """마지막 턴이 관련 책 tool을 정한 모양으로 불렀고, 추천이 모두 그 결과 안에 있다.
 
-    결과가 비면 tool의 note대로 다른 검색을 했을 수 있어 추천을 묻지 않는다.
+    결과가 비면 tool의 note대로 다른 검색을 했을 수 있어 추천을 묻지 않는다. "아무거나"(비워서
+    부름)는 같은 턴에 검색 tool도 불렀으면 검색 결과로 답해도 맞다(추천 가능 여부는 `not_held`).
     """
     turn = result.last
     expected = result.scenario.related
@@ -162,6 +164,8 @@ def related_met(result: ScenarioResult) -> bool:
         return False
     if expected is RelatedCall.EMPTY and None not in turn.related_inputs:
         return False
+    if expected is RelatedCall.EMPTY and set(SEARCH_TOOLS) & set(turn.tools):
+        return True
     if expected is RelatedCall.BOOK:
         pointed = set(turn.found) | set(turn.selected)
         if not pointed & set(turn.related_inputs):

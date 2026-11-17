@@ -29,8 +29,8 @@ MVP는 약 8주다. 이전 방향(무인 서점)의 1주차 결과는 저장소 
 | 16 | `add-loan-signals` | 정보나루 대출 신호: 같은 KDC 세목 실측, 함께 대출, 인기 대출, 빈 기록의 "아무거나", 남겨 둔 분야 비교 | 대출 신호의 변형 점수표 | 끝남(D.1·D.2는 미룸) |
 | 17 | `add-related-books` | 이긴 설정을 제품에 내보내기: 찾은 책 카드 아래 비슷한 책(LLM 없음), AI 사서 tool, REST. 미룬 일 D.3·D.4 | 찾은 책 아래 비슷한 책이 LLM 없이 나옴 | 끝남 (issue #41) |
 | 18 | `add-topic-search-tool` | 주제로 찾기(`hybrid-k60`)를 AI 사서에 잇기: 서비스 중 임베딩 서버, 꺼졌을 때 키워드 검색, LLM 평가 전후 비교 | 주제 요청이 키워드+벡터 순위로 답하고 평가가 나빠지지 않음 | 끝남 (issue #44) |
-| 19 | `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서 | 버전별 점수표 | **다음** |
-| 20 | `add-admin-agent` | 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록 | 분석 질문 정답률 측정 | |
+| 19 | `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 실험 장서 60항목을 실제 대화로, 기존 어울림 라벨로 카드 Hit@5·Recall@5·nDCG@5(묶음별), 실행 사이 비교, 실제 LLM 낱말 다시 보기, `related-anything` 판정. MVP 우선으로 어린이 지표 둘·모델 비교 등은 뺌(아래 미룬 일). LLM 채점은 최종 서비스 테스트에서 | 버전별 점수표 | 끝남 (issue #46) |
+| 20 | `add-admin-agent` | 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록 | 분석 질문 정답률 측정 | **다음** |
 | 21 | `add-approval-flow` | 큐레이션·연체 안내·구매 요청서 초안 → 승인 → 실행 | 서버 재시작 후에도 승인 이어짐 | |
 | 22 | `add-librarian-actions` | 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기 | 회원번호가 대화 기록과 LLM에 남지 않고 대출됨 | |
 | 23 | `add-web-ui` | 이용자·관리자 화면 | 이용자 대화에서 추천·대출까지, 관리자 승인까지 화면으로 동작 | |
@@ -49,7 +49,7 @@ MVP는 약 8주다. 이전 방향(무인 서점)의 1주차 결과는 저장소 
 | 서명 정렬 | 가나다순. DB 기본 collation(`en_US.utf8`)은 그대로 두고 정렬 키에만 ICU `ko-x-icu`를 건다(`app/core/text.py`의 `korean_order`) | `archive/…-fix-korean-title-order` |
 | 임베딩 텍스트 | 텍스트 버전 2, 종류 `full`: 저자를 뺀 서명·분류·소개. 저자는 기여자·저자 키와 서명·저자 찾기가 맡는다. 저자 넣기(`with_author`), 소개만, 필드별 벡터는 이기지 못했다(2026-11-16 확정) | `archive/…-add-recommendation-experiments` |
 | 임베딩 실행 | ONNX 변환본, 적재 배치 기본값 4(32에서 내림). 서비스 중 질의 인코딩은 시간 제한 2초, 실패 뒤 30초 쉬기, 처음 한 번 모델 확인(`GuardedEmbedder`). 서버가 없으면 AI 사서 검색은 키워드 순위로 내려간다 | `app/central/README.md`, `archive/…-add-book-embeddings` Open Questions, `add-official-book-embeddings`, `archive/…-add-topic-search-tool` |
-| 주제로 찾기 | `hybrid-k60`: 키워드 순위와 벡터 순위를 RRF(k 60, 1:1)로 합친다. 조정 nDCG@5 0.410 → 0.517. 서명 가나다순 뒤 기준은 0.453 → 0.519. 남겨 둔 분야 +0.097(4·3·1). **벡터 질의는 LLM 낱말**(`hybrid-best`): 합친 순위에서 문장과 차이 없음(세 출처 조정 -0.027, 4·7·9, -0.078 ~ +0.024)이고 여러 턴·다시 찾기 때문에 골랐다(2026-11-17). 시리즈 묶기·MMR은 끈다(LLM이 10권 중 고른다). 결과를 비우는 문턱 없이, 키워드 순위가 비면 `note`로 알린다. 제품에 이었다: AI 사서 `search_collection`·`search_children_books`(`services/topic.py`), 평가 전후 나빠지지 않음 | `archive/…-add-recommendation-experiments`, `archive/…-add-related-book-experiments`, `archive/…-add-topic-search-tool` |
+| 주제로 찾기 | `hybrid-k60`: 키워드 순위와 벡터 순위를 RRF(k 60, 1:1)로 합친다. 조정 nDCG@5 0.410 → 0.517. 서명 가나다순 뒤 기준은 0.453 → 0.519. 남겨 둔 분야 +0.097(4·3·1). **벡터 질의는 LLM 낱말**(`hybrid-best`): 합친 순위에서 문장과 차이 없음(세 출처 조정 -0.027, 4·7·9, -0.078 ~ +0.024)이고 여러 턴·다시 찾기 때문에 골랐다(2026-11-17). **실제 LLM 낱말로 다시 쟀다**(대화 평가가 받은 낱말, 조정 +0.034, 7·7·6, -0.009 ~ +0.081, 확인 +0.039, 9·0·1): 차이 없음이라 낱말 그대로(2026-11-17). 시리즈 묶기·MMR은 끈다(LLM이 10권 중 고른다). 결과를 비우는 문턱 없이, 키워드 순위가 비면 `note`로 알린다. 제품에 이었다: AI 사서 `search_collection`·`search_children_books`(`services/topic.py`), 평가 전후 나빠지지 않음 | `archive/…-add-recommendation-experiments`, `archive/…-add-related-book-experiments`, `archive/…-add-topic-search-tool`, `archive/…-add-recommendation-evals` |
 | 비슷한 책 | `sim-rrf`: 기준 책의 저장된 벡터로 찾는 벡터 이웃(`full`)에 같은 시리즈·같은 저자·같은 KDC 세목 신호를 RRF 1:1로 합친다. KDC 세목 신호가 들어오면서 처음 채택 규칙을 넘었다(세 출처 +0.052, 대출 신호 때 +0.053). 시리즈·저자 신호는 품질이 같아도 근거 표시를 위해 둔다(사용자 결정). 시리즈 묶기, MMR, 같은 외부 분류로 좁히기, KDC 세 자리·계층 단위, 세목 안 벡터 순, 함께 대출(+0.017)은 쓰지 않는다. 남겨 둔 분야는 -0.004(차이 없음, KDC 세목 신호가 거의 없음) | `archive/…-add-related-book-experiments`, `archive/…-add-bibliographic-sources`, `archive/…-add-loan-signals` |
 | 최근 기록 | `hist-mean`: 기록 책 벡터의 평균. 책별 순위를 RRF로 합친 것을 모든 기록에서 이겼다(조정 nDCG@5 0.694 대 0.334). KDC·저자·함께 대출 신호는 넘지 못했다 | `archive/…-add-related-book-experiments`, `archive/…-add-loan-signals` |
 | 최소 유사도 | 벡터 근거만 있는 책에 문턱을 두지 않는다(0·2 라벨의 코사인이 겹침) | `archive/…-add-related-books` |
@@ -64,5 +64,10 @@ MVP는 약 8주다. 이전 방향(무인 서점)의 1주차 결과는 저장소 
 - D.3(남겨 둔 분야 실행)과 D.4(결과 문서)는 `add-related-books`에서 했다.
 - 함께 대출은 제품 신호 코드(`co_loan`), 정보나루 인기 채우기, 빈 기록 규칙만 있다. 제품 테이블은 약관 확인 뒤에 만든다.
 - 시리즈 묶기(주제로 찾기)는 `add-topic-search-tool`에서 끄기로 정했다. 같은 시리즈만 추천하는 답이 대화 추천 평가에서 문제로 나오면 다시 연다.
-- `add-topic-search-tool`에서 넘긴 것(`add-recommendation-evals`): 실제 LLM 낱말로 벡터 질의 입력 다시 보기, 소장 도서가 없는 주제 요청의 빈 결과 규칙(실험 세트에 키워드 순위가 빈 질의 0개), AI 사서 평가 `related-anything`의 검사 판정(관련 책 결과 뒤 검색에서 추천하면 틀림으로 셈). 결과의 근거 문구와 제품 질의 벡터 캐시는 정하지 않았다(그 design Open Questions). 임베딩 서버 없는 장비(약 4GB)는 `add-observability-deploy`.
-- AI 사서 평가에서 넘겨받은 항목(어린이 지표를 책 분류와 요청 판단으로 나누기 등)은 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md` 끝에 있고, `add-recommendation-evals`에서 다룬다.
+- `add-recommendation-evals`에서 끝낸 것: 실제 LLM 낱말로 벡터 질의 입력 다시 보기(낱말 그대로), `related-anything` 검사 판정(아무거나 뒤 검색 허용). 기준 점수는 프로필 v6, `gpt-6-luna`에서 카드 nDCG@5 0.578·0.575, Hit@5 0.783·0.800(`archive/…-add-recommendation-evals/design.md` 결과). 비슷한 책·아무거나는 카드가 tool 앞 5권보다 낮다(LLM이 3권쯤 냄). 카드 수를 바꿀지는 정하지 않았다.
+- **MVP 뒤**(2026-11-17 사용자 결정, MVP 출시가 우선이라 `add-recommendation-evals`에서 뺌)
+  - 어린이 지표 둘: 책 분류(어린이로 분류한 책의 정밀도·놓친 비율, 장서 쪽)와 요청 판단(어린이 요청을 맞게 판단한 비율, 어른 요청을 어린이로 좁힌 오판 비율). 섞인 기록(어린이 + 일반)에 어린이 조건을 걸지(보고서 OQ3). 근거는 `openspec/changes/archive/2026-11-10-add-librarian-agent/tasks.md` 끝
+  - 모델 비교(`LLM_PRICES`의 다른 모델), 사람만 단 라벨 표본으로 Claude 라벨과의 일치도
+  - 소장 도서가 없는 주제 세트와 빈 결과 규칙(보고서 OQ1. 대화 평가 두 실행에서 키워드 순위가 빈 검색은 0번)
+  - 비슷한 책 API 노출 기록의 출처 칸, 평가 표본 87권의 세 출처 전환(보고서 OQ6)
+  - 테스트 DB 실험 장서(어린이 169권)와 개발 DB 실험 기관(152권)의 어린이 구분 차이: 개발 DB는 세 출처를 합치기 전에 넣은 책의 어린이 구분을 고치지 않았다. 어린이 구분 지표를 만들 때 본다

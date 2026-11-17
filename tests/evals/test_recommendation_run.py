@@ -28,6 +28,7 @@ from evals.recommendation.label import (
     topic_candidates,
 )
 from evals.recommendation.labels import BEFORE, POOL, Labels
+from evals.recommendation.llm_keywords import keywords_line, with_llm_keywords
 from evals.recommendation.metrics import compare, score_query
 from evals.recommendation.review import ReviewError, page_data, render_page, review_label
 from evals.recommendation.sets import TopicQuery
@@ -556,3 +557,57 @@ async def test_product_default_variant(
         settings=replace(TopicSettings(), limit=DEEP),
     )  # fmt: skip
     assert ranked == expected
+
+
+def _chat_run(tmp_path: Path, items: list[dict]) -> Path:
+    folder = tmp_path / "chat-run"
+    folder.mkdir()
+    (folder / "items.json").write_text(
+        json.dumps({"meta": {}, "items": items}, ensure_ascii=False), encoding="utf-8"
+    )
+    return folder
+
+
+def _chat_item(item_id: str, calls: list[dict]) -> dict:
+    return {"set_name": "topic", "id": item_id, "calls": calls}
+
+
+async def test_llm_keywords_replace(
+    session: AsyncSession, library_a: Tenant, tmp_path: Path
+) -> None:
+    """[platform/recommendation-experiments] 실제 LLM 낱말로 주제 실행 / 낱말 바꾸기"""
+    _, embedder, _, _ = await _setup(session, library_a.id, tmp_path)
+    run = _chat_run(
+        tmp_path,
+        [
+            _chat_item(
+                "t09",
+                [
+                    {"name": "find_book", "input": {"query": "공룡"}},
+                    {"name": "search_collection", "input": {"keywords": ["공룡", "그림책"]}},
+                    {"name": "search_collection", "input": {"keywords": ["화석"]}},
+                ],
+            )
+        ],
+    )
+    query = _query("t09", text="공룡이 나오는 책", keywords=("사람", "낱말"))
+    [replaced], skipped = with_llm_keywords([query], run)
+    assert replaced.keywords == ("공룡", "그림책") and skipped == []
+    embedder.query_calls.clear()
+    await run_variant(session, embedder, VARIANTS["hybrid-vkw"], library_a.id, replaced, None)
+    assert [text for call in embedder.query_calls for text in call] == ["공룡 그림책"]
+
+
+def test_llm_keywords_skip_without_search(tmp_path: Path) -> None:
+    """[platform/recommendation-experiments] 실제 LLM 낱말로 주제 실행 / 검색 없는 항목"""
+    run = _chat_run(
+        tmp_path,
+        [
+            _chat_item("t01", [{"name": "search_collection", "input": {"keywords": ["공룡"]}}]),
+            _chat_item("t02", [{"name": "get_library_guide", "input": {}}]),
+        ],
+    )
+    queries = [_query("t01"), _query("t02")]
+    kept, skipped = with_llm_keywords(queries, run)
+    assert [q.id for q in kept] == ["t01"] and skipped == ["t02"]
+    assert "검색 없어 뺀 항목 1개 (t02)" in keywords_line(run, skipped)

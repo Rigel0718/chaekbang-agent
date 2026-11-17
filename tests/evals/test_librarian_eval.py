@@ -236,6 +236,22 @@ def test_related_met_for_anything() -> None:
     assert not related_met(ScenarioResult(scenario, [_related_turn([1], [2], ids=[2], found=[1])]))
 
 
+def test_related_met_anything_then_search() -> None:
+    """[agent/librarian] 관련 책 요청에 답함 / 아무거나 뒤 검색
+
+    아무거나에서 비워 부른 뒤 검색도 했으면 검색 결과의 추천도 맞다. 비슷한 책은 그대로 엄격하다.
+    """
+    anything = _related_scenario(RelatedCall.EMPTY)
+    turn = _related_turn([None], [2], ids=[7])
+    assert not related_met(ScenarioResult(anything, [turn]))  # 검색 없이 결과 밖이면 틀림
+    turn.tools = ("find_related_books", "search_collection")
+    assert related_met(ScenarioResult(anything, [turn]))
+    picked = _related_scenario(RelatedCall.BOOK)
+    strict = _related_turn([1], [2], ids=[7], selected=[1])
+    strict.tools = ("find_related_books", "search_collection")
+    assert not related_met(ScenarioResult(picked, [strict]))
+
+
 def test_invented_basis() -> None:
     """관련 책: 이유의 수상·판매 같은 말이 그 책 서지 글에 없으면 위반이다."""
     catalog = _catalog()
