@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 <!-- 이 절은 세 줄까지만. 결정·수치·미룬 일은 docs/roadmap.md에 쓴다. -->
-진행 중: `add-related-books`(issue #41, 구현 끝, archive 전) · 다음: `add-topic-search-tool`
+진행 중: 없음(직전 `add-related-books` archive 끝) · 다음: `add-topic-search-tool`
 change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾기, 비슷한 책, 최근 기록), 미룬 일은 `docs/roadmap.md`에 있다.
 
 ## OpenSpec 작업 규칙

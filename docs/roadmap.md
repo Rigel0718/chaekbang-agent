@@ -27,7 +27,7 @@ MVP는 약 8주다. 이전 방향(무인 서점)의 1주차 결과는 저장소 
 | 14 | `add-related-book-experiments` | 비슷한 책(같은 저자·시리즈·분류·벡터 이웃)과 아무 조건 없음의 신호와 변형 비교, 두 세트의 라벨 | 두 요청 종류의 변형 점수표와 기본 설정 | 끝남 |
 | 15 | `add-bibliographic-sources` | 카카오·정보나루 연동: 세 출처의 필드별 기준 출처, 채움 일반화, 부가기호 어린이 근거, 실험 장서 다시 채우기, 같은 ISBN 다른 메타데이터 비교 | 세 출처와 YES24 뺀 상태의 점수 비교 | 끝남 |
 | 16 | `add-loan-signals` | 정보나루 대출 신호: 같은 KDC 세목 실측, 함께 대출, 인기 대출, 빈 기록의 "아무거나", 남겨 둔 분야 비교 | 대출 신호의 변형 점수표 | 끝남(D.1·D.2는 미룸) |
-| 17 | `add-related-books` | 이긴 설정을 제품에 내보내기: 찾은 책 카드 아래 비슷한 책(LLM 없음), AI 사서 tool, REST. 미룬 일 D.3·D.4 | 찾은 책 아래 비슷한 책이 LLM 없이 나옴 | 구현 끝, archive 전 (issue #41) |
+| 17 | `add-related-books` | 이긴 설정을 제품에 내보내기: 찾은 책 카드 아래 비슷한 책(LLM 없음), AI 사서 tool, REST. 미룬 일 D.3·D.4 | 찾은 책 아래 비슷한 책이 LLM 없이 나옴 | 끝남 (issue #41) |
 | 18 | `add-topic-search-tool` | 주제로 찾기(`hybrid-k60`)를 AI 사서에 잇기: 서비스 중 임베딩 서버, 꺼졌을 때 키워드 검색, LLM 평가 전후 비교 | 주제 요청이 키워드+벡터 순위로 답하고 평가가 나빠지지 않음 | **다음** |
 | 19 | `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 어린이 지표 둘, 모델 비교. LLM 채점은 최종 서비스 테스트에서 | 버전별 점수표 | |
 | 20 | `add-admin-agent` | 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록 | 분석 질문 정답률 측정 | |
@@ -52,7 +52,7 @@ MVP는 약 8주다. 이전 방향(무인 서점)의 1주차 결과는 저장소 
 | 주제로 찾기 | `hybrid-k60`: 키워드 순위와 벡터 순위를 RRF(k 60, 1:1)로 합친다. 조정 nDCG@5 0.410 → 0.517. 서명 가나다순 뒤 기준은 0.453 → 0.519. 남겨 둔 분야 +0.097(4·3·1). 시리즈 묶기·MMR은 품질은 같고 겹침만 줄어, 제품에 이을 때 다시 정한다. 제품에는 아직 잇지 않았다(`app/library/recommendation/topic.py`) | `archive/…-add-recommendation-experiments`, `archive/…-add-related-book-experiments` |
 | 비슷한 책 | `sim-rrf`: 기준 책의 저장된 벡터로 찾는 벡터 이웃(`full`)에 같은 시리즈·같은 저자·같은 KDC 세목 신호를 RRF 1:1로 합친다. KDC 세목 신호가 들어오면서 처음 채택 규칙을 넘었다(세 출처 +0.052, 대출 신호 때 +0.053). 시리즈·저자 신호는 품질이 같아도 근거 표시를 위해 둔다(사용자 결정). 시리즈 묶기, MMR, 같은 외부 분류로 좁히기, KDC 세 자리·계층 단위, 세목 안 벡터 순, 함께 대출(+0.017)은 쓰지 않는다. 남겨 둔 분야는 -0.004(차이 없음, KDC 세목 신호가 거의 없음) | `archive/…-add-related-book-experiments`, `archive/…-add-bibliographic-sources`, `archive/…-add-loan-signals` |
 | 최근 기록 | `hist-mean`: 기록 책 벡터의 평균. 책별 순위를 RRF로 합친 것을 모든 기록에서 이겼다(조정 nDCG@5 0.694 대 0.334). KDC·저자·함께 대출 신호는 넘지 못했다 | `archive/…-add-related-book-experiments`, `archive/…-add-loan-signals` |
-| 최소 유사도 | 벡터 근거만 있는 책에 문턱을 두지 않는다(0·2 라벨의 코사인이 겹침) | `openspec/changes/add-related-books/design.md` |
+| 최소 유사도 | 벡터 근거만 있는 책에 문턱을 두지 않는다(0·2 라벨의 코사인이 겹침) | `archive/…-add-related-books` |
 | 시리즈 | 상한 1을 켜지 않는다. 시리즈 다음 권(권차)은 미룬다 | `add-related-books` |
 | 아무 조건 없음 | 대화 세션의 책 최신 3권으로 `hist-mean`. 세션에 책이 없으면 우리 도서관 인기. 대출 신호 공급이 없어서 지금은 우리 도서관 인기에서 끝난다 | `add-related-books` |
 | 공식 서지 출처 | 정보나루·카카오·YES24를 필드별 순서로 합친다(`app/central/sources.py`의 `merge`). YES24를 빼면 대체로 낮다(최근 기록 조정 -0.224). 순서는 `docs/data-sources.md` | `archive/…-add-bibliographic-sources` |

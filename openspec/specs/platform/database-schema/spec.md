@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: 마이그레이션으로 스키마 생성
-시스템은 빈 PostgreSQL 데이터베이스에 마이그레이션을 적용하면 테이블 22개(libraries, staff_users, staff_sessions, books, book_contributors, official_book_embeddings, library_books, library_book_audiences, holdings, holding_imports, members, loans, agent_runs, agent_steps, chat_sessions, chat_messages, recommendation_events, library_guides, library_opening_hours, library_closures, library_guide_entries, book_embeddings)와 문자열 유사도 확장, 벡터 확장, 한글 자모 분해 SQL 함수, chat_messages의 책 표시 칸, books와 library_books의 서명·저자 찾기 키 열, library_books의 저자 키 열, books의 시리즈 키 열을 모두 생성 SHALL 하고, 되돌린 뒤 다시 적용할 수 있어야 한다. 자모 분해 SQL 함수는 코드의 자모 분해 규칙과 같은 결과를 낸다. 찾기 키 열은 DB가 서명·저자에서 계산하는 생성 열이라 코드가 쓰지 않는다. 저자 키 열은 코드가 저장할 때 계산하는 열이고 비워 둘 수 없다(빈 목록은 된다). 시리즈 키 열은 코드가 저장할 때 계산하는 열이고 주지 않으면 빈 목록이다. official_book_embeddings와 book_embeddings의 벡터 열은 1024차원이고 종류 칸은 비어 있을 수 없다. official_book_embeddings는 같은 공식 서지·모델 이름·텍스트 버전·종류의 행을, book_embeddings는 같은 기관 도서·모델 이름·텍스트 버전·종류의 행을 하나만 둘 수 있다. book_contributors는 같은 공식 서지에 같은 순서의 행을 하나만 둘 수 있고 이름과 이름 맞춤 키는 비어 있을 수 없다.
+시스템은 빈 PostgreSQL 데이터베이스에 마이그레이션을 적용하면 테이블 22개(libraries, staff_users, staff_sessions, books, book_contributors, official_book_embeddings, library_books, library_book_audiences, holdings, holding_imports, members, loans, agent_runs, agent_steps, chat_sessions, chat_messages, recommendation_events, library_guides, library_opening_hours, library_closures, library_guide_entries, book_embeddings)와 문자열 유사도 확장, 벡터 확장, 한글 자모 분해 SQL 함수, chat_messages의 책 표시 칸과 책 id 칸, books와 library_books의 서명·저자 찾기 키 열, library_books의 저자 키 열, books의 시리즈 키 열을 모두 생성 SHALL 하고, 되돌린 뒤 다시 적용할 수 있어야 한다. 자모 분해 SQL 함수는 코드의 자모 분해 규칙과 같은 결과를 낸다. 찾기 키 열은 DB가 서명·저자에서 계산하는 생성 열이라 코드가 쓰지 않는다. 저자 키 열은 코드가 저장할 때 계산하는 열이고 비워 둘 수 없다(빈 목록은 된다). 시리즈 키 열은 코드가 저장할 때 계산하는 열이고 주지 않으면 빈 목록이다. chat_messages의 책 id 칸은 코드가 저장할 때 정하는 기관 도서 id 목록이고 비워 둘 수 없으며 주지 않으면 빈 목록이다. official_book_embeddings와 book_embeddings의 벡터 열은 1024차원이고 종류 칸은 비어 있을 수 없다. official_book_embeddings는 같은 공식 서지·모델 이름·텍스트 버전·종류의 행을, book_embeddings는 같은 기관 도서·모델 이름·텍스트 버전·종류의 행을 하나만 둘 수 있다. book_contributors는 같은 공식 서지에 같은 순서의 행을 하나만 둘 수 있고 이름과 이름 맞춤 키는 비어 있을 수 없다.
 
 #### Scenario: 빈 DB에 upgrade
 - **WHEN** 빈 데이터베이스에 `alembic upgrade head`를 실행하면
@@ -24,6 +24,10 @@
 #### Scenario: 대화 메시지의 책 표시 칸
 - **WHEN** 마이그레이션을 적용한 DB의 chat_messages 열을 확인하면
 - **THEN** 비어 있을 수 있는 책 표시 칸이 있고, 기존 행의 값은 비어 있다
+
+#### Scenario: 대화 메시지의 책 id 칸
+- **WHEN** 메시지 행이 있는 DB에 마이그레이션을 적용한 뒤 chat_messages 열을 확인하면
+- **THEN** 비어 있을 수 없는 책 id 칸이 있고, 기존 행의 값은 빈 목록이다
 
 #### Scenario: 찾기 키 열의 자동 계산
 - **WHEN** 기관 도서의 서명을 고치면
