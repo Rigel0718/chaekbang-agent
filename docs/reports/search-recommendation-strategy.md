@@ -25,13 +25,13 @@
 | 요청 종류 | 지금 채택한 방식 | 핵심 수치 | 제품 연결 |
 | --- | --- | --- | --- |
 | **아는 책 찾기** (서명·저자) | 자모 분해 키 + 자모 편집 거리(오타 문턱 0.7), 자동완성(앞부분만), 문장 속 서명 찾기(문턱 0.85). LLM 없음 | 오타 질의 5위 안 97.3~98.7%, 기존 키워드 검색 0% (cs-run `20261117-030343`) | **연결됨**: `GET /catalog/search`, `GET /catalog/suggest`, `find_book` tool, 대화의 찾은 책 카드 |
-| **주제·상황으로 찾기** | 키워드 순위 + 벡터 순위 RRF(k 60, 1:1), 벡터 질의는 이용자 문장, 텍스트 `full`, 시리즈 묶기·MMR 끔 (`hybrid-k60`) | 세 출처 장서(A) 조정 nDCG@5 0.451 → 0.525 (+0.074, 이김·비김·짐 13·4·3, 95% 구간 +0.030 ~ +0.115) (run `20261117-025721`) | **아직 아님**. AI 사서는 지금 키워드 검색(`search_collection`)을 쓴다. `add-related-books`가 잇는다 |
-| **비슷한 책** (기준 책 하나) | 같은 시리즈·같은 저자·같은 KDC 세목·벡터 이웃을 RRF 1:1로 합침, 근거(신호별 순위)를 붙임 (`sim-rrf`) | A 조정 0.649 → 0.700 (+0.052, 6·6·2, +0.008 ~ +0.107) (run `20261117-025753`). YES24만일 때는 차이 없음이었다 | **아직 아님** (`add-related-books`) |
-| **아무 조건 없음, 기록 있음** (최근에 본 책 2~3권) | 기록 책 벡터의 평균으로 이웃 찾기 (`hist-mean`) | YES24 조정 0.694 대 책별 RRF 0.334 (-0.359, 0·0·7) (design(add-related-book-experiments)). A 0.710 (run `20261117-025756`) | **아직 아님** (`add-related-books`) |
-| **아무 조건 없음, 기록 없음** ("아무거나") | 정하지 않음. 인기 순위 코드만 있고 실험 장서에 대출 행이 없어 재지 못함 | 확인 못 함 (인기 신호 0건) | 아님 (`add-loan-signals`가 잰다) |
+| **주제·상황으로 찾기** | 키워드 순위 + 벡터 순위 RRF(k 60, 1:1), 벡터 질의는 이용자 문장, 텍스트 `full`, 시리즈 묶기·MMR 끔 (`hybrid-k60`) | 세 출처 장서(A) 조정 nDCG@5 0.451 → 0.525 (+0.074, 이김·비김·짐 13·4·3, 95% 구간 +0.030 ~ +0.115) (run `20261117-025721`) | **아직 아님**. AI 사서는 지금 키워드 검색(`search_collection`)을 쓴다. `add-topic-search-tool`이 잇는다(요청마다 임베딩 서버 필요) |
+| **비슷한 책** (기준 책 하나) | 같은 시리즈·같은 저자·같은 KDC 세목·벡터 이웃을 RRF 1:1로 합침, 근거(신호별 순위)를 붙임 (`sim-rrf`) | A 조정 0.649 → 0.700 (+0.052, 6·6·2, +0.008 ~ +0.107) (run `20261117-025753`). YES24만일 때는 차이 없음이었다 | **연결됨** (`add-related-books`): `GET /catalog/books/{id}/similar`, `find_related_books` tool(책 id), 근거 코드·문구 |
+| **아무 조건 없음, 기록 있음** (최근에 본 책 2~3권) | 기록 책 벡터의 평균으로 이웃 찾기 (`hist-mean`) | YES24 조정 0.694 대 책별 RRF 0.334 (-0.359, 0·0·7) (design(add-related-book-experiments)). A 0.710 (run `20261117-025756`) | **연결됨** (`add-related-books`): `find_related_books` tool(비움), 기록은 대화 세션의 책 최신 3권 |
+| **아무 조건 없음, 기록 없음** ("아무거나") | 정하지 않음. 인기 순위 코드만 있고 실험 장서에 대출 행이 없어 재지 못함 | 확인 못 함 (인기 신호 0건) | **연결됨, 우리 도서관 인기만** (`add-related-books`). 대출 행이 없는 기관(가져오기 기관)은 빈 결과. 정보나루 인기는 `add-loan-signal-store` |
 
 - 모든 실행에서 규칙 위반(추천할 수 없는 책, 어린이 요청의 일반 도서)은 0건이었다. 이것은 LLM이 아니라 범위 조건(`within`)과 추천 가능 조건으로 코드가 지킨다.
-- 한 줄로: **아는 책은 코드로 찾고, 주제는 키워드와 벡터를 합치고, 책에서 출발하는 추천은 벡터 이웃이 바탕이며 규칙 신호는 근거와 (KDC가 생긴 뒤) 품질을 더한다.** 셋 중 제품에 나간 것은 찾기뿐이다.
+- 한 줄로: **아는 책은 코드로 찾고, 주제는 키워드와 벡터를 합치고, 책에서 출발하는 추천은 벡터 이웃이 바탕이며 규칙 신호는 근거와 (KDC가 생긴 뒤) 품질을 더한다.** 2026-11-17부터 찾기, 비슷한 책, 최근 기록이 제품에 나가 있고 주제로 찾기만 남았다(`add-topic-search-tool`).
 
 ---
 
@@ -556,9 +556,11 @@
 
 | change | 맡을 것 | 출처 |
 | --- | --- | --- |
-| `add-loan-signals` (다음) | 정보나루 함께 대출(`usageAnalysisList`, 약 525회)·인기 대출(`loanItemSrch`, 약 10회) 연동. 같은 KDC 세목 실측(`sim-rrf`와 KDC를 뺀 것을 나눠 잼). 빈 기록의 "아무거나". 남겨 둔 50권(다른 분야)의 새 세트·라벨과 비교. 비슷한 책 기본값 다시 보기. 인기 기간 180일 다시 보기 | design(add-bibliographic-sources) 결정 1·결과, design(add-related-book-experiments) 결정 8, CLAUDE.md |
-| `add-related-books` | 이긴 설정을 제품으로: 찾은 책 카드 아래 비슷한 책(LLM 없음, 근거 표시 문구), AI 사서 tool, REST. 주제로 찾기를 AI 사서 경로에 잇기. 시리즈 상한 1을 켤지. 결과를 비울 유사도 문턱(소장 도서가 없는 요청). 시리즈 다음 권 순서(권차) | design(add-recommendation-experiments) 결과·Open Questions, design(add-related-book-experiments) Open Questions |
+| `add-loan-signals` (2026-11-17 archive) | 끝남. 정보나루가 막혀 미룬 D.1(남은 11회, 인기 기간)·D.2(`s10` 다시 재기)는 `add-loan-signal-store`로, D.3(남겨 둔 분야)·D.4(문서)는 `add-related-books`에서 했다 | design(add-loan-signals) 결과, design(add-related-books) 결정 2 |
+| `add-related-books` (구현 끝) | 비슷한 책 API·관련 책 tool·대화 세션의 책·어린이 범위, 남겨 둔 분야 실행, 최소 유사도 진단(문턱 없음). 시리즈 상한 1은 켜지 않음 | design(add-related-books) |
+| `add-topic-search-tool` (다음) | 주제로 찾기(`hybrid-k60`)를 AI 사서에 잇기: 서비스 중 임베딩 서버, 꺼졌을 때 키워드 검색으로, 벡터 질의(이용자 문장 대 LLM 낱말), LLM 평가 전후 비교. 소장 도서가 없는 주제 요청의 빈 결과 | design(add-related-books) 결정 1, OQ1 |
 | `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 모델 비교. 어린이 지표 둘(책 분류 / 요청 판단). 실제 LLM이 고른 낱말로 `vec-kw` 다시 보기. 사람만 단 라벨 표본으로 Claude 라벨과의 일치도. 섞인 기록의 어린이 판단 | design(add-recommendation-experiments) 결과·결정 9, `add-librarian-agent` tasks.md 끝, design(add-related-book-experiments) Open Questions |
+| `add-loan-signal-store` (정보나루 약관 확인 뒤) | 함께 대출·정보나루 인기의 운영자 층 테이블과 갱신 실행, 제품의 대출 신호 공급, 미룬 일 D.1·D.2(정보나루 11회: 이용 분석 3, 인기 8조건) | design(add-loan-signals) 결정 5, design(add-related-books) 결정 2 |
 
 ### 9.2 Open Questions 목록
 
@@ -566,11 +568,11 @@
 
 | # | 질문 | 처음 나온 곳 | 맡을 곳 |
 | --- | --- | --- | --- |
-| 1 | 소장 도서가 없는 요청에서 결과를 비울 유사도 문턱 | design(add-recommendation-experiments) OQ1, design(add-related-book-experiments) OQ4 | `add-related-books` 또는 `add-recommendation-evals` |
+| 1 | 소장 도서가 없는 요청에서 결과를 비울 유사도 문턱 | design(add-recommendation-experiments) OQ1, design(add-related-book-experiments) OQ4 | 비슷한 책은 문턱 없음으로 답함(`add-related-books` 결정 10). 주제로 찾기는 `add-topic-search-tool` 또는 `add-recommendation-evals` |
 | 2 | 질의 결(주제어·상황) 경계가 애매한 질의를 실제 대화 기록으로 다시 나눌지 | design(add-recommendation-experiments) OQ3 | 2단계 |
 | 3 | 섞인 기록(어린이 + 일반)에 어린이 조건을 걸지 | design(add-related-book-experiments) OQ1 | `add-recommendation-evals` |
-| 4 | 시리즈의 다음 권(권차 순서) | design(add-related-book-experiments) OQ2 | `add-related-books` |
-| 5 | 인기 기간 180일 | design(add-related-book-experiments) OQ3 | `add-loan-signals` |
+| 4 | 시리즈의 다음 권(권차 순서) | design(add-related-book-experiments) OQ2 | 권차 정규화와 함께(`add-related-books`에서 미룸, 그 design OQ2) |
+| 5 | 인기 기간 180일(우리 도서관), 정보나루 인기 기간 | design(add-related-book-experiments) OQ3 | 우리 도서관 180일은 실제 대출 행이 쌓인 뒤. 정보나루 인기 기간은 `add-loan-signal-store`(미룬 일 D.1) |
 | 6 | 평가 표본 87권(찾기·AI 사서 평가)을 세 출처로 바꿀지 | design(add-bibliographic-sources) OQ1 | 그 평가를 다시 손볼 때 |
 | 7 | 한 출처가 막힌 채 만든 공식 서지나 옛 YES24 공식 서지에 빠진 필드(KDC, 부가기호)를 채우는 보완 실행 | design(add-bibliographic-sources) OQ2 | 실제 기관 채움 전 |
 | 8 | 카카오 값(정가, 출간일)의 주기적 갱신 | design(add-bibliographic-sources) OQ3 | 서비스 전 확인 결과에 따라 |
