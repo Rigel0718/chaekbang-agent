@@ -1,7 +1,7 @@
 schema: spec-driven
 context: |
   사서 없는 작은도서관용 AI 사서 웹 서비스 백엔드 (FastAPI, SQLAlchemy 2.0 async, PostgreSQL).
-  코딩 규칙과 설계 원칙은 CLAUDE.md, 전체 설계는 docs/design.md를 따른다.
+  코딩 규칙과 설계 원칙은 CLAUDE.md, 전체 설계는 docs/design.md(주제별 문서는 docs/의 recommendation, data-sources, roadmap, glossary)를 따른다.
   스펙 본문은 한국어, 요구사항 키워드(SHALL/MUST/WHEN/THEN)는 영어로 쓴다.
 
 # Project context (optional)
@@ -34,3 +34,9 @@ context: |
 #     archive:
 #       guidance:
 #         - Summarize the archive outcome before finishing
+
+operations:
+  archive:
+    guidance:
+      - archive 전에 docs/roadmap.md를 고친다. 이 change의 상태, 바뀐 확정된 기본값과 근거 경로, 새로 미룬 일
+      - CLAUDE.md "현재 단계"는 진행 중 change와 다음 change만 세 줄 안에 둔다. 결정과 수치는 CLAUDE.md에 쓰지 않는다
