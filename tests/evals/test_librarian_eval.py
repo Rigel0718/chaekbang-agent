@@ -10,12 +10,14 @@ from evals.librarian.checks import (
     asks_personal,
     children_general,
     fallback_ratio,
+    invented_basis,
     invented_title,
     not_held,
+    related_met,
     says_no_description,
     score,
 )
-from evals.librarian.scenarios import SCENARIOS, Expect, Scenario
+from evals.librarian.scenarios import SCENARIOS, Expect, RelatedCall, Scenario
 
 OPENSPEC = Path(__file__).resolve().parents[2] / "openspec"
 
@@ -181,5 +183,53 @@ def test_unknown_trace_fails(tmp_path: Path) -> None:
 def test_scenario_ids_unique() -> None:
     ids = [s.id for s in SCENARIOS]
     assert len(ids) == len(set(ids))
-    # 실행 비용을 가늠하는 상한. 안내 시나리오 11개를 더해 23개다(add-library-guide)
-    assert 10 <= len(SCENARIOS) <= 25
+    # 실행 비용을 가늠하는 상한. 안내 시나리오 11개를 더해 23개(add-library-guide), 관련 책
+    # 시나리오 4개를 더해 27개다(add-related-books)
+    assert 10 <= len(SCENARIOS) <= 30
+
+
+# --- 관련 책 시나리오 ---
+
+
+def _related_turn(inputs, related, ids=(), found=(), selected=(), reason="같은 시리즈예요"):
+    turn = _turn(ids=ids)
+    turn.answer["recommendations"] = [{"library_book_id": i, "reason": reason} for i in ids]
+    turn.related_inputs, turn.related = tuple(inputs), tuple(related)
+    turn.found, turn.selected = tuple(found), tuple(selected)
+    return turn
+
+
+def _related_scenario(related: RelatedCall) -> Scenario:
+    return Scenario("r", ("비슷한 거",), Expect.RELATED, children=False, traces=(), related=related)
+
+
+def test_related_met_with_picked_book() -> None:
+    """관련 책: 고른 책 id로 부르고 추천이 결과 안에 있으면 기대가 맞는다."""
+    scenario = _related_scenario(RelatedCall.BOOK)
+    ok = ScenarioResult(scenario, [_related_turn([1], [2], ids=[2], selected=[1])])
+    assert related_met(ok)
+    outside = ScenarioResult(scenario, [_related_turn([1], [2], ids=[2, 3], selected=[1])])
+    assert not related_met(outside)
+    other_book = ScenarioResult(scenario, [_related_turn([5], [2], ids=[2], selected=[1])])
+    assert not related_met(other_book)
+    no_call = ScenarioResult(scenario, [_related_turn([], [], ids=[2], selected=[1])])
+    assert not related_met(no_call)
+
+
+def test_related_met_for_anything() -> None:
+    """관련 책: 아무거나는 null로 불러야 하고, 결과가 비면 추천을 묻지 않는다."""
+    scenario = _related_scenario(RelatedCall.EMPTY)
+    assert related_met(ScenarioResult(scenario, [_related_turn([None], [], ids=[])]))
+    assert not related_met(ScenarioResult(scenario, [_related_turn([1], [2], ids=[2], found=[1])]))
+
+
+def test_invented_basis() -> None:
+    """관련 책: 이유의 수상·판매 같은 말이 그 책 서지 글에 없으면 위반이다."""
+    catalog = _catalog()
+    catalog.texts[1] = "공룡 대탐험\n2020년 어린이 도서상 수상작"
+    good = _related_turn([1], [1, 2], ids=[1], reason="수상작이에요")
+    assert invented_basis(good, catalog) == []
+    bad = _related_turn([1], [1, 2], ids=[2], reason="베스트셀러예요")
+    assert invented_basis(bad, catalog) == ["#2 베스트셀러"]
+    no_tool = _related_turn([], [], ids=[2], reason="베스트셀러예요")
+    assert invented_basis(no_tool, catalog) == []

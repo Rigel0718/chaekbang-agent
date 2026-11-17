@@ -16,6 +16,7 @@ from app.library.librarian import LibrarianAnswer, Recommendation, build_librari
 from app.library.models.catalog import LibraryBook
 from app.library.recommendation.cards import build_cards
 from app.library.recommendation.search import SEARCH_LIMIT, search_collection
+from app.library.services.related import similar_for_book
 from app.library.tools import DESCRIPTION_LIMIT, SEARCH_COLLECTION
 from evals.librarian.catalog import BookState, Sample, SampleCatalog, real_isbn
 from evals.librarian.runner import run_scenario
@@ -241,3 +242,43 @@ async def test_guide_scenarios_pipeline(session: AsyncSession, catalog: SampleCa
         )
         assert empty.violations == {"invented_guide": ["20시"]}
         assert not empty.expectation_met
+
+
+async def test_related_scenarios_pipeline(session: AsyncSession, catalog: SampleCatalog) -> None:
+    """관련 책 평가: 고른 책 턴, 관련 책 tool 입력, 결과 다시 구하기, 판정이 가짜 LLM으로 돈다."""
+    from evals.librarian.guide import shelve_one
+    from tests.library.librarian_helpers import call, turn
+
+    await shelve_one(session, catalog)
+    picked = catalog.shelved or 0
+    expected = [
+        i.candidate.library_book.id
+        for i in await similar_for_book(session, catalog.library_id, picked)
+    ]
+    llm = FakeLlm(
+        [
+            turn(call("find_related_books", {"library_book_id": picked})),
+            submit("비슷한 책이에요", *expected[:2])
+            if expected
+            else submit("없어요", suggest=True),
+        ]
+    )
+    result = await run_scenario(
+        session, llm, _profile(catalog), catalog, _scenario("related-picked")
+    )
+    assert result.last.selected == (picked,)
+    assert result.last.related_inputs == (picked,)
+    assert list(result.last.related) == expected
+    assert result.violations == {} and result.expectation_met
+
+    llm = FakeLlm(
+        [
+            turn(call("find_related_books", {"library_book_id": None})),
+            submit("없어요", suggest=True),
+        ]
+    )
+    anything = await run_scenario(
+        session, llm, _profile(catalog), catalog, _scenario("related-anything")
+    )
+    assert anything.last.related_inputs == (None,)
+    assert anything.expectation_met
