@@ -34,3 +34,9 @@ context: |
 #     archive:
 #       guidance:
 #         - Summarize the archive outcome before finishing
+
+operations:
+  archive:
+    guidance:
+      - archive 전에 docs/roadmap.md를 고친다. 이 change의 상태, 바뀐 확정된 기본값과 근거 경로, 새로 미룬 일
+      - CLAUDE.md "현재 단계"는 진행 중 change와 다음 change만 세 줄 안에 둔다. 결정과 수치는 CLAUDE.md에 쓰지 않는다
