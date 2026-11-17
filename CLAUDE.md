@@ -28,7 +28,7 @@ change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾�
 | 위치 | 역할 |
 | --- | --- |
 | `docs/design.md` | 왜 만드는지, 전체 그림. 배경 참고용이며 요구사항의 기준은 아니다 |
-| `app/*/README.md` | 패키지별 역할과 규칙. 패키지를 고칠 때 먼저 읽는다 |
+| `app/*/README.md` | 패키지별 역할과 규칙. 패키지 파일을 다루면 그 패키지의 `CLAUDE.md`(`@README.md` 한 줄)가 불러온다. 새 패키지에 README를 두면 같은 `CLAUDE.md`도 둔다 |
 | `api-guides/` | 외부 API 문서. YES24(`yes24-open-api-guide/`), 도서관 정보나루(`data4library.md` 원본, `data4library_project.md` 이 프로젝트에 쓰는 부분, `data4library_ideas.md` 확장 아이디어), 카카오 책 검색(`kakao_search_api_guide.md`). 문서와 실제 응답이 다른 곳이 있어 새 필드는 실제 응답으로 확인한다 |
 | `CLAUDE.md` | 코딩 규칙과 설계 원칙. 모든 change에 적용된다 |
 | `openspec/specs/` | 기능별 요구사항. 현재 시스템이 실제로 하는 일의 기준(source of truth) |
