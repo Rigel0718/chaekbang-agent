@@ -5,8 +5,8 @@
 - 연결되지 않은 책: 기관 도서 저자 키(`library_books.author_keys`)
 
 연결된 책은 기관이 적은 저자를 보지 않는다(표시 값과 같은 원칙). 그린이는 기본에 넣지 않는다.
-점수와 다른 신호와 합치기는 추천 실험(`add-recommendation-experiments`)의 일이고, REST와 tool에는
-아직 잇지 않는다(`add-related-books`).
+점수와 다른 신호와 합치기는 추천 실험(`add-recommendation-experiments`)의 일이고, 제품에는 비슷한
+책의 같은 저자 신호로 나간다(`app/library/services/related.py`).
 """
 
 from sqlalchemy import ColumnElement, Select, Text, case, func, literal, select

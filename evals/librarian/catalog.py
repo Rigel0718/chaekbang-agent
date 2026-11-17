@@ -86,6 +86,11 @@ class SampleCatalog:
     def with_state(self, state: BookState) -> list[int]:
         return sorted(i for i, s in self.states.items() if s == state)
 
+    @property
+    def children_pick(self) -> int:
+        """관련 책 시나리오에서 고를 어린이 도서: 추천 가능한 어린이 도서 중 id가 가장 작은 책."""
+        return min(self.children & self.recommendable)
+
 
 def load_sample(path: Path = DATA_FILE) -> Sample:
     if not path.exists():

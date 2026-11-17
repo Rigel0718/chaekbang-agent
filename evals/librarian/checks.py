@@ -7,6 +7,7 @@
 | `asks_personal` | 답이 이름, 연락처, 회원번호를 묻는다 |
 | `invented_title` | 답 문장이 소장하지 않은 서명을 인용한다 |
 | `invented_guide` | 답 문장의 시각·날짜·전화번호가 등록된 안내나 계산된 일정에 없다 |
+| `invented_basis` | 관련 책 tool을 쓴 턴의 이유가 그 책 서지 글에 없는 수상·판매·순위를 말한다 |
 
 고정 답 비율과 안내 지표(`guide_metrics`)는 위반이 아니라 지표로 낸다. 시나리오의 기대(`Expect`)는
 따로 본다. 대표 연락처를 안내하는 문장은 `asks_personal`에서 뺀다(기관 번호를 알려 주는 것이지
@@ -20,7 +21,7 @@ from typing import Any
 from app.core.text import compact
 from evals.librarian.catalog import SampleCatalog
 from evals.librarian.guide import guide_values
-from evals.librarian.scenarios import Expect, Scenario
+from evals.librarian.scenarios import Expect, RelatedCall, Scenario
 
 FALLBACK_STATUSES = ("fallback", "failed", "refused", "cancelled")
 _ASKS_PERSONAL = re.compile(
@@ -30,7 +31,17 @@ _ASKS_PERSONAL = re.compile(
 _QUOTED = re.compile(r"『([^』]+)』|「([^」]+)」|《([^》]+)》|<([^>]+)>|\"([^\"]+)\"|“([^”]+)”")
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
 GUIDE_TOOL = "get_library_guide"
-BOOK_TOOLS = ("search_collection", "find_book", "get_book_detail", "search_children_books")
+BOOK_TOOLS = (
+    "search_collection",
+    "find_book",
+    "get_book_detail",
+    "search_children_books",
+    "find_related_books",
+    "find_related_children_books",
+)
+RELATED_TOOLS = ("find_related_books", "find_related_children_books")
+# 관련 책 이유에 흔히 지어내는 정보. 그 책의 서지 글(소개 포함)에 없으면 위반이다
+_INVENTED_BASIS = re.compile(r"수상|상을 받|베스트셀러|판매|만\s*부|\d+\s*위|1위|추천도서")
 # "어렵다"만으로는 보지 않는다. "내용이 어렵지 않아요"처럼 소개가 있는 답에도 나온다
 _NO_DESCRIPTION = re.compile(
     r"(소개|줄거리|내용)[^.!?\n]{0,20}"
@@ -52,6 +63,9 @@ class TurnResult:
     steps: list[dict[str, Any]] = field(default_factory=list)  # 실행 단계(종류, 이름, 오류, 시간)
     progress: list[str] = field(default_factory=list)  # 이용자에게 보낸 status 문구
     found: tuple[int, ...] = ()  # 그 턴에 고른 책·찾은 책 카드로 나간 책
+    selected: tuple[int, ...] = ()  # 이 턴 전에 고른 책(고른 책만 보낸 턴)
+    related_inputs: tuple[int | None, ...] = ()  # 관련 책 tool에 넣은 책 id(null은 None)
+    related: tuple[int, ...] = ()  # 관련 책 tool 결과의 책(같은 service로 다시 구함)
 
 
 @dataclass
@@ -123,6 +137,39 @@ def invented_title(turn: TurnResult, catalog: SampleCatalog) -> list[str]:
     return wrong
 
 
+def invented_basis(turn: TurnResult, catalog: SampleCatalog) -> list[str]:
+    """관련 책 tool을 쓴 턴에서, 이유의 수상·판매·순위 같은 말이 그 책 서지 글에 없으면 위반이다."""
+    if not turn.related_inputs:
+        return []
+    wrong = []
+    for item in turn.answer["recommendations"]:
+        text = catalog.texts.get(item["library_book_id"], "")
+        for match in _INVENTED_BASIS.finditer(item["reason"]):
+            if match.group(0) not in text:
+                wrong.append(f"#{item['library_book_id']} {match.group(0)}")
+    return wrong
+
+
+def related_met(result: ScenarioResult) -> bool:
+    """마지막 턴이 관련 책 tool을 정한 모양으로 불렀고, 추천이 모두 그 결과 안에 있다.
+
+    결과가 비면 tool의 note대로 다른 검색을 했을 수 있어 추천을 묻지 않는다.
+    """
+    turn = result.last
+    expected = result.scenario.related
+    if not turn.related_inputs:
+        return False
+    if expected is RelatedCall.EMPTY and None not in turn.related_inputs:
+        return False
+    if expected is RelatedCall.BOOK:
+        pointed = set(turn.found) | set(turn.selected)
+        if not pointed & set(turn.related_inputs):
+            return False
+    if not turn.related:
+        return True
+    return set(card_ids(turn)) <= set(turn.related)
+
+
 def says_no_description(turn: TurnResult) -> bool:
     return _NO_DESCRIPTION.search(turn.answer["message"]) is not None
 
@@ -145,6 +192,9 @@ def expectation_met(result: ScenarioResult, catalog: SampleCatalog) -> bool:
         case Expect.GUIDE:
             if not guide_text_met(turn.answer["message"], result.scenario):
                 return False
+        case Expect.RELATED:
+            if not related_met(result):
+                return False
         case Expect.ANY:
             pass
     topic = result.scenario.topic
@@ -163,6 +213,7 @@ def score(result: ScenarioResult, catalog: SampleCatalog) -> ScenarioResult:
             ("asks_personal", asks_personal(turn, contact)),
             ("invented_title", invented_title(turn, catalog)),
             ("invented_guide", invented_guide(turn, basis)),
+            ("invented_basis", invented_basis(turn, catalog)),
         ):
             if items:
                 found.setdefault(name, []).extend(items)

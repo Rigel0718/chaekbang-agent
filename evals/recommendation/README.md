@@ -84,10 +84,21 @@ uv run python -m evals.recommendation.review similar --sample --since <백업> -
 
 ## 결과
 
-표와 근거는 change의 design "결과"에 있다(`openspec/changes/…/add-recommendation-experiments/design.md`, `add-related-book-experiments/design.md`).
+표와 근거는 change의 design "결과"에 있다(`openspec/changes/…/add-recommendation-experiments/design.md`, `add-related-book-experiments/design.md`, `add-loan-signals/design.md`, `add-related-books/design.md`).
 
 - **주제로 찾기**: 키워드 순위 + 벡터 순위 RRF(k 60, 1:1, `hybrid-k60`)가 지금 키워드 검색을 이겼다. 서명 가나다순 뒤 기준은 조정 0.453 → 0.519, 확인 0.384 → 0.522(`data/runs/20261116-112024`).
 - **비슷한 책**: 벡터 이웃(`sim-vec`, `full`)을 채택 규칙으로 넘은 변형이 없다. 규칙 신호(같은 시리즈·같은 저자) RRF는 품질이 같다. 텍스트 종류는 책→책에서도 `full`이다(`data/runs/20261116-153444`).
 - **최근 기록**: 벡터 평균(`hist-mean`)이 책별 RRF(k 60)를 이겼다(`data/runs/20261116-153457`).
 - 같은 KDC 세목과 우리 도서관 인기는 YES24 실험 장서에서 0건이었다.
 - **세 출처로 다시 채운 뒤**(`add-bibliographic-sources`, 2026-11-17): A(세 출처)에서 `hybrid-k60`·`hist-mean`은 그대로이고, `sim-rrf`가 정보나루 KDC 덕에 같은 KDC 세목 신호가 14권에서 값을 가지면서 처음으로 채택 규칙을 넘었다(조정 +0.052). B(YES24 뺌)는 대체로 낮다(최근 기록 조정 -0.224). A 최종 실행 `data/runs/20261117-025721`·`025753`·`025756`.
+- **남겨 둔 분야**(`--holdout`, `add-related-books`, 2026-11-17, 표본 검수 ② 20건 중 2건 고침): 정해 둔 변형만 한 번, 같은 명령으로 두 번 같다.
+
+| 세트 | 기준 | 변형 | nDCG@5 | 차이 (이김·비김·짐, 95% 구간) | 읽기 | run |
+| --- | --- | --- | --- | --- | --- | --- |
+| 주제 8개 | `current` 0.708 | `hybrid-k60` | 0.805 | +0.097 (4·3·1, -0.030 ~ +0.222) | 방향 같음 | `20261117-163906` |
+| 비슷한 책 8권 | `sim-vec` 0.669 | `sim-rrf` = `sim-best` | 0.666 | -0.004 (2·5·1, -0.030 ~ +0.012) | 차이 없음 | `163913` |
+| 최근 기록 4개 | `hist-mean` 0.785 | `hist-best` | 0.785 | 0.000 (0·4·0) | 같은 설정 | `163915` |
+
+  남겨 둔 분야에는 같은 KDC 세목 신호가 기준 책 8권 중 1권에만 있다. 설정은 바꾸지 않는다.
+- **최소 유사도 진단**(`threshold`, `add-related-books` 결정 10): `sim-rrf` 상위 10권 중 근거가 벡터 이웃뿐인 책의 코사인을 라벨별로 센다. 조정 87건에서 0 라벨(가운데 0.400)과 2 라벨(가운데 0.431)이 0.35 ~ 0.50에 겹쳐, 0을 절반 빼는 문턱(0.40)이 2도 18%를 뺀다. 문턱 없음(`min_vector_similarity` 기본 `None`). 표는 `data/runs/20261117-152916/threshold.md`.
+- **제품 경로**: `app/library/services/related.py`가 `SimilarSettings()`·`HistorySettings()` 기본값을 그대로 쓴다. 여기서 기본값을 바꾸면 비슷한 책 API와 AI 사서 tool이 함께 바뀐다. 기본값을 바꿀 때는 스펙(`catalog/related-recommendation`)을 먼저 고친다.

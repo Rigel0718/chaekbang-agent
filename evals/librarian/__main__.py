@@ -28,7 +28,9 @@ from sqlalchemy.pool import NullPool
 from app.agent.openai_client import OpenAiClient
 from app.core.config import get_settings
 from app.core.migrations import alembic_config
+from app.features.children.service import related_scope as children_related_scope
 from app.features.children.tools import children_extension
+from app.library.hooks import register_related_scope
 from app.library.librarian import build_librarian_profiles
 from evals.librarian.catalog import DATA_FILE, SampleMissingError, load_catalog, load_sample
 from evals.librarian.checks import ScenarioResult, card_ids, fallback_ratio, guide_metrics
@@ -37,7 +39,14 @@ from evals.librarian.runner import run_scenario
 from evals.librarian.scenarios import SCENARIOS
 
 RUNS_DIR = DATA_FILE.parent / "runs"
-CHECKS = ("not_held", "children_general", "asks_personal", "invented_title", "invented_guide")
+CHECKS = (
+    "not_held",
+    "children_general",
+    "asks_personal",
+    "invented_title",
+    "invented_guide",
+    "invented_basis",
+)
 HEADER = "| 시나리오 | 상태 | 추천 | 어린이 판단 | 기대 | " + " | ".join(CHECKS) + " |"
 
 
@@ -132,6 +141,8 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
     async with rollback_session(settings.test_database_url) as session, _clock():
         catalog = await load_catalog(session, sample)
         await shelve_one(session, catalog)
+        # 서버(`app/main.py`)와 같은 기관 개별 기능을 조립한다
+        register_related_scope(children_related_scope)
         profile = build_librarian_profiles((children_extension(),))[catalog.loan_mode]
         for index, scenario in enumerate(scenarios, start=1):
             result = await run_scenario(session, llm, profile, catalog, scenario)

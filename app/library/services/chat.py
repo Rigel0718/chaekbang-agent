@@ -10,6 +10,10 @@
 LLM보다 먼저 `found` 사건으로 보낸다. 고른 책만 보낸 턴은 LLM을 부르지 않는다. 책 표시
 (`[고른 책: #12 데미안]`)는 이용자 문장과 따로 `note`에 두고 LLM에게는 코드의 안내로 보낸다.
 서명의 "아이" 같은 낱말이 어린이 요청 판단에 섞이지 않게 하기 위해서다.
+
+세션의 책: 이용자 행에는 고른 책·찾은 책의 id를, 답 행에는 카드가 된 추천 책의 id를 책 id 칸
+(`library_book_ids`)에 적는다. 실행 전에 그 세션의 책(최신 순, 서로 다른 책)을 실행 값
+(`SESSION_BOOKS`)으로 넘겨 관련 책 tool의 최근 기록으로 쓴다. 세션과 함께 지워진다.
 """
 
 import asyncio
@@ -42,6 +46,7 @@ from app.library.recommendation.lookup import found_in_text, get_findable
 from app.library.recommendation.search import Candidate
 from app.library.schemas.catalog import BookSummary
 from app.library.schemas.librarian import AnswerPayload, BookCard
+from app.library.services.related import SESSION_BOOKS
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +75,7 @@ class PreparedTurn:
     history: History
     note: str | None = None  # 이번 턴의 책 표시. LLM에게는 이용자 문장 바로 앞의 안내로 간다
     found: tuple[BookSummary, ...] = ()  # 고른 책이나 문장 속 서명으로 찾은 책
+    session_book_ids: tuple[int, ...] = ()  # 이번 턴까지 그 세션의 책, 최신 순, 서로 다른 책
 
 
 def _idle() -> timedelta:
@@ -175,6 +181,18 @@ async def _history(session: AsyncSession, library_id: int, session_id: uuid.UUID
     return tuple(messages)
 
 
+async def session_books(
+    session: AsyncSession, library_id: int, session_id: uuid.UUID
+) -> tuple[int, ...]:
+    """그 세션 메시지의 책 id. 최신 메시지가 먼저이고, 같은 책은 처음 나온 자리에 한 번만 둔다."""
+    rows = await session.scalars(
+        select(ChatMessage.library_book_ids)
+        .where(ChatMessage.library_id == library_id, ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.id.desc())
+    )
+    return tuple(dict.fromkeys(book_id for ids in rows for book_id in ids or ()))
+
+
 def _books_note(template: str, books: Sequence[Candidate]) -> str:
     listed = ", ".join(f"#{c.library_book.id} {c.library_book.shown('title')}" for c in books)
     return template.format(books=listed)
@@ -222,10 +240,12 @@ async def prepare_turn(
             role=ChatRole.USER,
             content=masked or "",
             note=note,
+            library_book_ids=[c.library_book.id for c in books],
         )
     )
     await session.commit()
-    return PreparedTurn(library_id, chat.id, loan_mode, masked, history, note, found)
+    books_so_far = await session_books(session, library_id, chat.id)
+    return PreparedTurn(library_id, chat.id, loan_mode, masked, history, note, found, books_so_far)
 
 
 def _answer_text(message: str, cards: Sequence[BookCard]) -> str:
@@ -268,6 +288,7 @@ async def _finish(
             session_id=prepared.session_id,
             role=ChatRole.ASSISTANT,
             content=_answer_text(answer.message, cards),
+            library_book_ids=[c.library_book_id for c in cards],
         )
     )
     add_events(session, prepared.library_id, done.run_id, cards)
@@ -309,6 +330,7 @@ async def stream_turn(
         library_id=prepared.library_id,
         user_text=prepared.user_text,
         history=(*prepared.history, *note),
+        tool_values={SESSION_BOOKS: prepared.session_book_ids},
     )
     try:
         yield ServerEvent("session", {"session_id": str(prepared.session_id)})

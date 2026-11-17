@@ -6,8 +6,8 @@
 범위(그 기관, 추천 가능, 부르는 쪽이 넘긴 조건)는 신호마다 순위를 매기기 전에 건다. 조건의 뜻
 (예: 어린이 도서)은 여기서 모른다. 기준 책 자신과 같은 책의 다른 판본은 결과에 내지 않는다.
 
-설정은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지 않는다
-(`add-related-books`).
+설정은 추천 실험(`evals/recommendation`)이 정한다. 제품 경로는 `app/library/services/related.py`가
+기본 설정으로 부른다.
 """
 
 import re
@@ -396,6 +396,9 @@ class SimilarSettings:
     rrf_k: int = RRF_K
     series_cap: int | None = None
     mmr_lambda: float | None = None
+    # 근거가 벡터 이웃 하나뿐인 책의 최소 코사인 유사도. None이면 빼지 않는다
+    # (add-related-books 결정 10)
+    min_vector_similarity: float | None = None
     limit: int = RELATED_LIMIT
 
 
@@ -533,6 +536,57 @@ def _fuse(rankings: Mapping[str, Sequence[int]], settings: SimilarSettings) -> l
     return fuse_rrf(rankings, k=settings.rrf_k, weights=settings.signals)
 
 
+async def vector_similarities(
+    session: AsyncSession,
+    model_name: str,
+    library_id: int,
+    library_book_id: int,
+    candidates: Sequence[int],
+    weights: Mapping[TextKind, float] | None = None,
+) -> dict[int, float]:
+    """후보마다 기준 책의 저장된 벡터와의 코사인 유사도. 벡터가 없는 후보는 없다."""
+    if not candidates:
+        return {}
+    found = await neighbors_of(
+        session,
+        model_name,
+        library_id=library_id,
+        library_book_ids=[library_book_id],
+        limit=len(candidates),
+        weights=weights,
+        within=select(LibraryBook.id).where(LibraryBook.id.in_(list(candidates))),
+    )
+    return {f.library_book.id: f.similarity for f in found}
+
+
+def vector_only(item: Ranked) -> bool:
+    """근거가 벡터 이웃 하나뿐인 결과."""
+    return set(item.ranks) == {VECTOR}
+
+
+async def _drop_weak_vectors(
+    session: AsyncSession,
+    model_name: str,
+    library_id: int,
+    library_book_id: int,
+    ranked: list[Ranked],
+    settings: SimilarSettings,
+) -> list[Ranked]:
+    """근거가 벡터 하나뿐이고 유사도가 문턱보다 낮은 책을 뺀다. 뺀 자리를 채우지 않는다."""
+    threshold = settings.min_vector_similarity
+    if threshold is None:
+        return ranked
+    weak = [item.library_book_id for item in ranked if vector_only(item)]
+    similarity = await vector_similarities(
+        session, model_name, library_id, library_book_id, weak, settings.weights
+    )
+    return [
+        item
+        for item in ranked
+        if not vector_only(item) or similarity.get(item.library_book_id, 0.0) >= threshold
+    ]
+
+
 async def find_similar(
     session: AsyncSession,
     model_name: str,
@@ -558,13 +612,11 @@ async def find_similar(
         settings=settings,
         loan_signals=loan_signals,
     )
+    fused = await _drop_weak_vectors(
+        session, model_name, library_id, library_book_id, _fuse(rankings, settings), settings
+    )
     ranked = await _diversify(
-        session,
-        model_name,
-        library_id,
-        _fuse(rankings, settings),
-        settings.series_cap,
-        settings.mmr_lambda,
+        session, model_name, library_id, fused, settings.series_cap, settings.mmr_lambda
     )
     return ranked[: settings.limit]
 

@@ -668,3 +668,77 @@ async def test_response_is_replayed_unchanged(session: AsyncSession, library_a: 
     assert messages[1] is first and messages[1].raw is raw
     assert llm.requests[0]["system"] == llm.requests[1]["system"]
     assert llm.requests[0]["tools"] == llm.requests[1]["tools"]
+
+
+# --- 실행 값 주입 ---
+
+
+class ValuesRecorder:
+    """tool이 받은 실행 값을 남긴다."""
+
+    def __init__(self) -> None:
+        self.values: list[dict] = []
+
+    async def __call__(self, ctx, data):  # noqa: ANN001, ANN204
+        self.values.append(dict(ctx.values))
+        with pytest.raises(TypeError):
+            ctx.values["session_book_ids"] = []  # type: ignore[index]  # 읽기 전용
+        return "결과"
+
+
+async def test_run_values_reach_tool(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 실행 값 주입 / 실행 값 전달"""
+    handler = ValuesRecorder()
+    values = {"session_book_ids": [3, 5]}
+    llm = FakeLlm([tool_turn(call("echo", {"keyword": "공룡"})), answer_turn()])
+    await collect(session, llm, profile(echo_tool(handler)), library_a.id, tool_values=values)
+    assert handler.values == [{"session_book_ids": [3, 5]}]
+
+
+async def test_llm_cannot_set_run_values(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 실행 값 주입 / LLM이 같은 이름을 입력에 넣음"""
+    handler = ValuesRecorder()
+    arguments = {"keyword": "공룡", "session_book_ids": [9]}
+    llm = FakeLlm([tool_turn(call("echo", arguments)), answer_turn()])
+    await collect(
+        session,
+        llm,
+        profile(echo_tool(handler)),
+        library_a.id,
+        tool_values={"session_book_ids": [3]},
+    )
+    assert handler.values == []
+    result = llm.requests[1]["messages"][-1]
+    assert isinstance(result, ToolResult) and result.is_error
+
+
+async def test_run_values_not_recorded(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 실행 값 주입 / 실행 기록에 없음"""
+    marker = 987654321
+    llm = FakeLlm([tool_turn(call("echo", {"keyword": "공룡"})), answer_turn()])
+    events = await collect(
+        session,
+        llm,
+        profile(echo_tool(ValuesRecorder())),
+        library_a.id,
+        tool_values={"session_book_ids": [marker]},
+    )
+    run_id = done(events).run_id
+    row = await _run_row(session, library_a.id, run_id)
+    steps = await _steps(session, library_a.id, run_id)
+    stored = " ".join(
+        str(value)
+        for item in [row, *steps]
+        for value in vars(item).values()
+        if not str(value).startswith("<")
+    )
+    assert str(marker) not in stored
+    assert "session_book_ids" not in stored
+
+
+async def test_no_run_values(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 실행 값 주입 / 넘기지 않은 실행"""
+    handler = ValuesRecorder()
+    llm = FakeLlm([tool_turn(call("echo", {"keyword": "공룡"})), answer_turn()])
+    await collect(session, llm, profile(echo_tool(handler)), library_a.id)
+    assert handler.values == [{}]

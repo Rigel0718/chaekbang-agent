@@ -15,6 +15,7 @@ from app.core.errors import (
 )
 from app.features.children.api import router as children_router
 from app.features.children.hook import ChildrenHook
+from app.features.children.service import related_scope as children_related_scope
 from app.features.children.tools import children_extension
 from app.library.api import (
     auth,
@@ -30,12 +31,13 @@ from app.library.api import (
     members,
     staff,
 )
-from app.library.hooks import register_hook
+from app.library.hooks import register_hook, register_related_scope
 from app.library.librarian import build_librarian_profiles
 from app.library.services.chat import purge_forever
 
 # 기관 개별 기능을 조립한다. 기능을 빼려면 이 줄들과 라우터를 지우면 된다.
 register_hook(ChildrenHook())
+register_related_scope(children_related_scope)
 LIBRARIAN_EXTENSIONS = (children_extension(),)
 
 

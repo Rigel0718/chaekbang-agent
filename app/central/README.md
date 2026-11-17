@@ -71,7 +71,7 @@
 
 - 도서별 이용 분석(`usageAnalysisList`)에서 함께 대출된 책·마니아 추천·다독자 추천의 ISBN 순위(최근 36개월, 최대 10권씩)와 기준 책 대출 수를, 인기대출도서(`loanItemSrch`)에서 연령 묶음(`AGE_GROUPS`: 전체, 어린이 `0;6;8`, 청소년, 성인)과 기간마다 순위 순서의 ISBN과 대출 수를 읽는다.
 - ISBN은 13자리로 정리하고(10자리는 바꾼다), 정리할 수 없으면 버리며, 같은 ISBN은 처음 순위만 둔다. 서명·저자·표지·키워드·이용자 그룹은 읽지 않는다.
-- 전국 공공도서관 기준이다. 기관이 가진 책만 남기는 것은 기관 공통(`app/library/recommendation/related.py`의 `held_ranking`)이 한다. 지금은 실험 장서 파일(`evals/collection/loans.py`)에만 받아 두고, 운영자 층 테이블은 채택되면 `add-related-books`에서 만든다.
+- 전국 공공도서관 기준이다. 기관이 가진 책만 남기는 것은 기관 공통(`app/library/recommendation/related.py`의 `held_ranking`)이 한다. 지금은 실험 장서 파일(`evals/collection/loans.py`)에만 받아 두고, 운영자 층 테이블은 정보나루 약관을 확인한 뒤 `add-loan-signal-store`에서 만든다.
 
 ### 출처별 이용 조건과 키
 

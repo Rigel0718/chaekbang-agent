@@ -18,7 +18,9 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.model_base import Base, str_enum
@@ -59,6 +61,11 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     # 코드가 쓰는 책 표시(`[고른 책: #12 데미안]`). 이용자 문장과 따로 두어 판단 규칙에 섞지 않는다
     note: Mapped[str | None] = mapped_column(Text)
+    # 코드가 쓰는 기관 도서 id: 이용자 행은 고른 책·찾은 책, 답 행은 카드가 된 추천 책.
+    # 관련 책 tool의 최근 기록이 이 칸을 읽는다. 세션과 함께 지워진다
+    library_book_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), server_default=text("'{}'"), default=list
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

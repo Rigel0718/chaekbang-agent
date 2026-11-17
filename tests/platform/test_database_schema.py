@@ -120,6 +120,53 @@ async def test_chat_messages_note_column(engine: AsyncEngine) -> None:
     assert found["note"]["nullable"] is True
 
 
+async def test_chat_messages_book_ids_column(engine: AsyncEngine, migrated_db: str) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 대화 메시지의 책 id 칸"""
+    config = alembic_config(migrated_db)
+    await asyncio.to_thread(command.downgrade, config, "-1")
+    try:
+        async with engine.begin() as conn:
+            library_id = await conn.scalar(
+                text(
+                    "INSERT INTO libraries (name, type, loan_mode, default_loan_days) "
+                    "VALUES ('책 id 칸 도서관', 'small_library', 'internal', 14) RETURNING id"
+                )
+            )
+            session_id = uuid.uuid4()
+            await conn.execute(
+                text(
+                    "INSERT INTO chat_sessions (id, library_id, last_active_at) "
+                    "VALUES (:id, :library, now())"
+                ),
+                {"id": session_id, "library": library_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO chat_messages (library_id, session_id, role, content) "
+                    "VALUES (:library, :session, 'user', '옛 행')"
+                ),
+                {"library": library_id, "session": session_id},
+            )
+    finally:
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+    def columns(sync_conn):
+        return {c["name"]: c for c in inspect(sync_conn).get_columns("chat_messages")}
+
+    async with engine.begin() as conn:
+        found = await conn.run_sync(columns)
+        old = await conn.scalar(
+            text("SELECT library_book_ids FROM chat_messages WHERE library_id = :id"),
+            {"id": library_id},
+        )
+        await conn.execute(
+            text("DELETE FROM chat_sessions WHERE library_id = :id"), {"id": library_id}
+        )
+        await conn.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
+    assert found["library_book_ids"]["nullable"] is False
+    assert old == []
+
+
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:
     """[platform/database-schema] 마이그레이션으로 스키마 생성 / downgrade 후 재적용"""
     config = alembic_config(migrated_db)

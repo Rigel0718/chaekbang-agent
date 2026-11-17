@@ -169,6 +169,7 @@ def test_librarian_profile_without_features() -> None:
         assert [t.name for t in prof.tools] == [
             "search_collection",
             "find_book",
+            "find_related_books",
             "get_book_detail",
             "get_library_guide",
         ]

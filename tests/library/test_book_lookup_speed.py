@@ -59,6 +59,9 @@ async def test_lookup_speed(session: AsyncSession, library_a: Tenant) -> None:
         ),
         {"id": library_a.id},
     )
+    # 앞선 테스트의 롤백으로 자동 ANALYZE가 빈 표를 통계로 남겼을 수 있다. 같은 트랜잭션의 행도
+    # 세는 ANALYZE로 이 테스트가 넣은 5,000권을 계획에 반영한다(돌린 순서에 따라 계획이 바뀌지 않게)
+    await session.execute(text("ANALYZE library_books, holdings, books"))
     await find_books(session, library_a.id, "데미안")  # 첫 호출의 계획 준비를 빼고 잰다
     timings = {
         "find_typo": await _elapsed_ms(lambda: find_books(session, library_a.id, "데미얀 헤새")),

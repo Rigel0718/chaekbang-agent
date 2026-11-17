@@ -8,6 +8,10 @@
 안내 시나리오(`Expect.GUIDE`)는 평가 안내(`evals/librarian/guide.py`)와 고정한 날짜(2026-11-11
 수요일 14:00)를 기준으로 쓴다. `contains`의 항목은 모두 답에 있어야 하고, 튜플 항목은 그중 하나만
 있으면 된다.
+
+관련 책 시나리오(`Expect.RELATED`)는 `selected`의 책을 고른 턴(LLM 없음)으로 시작할 수 있다.
+`{children_title}`은 표본의 어린이 도서 하나의 서명으로 바뀐다. `related`는 마지막 턴에서 관련 책
+tool을 부를 모양이다: `book`은 고른 책·찾은 책의 id로, `empty`는 id 없이(null).
 """
 
 from dataclasses import dataclass
@@ -20,6 +24,17 @@ class Expect(StrEnum):
     NO_DESCRIPTION = "no_description"  # 소개 정보가 없다고 답함
     ANY = "any"  # 규칙 검사만 본다
     GUIDE = "guide"  # 답 문장이 contains를 모두 담고 absent를 담지 않음
+    RELATED = "related"  # 관련 책 tool을 related 모양으로 부르고, 추천이 그 결과 안에 있음
+
+
+class Picked(StrEnum):
+    SHELVED = "shelved"  # 서가 위치를 둔 책
+    CHILDREN = "children"  # 표본의 어린이 도서 하나
+
+
+class RelatedCall(StrEnum):
+    BOOK = "book"  # 고른 책·찾은 책의 id로 부른다
+    EMPTY = "empty"  # id 없이(null) 부른다
 
 
 class GuideSetup(StrEnum):
@@ -39,6 +54,8 @@ class Scenario:
     contains: tuple[str | tuple[str, ...], ...] = ()  # 답 문장에 있어야 할 값. 튜플은 그중 하나
     absent: tuple[str, ...] = ()  # 답 문장에 없어야 할 정규식
     searches_books: bool = False  # 안내 시나리오 중 책을 찾아야 답할 수 있는 것(지표에서 뺀다)
+    selected: Picked | None = None  # 첫 턴 전에 이 책을 고른다(고른 책만 보낸 턴, LLM 없음)
+    related: RelatedCall | None = None  # 마지막 턴에서 관련 책 tool을 부를 모양
 
 
 GENERAL_NO_PERSONAL = "[agent/librarian] 개인정보를 묻지 않음 / 일반 추천 대화"
@@ -47,6 +64,7 @@ GUIDE_ANSWER = "[agent/librarian] 등록된 안내로 답함"
 GUIDE_UNKNOWN = "[agent/librarian] 등록되지 않은 안내는 지어내지 않음"
 GUIDE_PHONE = "031-000-0000"  # evals/librarian/guide.py의 가상 대표 연락처
 TIME_PATTERN = r"\d{1,2}\s*시|\d{1,2}:\d{2}"
+RELATED = "[agent/librarian] 관련 책 요청에 답함"
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
@@ -226,5 +244,39 @@ SCENARIOS: tuple[Scenario, ...] = (
         topic="공룡",
         contains=(("13", "1시"),),
         searches_books=True,
+    ),
+    Scenario(
+        "related-picked",
+        ("비슷한 거 있어요?",),
+        Expect.RELATED,
+        children=False,
+        traces=(f"{RELATED} / 고른 책과 비슷한 책", f"{RELATED} / 근거를 지어내지 않음"),
+        selected=Picked.SHELVED,
+        related=RelatedCall.BOOK,
+    ),
+    Scenario(
+        "related-found",
+        ("『{shelved_title}』 재밌던데 이런 책 또 있어요?",),
+        Expect.RELATED,
+        children=False,
+        traces=(f"{RELATED} / 근거를 지어내지 않음",),
+        related=RelatedCall.BOOK,
+    ),
+    Scenario(
+        "related-anything",
+        ("아무거나 추천해 줘",),
+        Expect.RELATED,
+        children=False,
+        traces=(f"{RELATED} / 아무거나", GENERAL_NO_PERSONAL),
+        related=RelatedCall.EMPTY,
+    ),
+    Scenario(
+        "related-children",
+        ("7살 아이랑 볼 건데 이거랑 비슷한 책 더 있어요?",),
+        Expect.RELATED,
+        children=True,
+        traces=(CHILDREN_ONLY, f"{RELATED} / 근거를 지어내지 않음"),
+        selected=Picked.CHILDREN,
+        related=RelatedCall.BOOK,
     ),
 )
