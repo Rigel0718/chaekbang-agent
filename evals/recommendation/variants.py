@@ -138,7 +138,7 @@ KINDS: Mapping[str, Mapping[TextKind, float]] = {
 }
 
 # --- 단계의 승자 (실행 결과를 보고 고친다) ---
-BEST_INPUT = "text"  # 단계 1: 벡터 질의 입력
+BEST_INPUT = "text"  # 단계 1: 벡터 질의 입력(벡터만). 아래 변형들은 이 값을 고정해 쓴다
 BEST_KIND = "full"  # 단계 2·3': 텍스트 종류
 BEST_RRF_K = 60  # 단계 3
 BEST_KEYWORD_WEIGHT = 1.0  # 단계 3
@@ -146,6 +146,8 @@ BEST_SERIES_CAP: int | None = None  # 단계 4
 BEST_MMR: float | None = None  # 단계 5
 
 
+# 단계 1~5의 변형은 벡터 질의를 이용자 문장으로 고정한다. 제품 기본값(`TopicSettings()`)이 바뀌어도
+# 이전 실행과 같은 결과를 낸다(`add-topic-search-tool` design 결정 2).
 def _vector(kind: str, vector_input: str = BEST_INPUT) -> TopicSettings:
     return TopicSettings(keyword_weight=0, vector_input=vector_input, weights=KINDS[kind])
 
@@ -189,6 +191,8 @@ def _all() -> list[Variant]:
         Variant("mmr0.7", "5 MMR λ 0.7", _hybrid(series_cap=BEST_SERIES_CAP, mmr_lambda=0.7)),
         Variant("mmr0.5", "5 MMR λ 0.5", _hybrid(series_cap=BEST_SERIES_CAP, mmr_lambda=0.5)),
         Variant("best", "채택한 설정", _hybrid(series_cap=BEST_SERIES_CAP, mmr_lambda=BEST_MMR)),
+        Variant("hybrid-vkw", "6 합친 순위, 벡터 질의는 낱말", _hybrid(vector_input="keywords")),
+        Variant("hybrid-best", "제품 기본 설정(TopicSettings())", TopicSettings()),
     ]
 
 

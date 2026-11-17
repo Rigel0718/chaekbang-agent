@@ -75,6 +75,7 @@ class ScenarioResult:
     violations: dict[str, list[str]] = field(default_factory=dict)
     expectation_met: bool = True
     guide_basis: dict[str, Any] | None = None  # 판정 기준값(evals/librarian/guide.py)
+    topic_met: bool | None = None  # 주제 낱말이 있는 시나리오에서 추천 하나 이상이 그 낱말을 담음
 
     @property
     def last(self) -> TurnResult:
@@ -195,6 +196,11 @@ def expectation_met(result: ScenarioResult, catalog: SampleCatalog) -> bool:
         case Expect.RELATED:
             if not related_met(result):
                 return False
+        case Expect.NO_MATCH_OR_ON_TOPIC:
+            topic = result.scenario.topic or ""
+            if not ids:
+                return bool(turn.answer["suggest_book_request"])
+            return all(topic in catalog.texts.get(i, "") for i in ids)
         case Expect.ANY:
             pass
     topic = result.scenario.topic
@@ -219,6 +225,10 @@ def score(result: ScenarioResult, catalog: SampleCatalog) -> ScenarioResult:
                 found.setdefault(name, []).extend(items)
     result.violations = found
     result.expectation_met = expectation_met(result, catalog)
+    topic = result.scenario.topic
+    if topic is not None:
+        ids = card_ids(result.last)
+        result.topic_met = any(topic in catalog.texts.get(i, "") for i in ids)
     return result
 
 

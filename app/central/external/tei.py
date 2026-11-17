@@ -40,7 +40,7 @@ class TeiEmbedder:
         try:
             response = await self._http.request(method, path, **kwargs)
         except httpx.TimeoutException as exc:
-            raise EmbeddingError(EmbeddingFailure.SERVER_ERROR, "응답 시간 초과") from exc
+            raise EmbeddingError(EmbeddingFailure.TIMEOUT, "응답 시간 초과") from exc
         except httpx.TransportError as exc:
             raise EmbeddingError(EmbeddingFailure.UNREACHABLE, type(exc).__name__) from exc
         if response.status_code != httpx.codes.OK:

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from httpx import AsyncClient, Response
 
-from app.library.api.librarian import get_llm
+from app.library.api.librarian import get_llm, get_query_encoder
 from app.main import app
 from tests.agent.fakes import FakeLlm
 
@@ -32,8 +32,11 @@ class LlmSlot:
 async def fake_llm(_app: None) -> AsyncIterator[LlmSlot]:
     slot = LlmSlot(FakeLlm([]))
     app.dependency_overrides[get_llm] = lambda: slot.llm
+    # 임베딩 서버를 부르지 않는다. 인코더를 넘기는 테스트는 따로 덮어쓴다
+    app.dependency_overrides[get_query_encoder] = lambda: None
     yield slot
     app.dependency_overrides.pop(get_llm, None)
+    app.dependency_overrides.pop(get_query_encoder, None)
 
 
 @dataclass(frozen=True)

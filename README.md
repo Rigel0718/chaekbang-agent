@@ -202,6 +202,17 @@ uv run python -m evals.librarian --only dinosaur,not-held
 - 규칙 검사: 추천 가능하지 않은 책 추천, 어린이 요청의 일반 도서, 이름·연락처를 묻는 문장(대표 연락처 안내 문장은 뺀다), 문장 속 소장하지 않은 서명, 등록된 안내에 없는 시각·날짜·전화번호. 고정 답 비율과 안내 지표(안내 tool 사용률 등)도 낸다.
 - 안내 시나리오는 가상 평가 안내와 고정 날짜(2026-11-11 14:00)로 돈다. 판정 기준값은 결과 JSON의 `guide_basis`에 함께 남는다. 위반이나 기대 불일치가 있으면 종료 코드 1이다.
 - 서지는 실제 값이지만 기관과 사본 상태는 가상이다. 수치를 실제 서비스 성능으로 쓰지 않는다.
+- **벡터**: 표본을 넣을 때 두 층 벡터(종류 `full`)도 운영자 실행과 같은 적재 코드로 넣는다. 문서 벡터는 `evals/librarian/data/doc_vectors.json`에 캐시해 처음 한 번만 임베딩 서버로 인코딩한다(87권, CPU 약 2분). 평가 중 주제로 찾기의 질의는 LLM 낱말이 실행마다 달라 임베딩 서버가 필요하고, 같은 질의는 `data/query_vectors.json`에서 꺼낸다. 시작할 때 벡터 수와 캐시 적중 수를 출력한다. 서버 없이 돌리려면 `--no-vectors`(벡터 없음, 주제로 찾기는 키워드 순위만)다.
+
+```bash
+docker compose --profile embedding up -d embedder   # 평가 동안만 띄우고 끝나면 내린다
+uv run python -m evals.librarian
+uv run python -m evals.librarian --no-vectors --only dinosaur
+uv run python -m evals.librarian.compare <실행> <실행> ...   # 실행끼리 시나리오별로 나란히(LLM 없음, --out 파일)
+docker compose --profile embedding stop embedder
+```
+
+- 비교(`compare`)는 저장된 기록만 읽어 시나리오마다 기대 일치, 규칙 위반, 어린이 판단, 주제 낱말 일치, 검색 tool 호출 수, 단계 시간 합, 토큰을 실행별로 낸다. 같은 시나리오도 실행마다 흔들리므로 바꾸기 전과 뒤를 두 번씩 돌려 비교한다.
 
 ## 테스트와 린트
 

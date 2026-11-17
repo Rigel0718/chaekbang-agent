@@ -1,6 +1,7 @@
 """AI 사서 평가. 실제 LLM을 부르므로 돌리기 전에 알린다.
 
     uv run python -m evals.librarian [--model gpt-6-luna] [--only dinosaur,not-held] [--out DIR]
+                                     [--no-vectors]
 
 시나리오가 끝날 때마다 진행을 출력하고 `<DIR>/NN-<id>.json`에 저장한다. 끝나면 `summary.md`를 쓴다.
 기본 위치는 `evals/librarian/data/runs/<시각>-<모델>/`이다. 답에 표본 서지가 들어 있어 저장소에서
@@ -9,6 +10,10 @@
 테스트 DB(TEST_DATABASE_URL)의 트랜잭션 안에서 표본을 적재해 돌리고 되돌린다. 개발 DB는 쓰지 않는다.
 서지는 실제 값이지만 기관과 사본 상태는 가상이므로 수치를 실제 서비스 성능으로 쓰지 않는다.
 규칙 위반이나 기대 불일치가 있으면 실패(종료 코드 1)한다.
+
+표본을 넣을 때 벡터 두 층도 넣는다. 문서 벡터는 `data/doc_vectors.json`에 캐시해 처음 한 번만 임베딩
+서버로 인코딩한다. 평가 중 질의는 LLM 낱말이 실행마다 달라 임베딩 서버가 필요하고, 같은 질의는
+`data/query_vectors.json`에서 꺼낸다. `--no-vectors`는 벡터 없이(서버 없이) 돌린다.
 """
 
 import argparse
@@ -21,22 +26,33 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 from alembic import command
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.agent.openai_client import OpenAiClient
+from app.central.embedding import EmbeddingError, GuardedEmbedder
+from app.central.external.tei import TeiEmbedder
 from app.core.config import get_settings
 from app.core.migrations import alembic_config
 from app.features.children.service import related_scope as children_related_scope
 from app.features.children.tools import children_extension
 from app.library.hooks import register_related_scope
 from app.library.librarian import build_librarian_profiles
-from evals.librarian.catalog import DATA_FILE, SampleMissingError, load_catalog, load_sample
+from evals.librarian.catalog import (
+    DATA_FILE,
+    DOC_VECTORS,
+    QUERY_VECTORS,
+    SampleMissingError,
+    load_catalog,
+    load_sample,
+)
 from evals.librarian.checks import ScenarioResult, card_ids, fallback_ratio, guide_metrics
 from evals.librarian.guide import fixed_clock, shelve_one
 from evals.librarian.runner import run_scenario
 from evals.librarian.scenarios import SCENARIOS
+from evals.recommendation.cache import CachedEmbedder
 
 RUNS_DIR = DATA_FILE.parent / "runs"
 CHECKS = (
@@ -97,6 +113,7 @@ def _record(index: int, result: ScenarioResult) -> dict:
         "topic": scenario.topic,
         "children_judged": result.children_judged,
         "expectation_met": result.expectation_met,
+        "topic_met": result.topic_met,
         "violations": result.violations,
         "turns": [asdict(turn) for turn in result.turns],
         "guide_basis": result.guide_basis,  # 안내 판정의 기준값(가상 평가 안내와 계산된 일정)
@@ -120,7 +137,23 @@ def _summary(lines: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -> int:
+def eval_encoder(http: httpx.AsyncClient) -> CachedEmbedder:
+    """평가 인코더: 임베딩 서버 앞에 문서·질의 벡터 캐시."""
+    return CachedEmbedder(TeiEmbedder(http), QUERY_VECTORS, DOC_VECTORS)
+
+
+def vector_line(encoder: CachedEmbedder | None, vectors: int) -> str:
+    if encoder is None:
+        return "벡터: 넣지 않음(--no-vectors)"
+    return (
+        f"벡터: {vectors}개 적재(문서 캐시 적중 {encoder.cached_documents}, "
+        f"새로 인코딩 {encoder.encoded_documents}), 인코더 {encoder.name}"
+    )
+
+
+async def evaluate(
+    model: str | None, only: set[str] | None, out: Path | None, vectors: bool = True
+) -> int:
     settings = get_settings()
     if not settings.test_database_url:
         print("TEST_DATABASE_URL이 없습니다.", file=sys.stderr)
@@ -138,14 +171,42 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
     out.mkdir(parents=True, exist_ok=True)
     print(f"모델: {llm.model}, 시나리오 {len(scenarios)}개, 결과: {out}", flush=True)
     results: list[ScenarioResult] = []
+    http = httpx.AsyncClient(
+        base_url=settings.embedding_base_url, timeout=settings.embedding_timeout_seconds
+    )
+    encoder = eval_encoder(http) if vectors else None
     async with rollback_session(settings.test_database_url) as session, _clock():
-        catalog = await load_catalog(session, sample)
+        try:
+            catalog = await load_catalog(session, sample, embedder=encoder)
+        except EmbeddingError as exc:
+            await http.aclose()
+            print(
+                f"표본 벡터를 넣지 못했습니다({exc.failure.value}). 임베딩 서버를 켜거나 "
+                "(`docker compose --profile embedding up -d embedder`) --no-vectors로 돌리세요.",
+                file=sys.stderr,
+            )
+            return 1
+        print(vector_line(encoder, catalog.vectors), flush=True)
+        # 서버와 같은 질의 인코더(시간 제한, 쉬기). 실패하면 검색이 키워드 순위로 내려가므로 센다
+        queries = None
+        if encoder is not None:
+            queries = GuardedEmbedder(
+                encoder,
+                timeout=settings.embedding_query_timeout_seconds,
+                pause=settings.embedding_query_pause_seconds,
+            )
+            try:
+                await encoder.check()
+            except EmbeddingError as exc:
+                await http.aclose()
+                print(f"임베딩 서버를 확인하지 못했습니다({exc.failure.value}).", file=sys.stderr)
+                return 1
         await shelve_one(session, catalog)
         # 서버(`app/main.py`)와 같은 기관 개별 기능을 조립한다
         register_related_scope(children_related_scope)
         profile = build_librarian_profiles((children_extension(),))[catalog.loan_mode]
         for index, scenario in enumerate(scenarios, start=1):
-            result = await run_scenario(session, llm, profile, catalog, scenario)
+            result = await run_scenario(session, llm, profile, catalog, scenario, queries)
             results.append(result)
             path = out / f"{index:02d}-{scenario.id}.json"
             path.write_text(
@@ -153,6 +214,7 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
                 encoding="utf-8",
             )
             print(_progress(index, len(scenarios), result), flush=True)
+    await http.aclose()
 
     turns = [t for r in results for t in r.turns]
     violations = sum(len(v) for r in results for v in r.violations.values())
@@ -161,6 +223,12 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
     lines = [
         f"표본: {len(sample.books)}권 (받은 날 {sample.fetched_on}), 모델: {llm.model}",
         f"어린이 도서: {len(catalog.children)}권, 추천 가능: {len(catalog.recommendable)}권",
+        vector_line(encoder, catalog.vectors)
+        + (
+            f", 질의 새로 인코딩 {encoder.encoded}, 질의 인코딩 실패 {queries.failures}"
+            if encoder and queries
+            else ""
+        ),
         "기관과 사본 상태는 가상이다. 수치를 실제 서비스 성능으로 쓰지 않는다.",
         "",
         HEADER,
@@ -191,9 +259,10 @@ def main() -> int:
     parser.add_argument("--model", help="LLM 모델. 없으면 LLM_MODEL")
     parser.add_argument("--only", help="쉼표로 나눈 시나리오 id")
     parser.add_argument("--out", type=Path, help="결과 폴더. 없으면 data/runs/<시각>-<모델>")
+    parser.add_argument("--no-vectors", action="store_true", help="표본에 벡터를 넣지 않는다")
     args = parser.parse_args()
     only = set(args.only.split(",")) if args.only else None
-    return asyncio.run(evaluate(args.model, only, args.out))
+    return asyncio.run(evaluate(args.model, only, args.out, vectors=not args.no_vectors))
 
 
 if __name__ == "__main__":

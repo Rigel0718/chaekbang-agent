@@ -14,6 +14,9 @@ LLM보다 먼저 `found` 사건으로 보낸다. 고른 책만 보낸 턴은 LLM
 세션의 책: 이용자 행에는 고른 책·찾은 책의 id를, 답 행에는 카드가 된 추천 책의 id를 책 id 칸
 (`library_book_ids`)에 적는다. 실행 전에 그 세션의 책(최신 순, 서로 다른 책)을 실행 값
 (`SESSION_BOOKS`)으로 넘겨 관련 책 tool의 최근 기록으로 쓴다. 세션과 함께 지워진다.
+
+질의 인코더: 부르는 쪽(라우터, 평가)이 넘긴 인코더를 실행 값(`QUERY_ENCODER`)으로 넘겨 소장 도서
+검색의 벡터 질의에 쓴다. 없으면 검색은 키워드 순위로 돈다.
 """
 
 import asyncio
@@ -34,6 +37,7 @@ from app.agent.llm import AssistantMessage, Instruction, LlmClient, UserMessage
 from app.agent.models import AgentRun
 from app.agent.profile import Profile
 from app.agent.runner import AnswerEvent, DoneEvent, StatusEvent, run
+from app.central.embedding import Embedder
 from app.core import clock
 from app.core.config import get_settings
 from app.core.errors import ConflictError, LimitExceededError, NotFoundError
@@ -47,6 +51,7 @@ from app.library.recommendation.search import Candidate
 from app.library.schemas.catalog import BookSummary
 from app.library.schemas.librarian import AnswerPayload, BookCard
 from app.library.services.related import SESSION_BOOKS
+from app.library.services.topic import QUERY_ENCODER
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +315,11 @@ def _found_event(prepared: PreparedTurn) -> ServerEvent:
 
 
 async def stream_turn(
-    session: AsyncSession, llm: LlmClient, profile: Profile, prepared: PreparedTurn
+    session: AsyncSession,
+    llm: LlmClient,
+    profile: Profile,
+    prepared: PreparedTurn,
+    encoder: Embedder | None = None,
 ) -> AsyncIterator[ServerEvent]:
     """진행 사건은 바로 보내고, 답은 검사 뒤에 카드와 함께 보낸다. 끝나거나 끊기면 표시를 푼다."""
     if prepared.user_text is None:
@@ -330,7 +339,7 @@ async def stream_turn(
         library_id=prepared.library_id,
         user_text=prepared.user_text,
         history=(*prepared.history, *note),
-        tool_values={SESSION_BOOKS: prepared.session_book_ids},
+        tool_values={SESSION_BOOKS: prepared.session_book_ids, QUERY_ENCODER: encoder},
     )
     try:
         yield ServerEvent("session", {"session_id": str(prepared.session_id)})

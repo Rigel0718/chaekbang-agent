@@ -25,13 +25,13 @@
 | 요청 종류 | 지금 채택한 방식 | 핵심 수치 | 제품 연결 |
 | --- | --- | --- | --- |
 | **아는 책 찾기** (서명·저자) | 자모 분해 키 + 자모 편집 거리(오타 문턱 0.7), 자동완성(앞부분만), 문장 속 서명 찾기(문턱 0.85). LLM 없음 | 오타 질의 5위 안 97.3~98.7%, 기존 키워드 검색 0% (cs-run `20261117-030343`) | **연결됨**: `GET /catalog/search`, `GET /catalog/suggest`, `find_book` tool, 대화의 찾은 책 카드 |
-| **주제·상황으로 찾기** | 키워드 순위 + 벡터 순위 RRF(k 60, 1:1), 벡터 질의는 이용자 문장, 텍스트 `full`, 시리즈 묶기·MMR 끔 (`hybrid-k60`) | 세 출처 장서(A) 조정 nDCG@5 0.451 → 0.525 (+0.074, 이김·비김·짐 13·4·3, 95% 구간 +0.030 ~ +0.115) (run `20261117-025721`) | **아직 아님**. AI 사서는 지금 키워드 검색(`search_collection`)을 쓴다. `add-topic-search-tool`이 잇는다(요청마다 임베딩 서버 필요) |
+| **주제·상황으로 찾기** | 키워드 순위 + 벡터 순위 RRF(k 60, 1:1), 텍스트 `full`, 시리즈 묶기·MMR 끔. 벡터 질의는 **LLM 낱말**(`hybrid-best`, 2026-11-17부터. 문장 `hybrid-k60`과 차이 없음) | 세 출처 장서(A) 조정 nDCG@5 0.451 → 0.525 (`hybrid-k60`, +0.074, 13·4·3, +0.030 ~ +0.115). 낱말 입력 0.498(문장 대비 -0.027, 4·7·9, -0.078 ~ +0.024) (run `20261117-191900`) | **연결됨** (`add-topic-search-tool`): `search_collection`·`search_children_books`가 주제로 찾기(`services/topic.py`)를 쓴다. 임베딩 서버가 없거나 느리면 키워드 순위로 내려간다 |
 | **비슷한 책** (기준 책 하나) | 같은 시리즈·같은 저자·같은 KDC 세목·벡터 이웃을 RRF 1:1로 합침, 근거(신호별 순위)를 붙임 (`sim-rrf`) | A 조정 0.649 → 0.700 (+0.052, 6·6·2, +0.008 ~ +0.107) (run `20261117-025753`). YES24만일 때는 차이 없음이었다 | **연결됨** (`add-related-books`): `GET /catalog/books/{id}/similar`, `find_related_books` tool(책 id), 근거 코드·문구 |
 | **아무 조건 없음, 기록 있음** (최근에 본 책 2~3권) | 기록 책 벡터의 평균으로 이웃 찾기 (`hist-mean`) | YES24 조정 0.694 대 책별 RRF 0.334 (-0.359, 0·0·7) (design(add-related-book-experiments)). A 0.710 (run `20261117-025756`) | **연결됨** (`add-related-books`): `find_related_books` tool(비움), 기록은 대화 세션의 책 최신 3권 |
 | **아무 조건 없음, 기록 없음** ("아무거나") | 정하지 않음. 인기 순위 코드만 있고 실험 장서에 대출 행이 없어 재지 못함 | 확인 못 함 (인기 신호 0건) | **연결됨, 우리 도서관 인기만** (`add-related-books`). 대출 행이 없는 기관(가져오기 기관)은 빈 결과. 정보나루 인기는 `add-loan-signal-store` |
 
 - 모든 실행에서 규칙 위반(추천할 수 없는 책, 어린이 요청의 일반 도서)은 0건이었다. 이것은 LLM이 아니라 범위 조건(`within`)과 추천 가능 조건으로 코드가 지킨다.
-- 한 줄로: **아는 책은 코드로 찾고, 주제는 키워드와 벡터를 합치고, 책에서 출발하는 추천은 벡터 이웃이 바탕이며 규칙 신호는 근거와 (KDC가 생긴 뒤) 품질을 더한다.** 2026-11-17부터 찾기, 비슷한 책, 최근 기록이 제품에 나가 있고 주제로 찾기만 남았다(`add-topic-search-tool`).
+- 한 줄로: **아는 책은 코드로 찾고, 주제는 키워드와 벡터를 합치고, 책에서 출발하는 추천은 벡터 이웃이 바탕이며 규칙 신호는 근거와 (KDC가 생긴 뒤) 품질을 더한다.** 2026-11-17에 주제로 찾기까지 네 요청 종류가 모두 제품에 나갔다(`add-topic-search-tool`이 마지막).
 
 ---
 
@@ -280,7 +280,9 @@
 | 주제어 12 | 0.572 | 0.605 | 0.654 (+0.083, +0.006 ~ +0.164) |
 | 상황 8 | 0.168 | 0.308 | 0.311 (+0.144, +0.060 ~ +0.226) |
 
-**채택: `hybrid-k60`** (k 60, 키워드:벡터 1:1, 벡터 질의는 이용자 문장, 텍스트 `full`, 시리즈 묶기·MMR 끔). `TopicSettings` 기본값이 이미 이 값이다(`app/library/recommendation/topic.py`).
+**채택: `hybrid-k60`** (k 60, 키워드:벡터 1:1, 벡터 질의는 이용자 문장, 텍스트 `full`, 시리즈 묶기·MMR 끔). 
+
+**제품에 이을 때 벡터 질의 입력을 낱말로 바꿨다**(`add-topic-search-tool`, 2026-11-17). 합친 순위에서 낱말 입력(`hybrid-vkw`)은 문장과 차이 없음이었다(세 출처 장서 조정 0.498 대 0.525, -0.027, 4·7·9, -0.078 ~ +0.024. 확인 +0.025, 5·2·3). 평균과 짐은 문장 쪽이 낫지만, 실험 세트에 없는 여러 턴("더 가벼운 거")·다시 찾기·섞인 문장에서 문장 벡터가 주제를 잃어 미리 정한 규칙(나쁨은 구간 상한 < 0)대로 낱말을 골랐다. `TopicSettings()` 기본값은 낱말이고(변형 `hybrid-best`), 1~5단계 변형은 문장으로 고정해 옛 실행과 같다. 실제 LLM 낱말로는 `add-recommendation-evals`에서 다시 본다. 시리즈 묶기·MMR은 제품에서도 끈다(LLM이 10권 중 고른다).
 
 - 조정에서 채택 규칙을 넘었고(+0.107, 14·3·3, +0.049 ~ +0.167) 확인에서도 같은 방향이다(+0.128, 8·2·0).
 - 키워드가 주제어 질의를, 벡터가 상황 질의(0.168 → 0.31)를 받쳐 주어 합친 쪽이 질의별로 덜 진다(짐 3 대 벡터만 6).
@@ -558,7 +560,7 @@
 | --- | --- | --- |
 | `add-loan-signals` (2026-11-17 archive) | 끝남. 정보나루가 막혀 미룬 D.1(남은 11회, 인기 기간)·D.2(`s10` 다시 재기)는 `add-loan-signal-store`로, D.3(남겨 둔 분야)·D.4(문서)는 `add-related-books`에서 했다 | design(add-loan-signals) 결과, design(add-related-books) 결정 2 |
 | `add-related-books` (구현 끝) | 비슷한 책 API·관련 책 tool·대화 세션의 책·어린이 범위, 남겨 둔 분야 실행, 최소 유사도 진단(문턱 없음). 시리즈 상한 1은 켜지 않음 | design(add-related-books) |
-| `add-topic-search-tool` (다음) | 주제로 찾기(`hybrid-k60`)를 AI 사서에 잇기: 서비스 중 임베딩 서버, 꺼졌을 때 키워드 검색으로, 벡터 질의(이용자 문장 대 LLM 낱말), LLM 평가 전후 비교. 소장 도서가 없는 주제 요청의 빈 결과 | design(add-related-books) 결정 1, OQ1 |
+| `add-topic-search-tool` (구현 끝) | 주제로 찾기를 AI 사서 검색 tool에 이음, 질의 인코더(시간 제한·쉬기·모델 확인), 꺼졌을 때 키워드 순위로, 벡터 질의는 LLM 낱말(확인 실험), 키워드 근거 없음 표시(문턱 없음), 평가 표본 벡터, LLM 평가 전후 비교 | design(add-topic-search-tool) |
 | `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 어울림 라벨, Hit Rate·Recall, 모델 비교. 어린이 지표 둘(책 분류 / 요청 판단). 실제 LLM이 고른 낱말로 `vec-kw` 다시 보기. 사람만 단 라벨 표본으로 Claude 라벨과의 일치도. 섞인 기록의 어린이 판단 | design(add-recommendation-experiments) 결과·결정 9, `add-librarian-agent` tasks.md 끝, design(add-related-book-experiments) Open Questions |
 | `add-loan-signal-store` (정보나루 약관 확인 뒤) | 함께 대출·정보나루 인기의 운영자 층 테이블과 갱신 실행, 제품의 대출 신호 공급, 미룬 일 D.1·D.2(정보나루 11회: 이용 분석 3, 인기 8조건) | design(add-loan-signals) 결정 5, design(add-related-books) 결정 2 |
 
@@ -568,7 +570,7 @@
 
 | # | 질문 | 처음 나온 곳 | 맡을 곳 |
 | --- | --- | --- | --- |
-| 1 | 소장 도서가 없는 요청에서 결과를 비울 유사도 문턱 | design(add-recommendation-experiments) OQ1, design(add-related-book-experiments) OQ4 | 비슷한 책은 문턱 없음으로 답함(`add-related-books` 결정 10). 주제로 찾기는 `add-topic-search-tool` 또는 `add-recommendation-evals` |
+| 1 | 소장 도서가 없는 요청에서 결과를 비울 유사도 문턱 | design(add-recommendation-experiments) OQ1, design(add-related-book-experiments) OQ4 | 비슷한 책은 문턱 없음으로 답함(`add-related-books` 결정 10). 주제로 찾기도 문턱 없이 키워드 근거 없음 표시로 답함(`add-topic-search-tool` 결정 4·12, 실험 세트에 키워드 순위가 빈 질의 0개). 빈 결과 규칙은 `add-recommendation-evals`의 어울림 라벨로 |
 | 2 | 질의 결(주제어·상황) 경계가 애매한 질의를 실제 대화 기록으로 다시 나눌지 | design(add-recommendation-experiments) OQ3 | 2단계 |
 | 3 | 섞인 기록(어린이 + 일반)에 어린이 조건을 걸지 | design(add-related-book-experiments) OQ1 | `add-recommendation-evals` |
 | 4 | 시리즈의 다음 권(권차 순서) | design(add-related-book-experiments) OQ2 | 권차 정규화와 함께(`add-related-books`에서 미룸, 그 design OQ2) |

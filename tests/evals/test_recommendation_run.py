@@ -4,6 +4,7 @@
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import openai
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.central.official_embeddings import run_official_embedding
 from app.library.recommendation.embeddings import run_library_embedding
 from app.library.recommendation.ranking import Ranked
+from app.library.recommendation.topic import TopicSettings, find_by_topic
 from evals.recommendation.__main__ import EXIT_OK, EXIT_PRECONDITION, run_topic, stable
 from evals.recommendation.cache import CachedEmbedder
 from evals.recommendation.draft import DraftError, apply_draft, apply_pool_draft
@@ -29,7 +31,7 @@ from evals.recommendation.labels import BEFORE, POOL, Labels
 from evals.recommendation.metrics import compare, score_query
 from evals.recommendation.review import ReviewError, page_data, render_page, review_label
 from evals.recommendation.sets import TopicQuery
-from evals.recommendation.variants import VARIANTS, Variant
+from evals.recommendation.variants import DEEP, VARIANTS, Variant, run_variant
 from tests.conftest import Tenant
 from tests.embedding_helpers import FakeEmbedder
 from tests.helpers import add_audience, add_held_book, make_isbn
@@ -513,3 +515,44 @@ async def test_label_change_changes_fingerprint(
         fingerprint=[f"- 라벨 해시: {after}"],
     )  # fmt: skip
     assert f"라벨 해시: {after}" in (out / "summary.md").read_text(encoding="utf-8")
+
+
+# --- 합친 순위의 벡터 질의 입력 (add-topic-search-tool) ---
+
+
+async def _topic_calls(session: AsyncSession, library_a: Tenant, tmp_path: Path, name: str):
+    _, embedder, _, queries = await _setup(session, library_a.id, tmp_path)
+    embedder.query_calls.clear()
+    query = _query("t09", text="공룡이 나오는 책", keywords=("공룡", "화석"))
+    ranked = await run_variant(session, embedder, VARIANTS[name], library_a.id, query, None)
+    return [text for call in embedder.query_calls for text in call], ranked, embedder, query
+
+
+async def test_keyword_input_variant(
+    session: AsyncSession, library_a: Tenant, tmp_path: Path
+) -> None:
+    """[platform/recommendation-experiments] 합친 순위의 벡터 질의 입력 변형 / 낱말 입력 변형"""
+    calls, _, _, _ = await _topic_calls(session, library_a, tmp_path, "hybrid-vkw")
+    assert calls == ["공룡 화석"]
+
+
+async def test_existing_hybrid_keeps_text_input(
+    session: AsyncSession, library_a: Tenant, tmp_path: Path
+) -> None:
+    """[platform/recommendation-experiments] 합친 순위의 벡터 질의 입력 변형 / 기존 변형 고정"""
+    for name in ("hybrid-k60", "hybrid", "best", "vec-text", "series1", "mmr0.7"):
+        assert VARIANTS[name].settings.vector_input == "text", name
+    calls, _, _, _ = await _topic_calls(session, library_a, tmp_path, "hybrid-k60")
+    assert calls == ["공룡이 나오는 책"]
+
+
+async def test_product_default_variant(
+    session: AsyncSession, library_a: Tenant, tmp_path: Path
+) -> None:
+    """[platform/recommendation-experiments] 합친 순위의 벡터 질의 입력 변형 / 제품 기본 변형"""
+    _, ranked, embedder, query = await _topic_calls(session, library_a, tmp_path, "hybrid-best")
+    expected = await find_by_topic(
+        session, embedder, library_id=library_a.id, text=query.text, keywords=query.keywords,
+        settings=replace(TopicSettings(), limit=DEEP),
+    )  # fmt: skip
+    assert ranked == expected

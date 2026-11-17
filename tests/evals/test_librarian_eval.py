@@ -110,6 +110,18 @@ def test_no_match_expectation() -> None:
     assert not score(ScenarioResult(scenario, [_turn(ids=[1])]), _catalog()).expectation_met
 
 
+def test_no_match_or_on_topic_expectation() -> None:
+    """[agent/librarian] 주제 요청에 답함 / 비슷한 분야만 있는 주제 (채점)"""
+    scenario = Scenario(
+        "s", ("공룡 전문서",), Expect.NO_MATCH_OR_ON_TOPIC, children=False, traces=(), topic="공룡"
+    )
+    met = lambda turn: score(ScenarioResult(scenario, [turn]), _catalog()).expectation_met  # noqa: E731
+    assert met(_turn(suggest=True))  # 없다고 하고 희망도서 안내
+    assert not met(_turn())  # 추천도 안내도 없음
+    assert met(_turn(ids=[1]))  # 주제 낱말이 있는 책만 추천
+    assert not met(_turn(ids=[1, 2]))  # 주제 낱말이 없는 책이 섞임
+
+
 def test_fallback_ratio() -> None:
     scenario = Scenario("s", ("a", "b"), Expect.ANY, children=False, traces=())
     result = ScenarioResult(scenario, [_turn(status="fallback"), _turn()])
@@ -184,8 +196,9 @@ def test_scenario_ids_unique() -> None:
     ids = [s.id for s in SCENARIOS]
     assert len(ids) == len(set(ids))
     # 실행 비용을 가늠하는 상한. 안내 시나리오 11개를 더해 23개(add-library-guide), 관련 책
-    # 시나리오 4개를 더해 27개다(add-related-books)
-    assert 10 <= len(SCENARIOS) <= 30
+    # 시나리오 4개를 더해 27개(add-related-books), 주제 시나리오 5개를 더해 32개다
+    # (add-topic-search-tool)
+    assert 10 <= len(SCENARIOS) <= 35
 
 
 # --- 관련 책 시나리오 ---

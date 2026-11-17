@@ -23,6 +23,8 @@ uv run python -m evals.recommendation.pick --holdout       # 남겨 둔 분야 �
 uv run python -m evals.recommendation similar --holdout --variants sim-vec,sim-rrf,sim-best   # 남겨 둔 분야 세트 (정해 둔 변형만)
 uv run python -m evals.recommendation.review similar --sample --since <백업> --size 12   # 표본 수를 바꿔 보충 표본
 uv run python -m evals.recommendation.threshold <비슷한 책 실행 폴더>   # 벡터 근거만 있는 책의 최소 유사도 진단 (결과는 실행 폴더의 threshold.md)
+uv run python -m evals.recommendation topic --split all --variants current,hybrid-k60,hybrid-vkw,hybrid-best   # 벡터 질의 입력: 문장 대 낱말, 제품 기본
+uv run python -m evals.recommendation.keyword_empty <주제 실행 폴더>   # 키워드 순위가 빈 질의·근거별 책 진단 (결과는 실행 폴더의 keyword-empty.md, --variant 기본 hybrid-best)
 ```
 
 - 개발 DB(`DATABASE_URL`)의 `실험용 가상 작은도서관`(이름으로 찾는다)에서 읽기만 한다. 실험 장서는 `scripts/seed_experiment.py`가 넣는다.
@@ -102,4 +104,6 @@ uv run python -m evals.recommendation.threshold <비슷한 책 실행 폴더>   
 
   남겨 둔 분야에는 같은 KDC 세목 신호가 기준 책 8권 중 1권에만 있다. 설정은 바꾸지 않는다.
 - **최소 유사도 진단**(`threshold`, `add-related-books` 결정 10): `sim-rrf` 상위 10권 중 근거가 벡터 이웃뿐인 책의 코사인을 라벨별로 센다. 조정 87건에서 0 라벨(가운데 0.400)과 2 라벨(가운데 0.431)이 0.35 ~ 0.50에 겹쳐, 0을 절반 빼는 문턱(0.40)이 2도 18%를 뺀다. 문턱 없음(`min_vector_similarity` 기본 `None`). 표는 `data/runs/20261117-152916/threshold.md`.
+- **벡터 질의 입력**(`add-topic-search-tool`, 2026-11-17): 합친 순위에서 낱말 입력(`hybrid-vkw`)은 문장 입력(`hybrid-k60`)과 차이 없음(조정 -0.027, 4·7·9, -0.078 ~ +0.024). 여러 턴·다시 찾기 때문에 제품 기본(`TopicSettings()`, 변형 `hybrid-best`)은 낱말로 바꿨다. 1~5단계 변형은 문장으로 고정해 옛 실행과 같다. 실행 `data/runs/20261117-191900`·`192005`.
+- **키워드 순위가 빈 질의**(`keyword_empty`): 조정·확인 세트에는 그런 질의가 없다. 상위 5권 중 벡터 근거만 있는 책은 조정 14권 중 12권이 0 라벨이다. 표는 `data/runs/20261117-192056/keyword-empty.md`.
 - **제품 경로**: `app/library/services/related.py`가 `SimilarSettings()`·`HistorySettings()` 기본값을 그대로 쓴다. 여기서 기본값을 바꾸면 비슷한 책 API와 AI 사서 tool이 함께 바뀐다. 기본값을 바꿀 때는 스펙(`catalog/related-recommendation`)을 먼저 고친다.
