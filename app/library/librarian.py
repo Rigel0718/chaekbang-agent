@@ -14,10 +14,16 @@ from app.agent.profile import FinalCheck, Profile, Violation
 from app.agent.tools import AnswerTool, Tool, ToolInput
 from app.library.models.library import LoanMode
 from app.library.recommendation.checks import HoldingCheck
-from app.library.tools import FIND_BOOK, GET_BOOK_DETAIL, GET_LIBRARY_GUIDE, SEARCH_COLLECTION
+from app.library.tools import (
+    FIND_BOOK,
+    FIND_RELATED_BOOKS,
+    GET_BOOK_DETAIL,
+    GET_LIBRARY_GUIDE,
+    SEARCH_COLLECTION,
+)
 
 PROFILE_NAME = "librarian"
-PROFILE_VERSION = "v3"
+PROFILE_VERSION = "v5"  # v4: 관련 책 tool, v5: 어린이 요청의 범위 문구(add-related-books)
 MESSAGE_LIMIT = 300
 REASON_LIMIT = 120
 MAX_RECOMMENDATIONS = 5
@@ -82,6 +88,10 @@ submit_answer의 recommendations에 넣는다.
 - 이전 답의 [추천한 책: #번호 서명]은 그때 추천한 책이다. "두 번째 책"처럼 물으면 이 번호를 쓴다.
 - [고른 책: …], [찾은 책: …] 안내는 이용자가 직접 찾은 책이다. 화면에 카드가 이미 있으니 \
 recommendations에 다시 넣지 않는다. "이거", "비슷한 거"는 이 책을 가리킨다.
+- "비슷한 거", "이런 책 또", "이거랑 비슷한"처럼 책 한 권을 가리키면 find_related_books에 그 책의 \
+library_book_id를 넣는다. 고른 책·찾은 책, 이전 답의 [추천한 책: …], 검색 결과의 책이 된다.
+- "아무거나", "추천해 줘"처럼 조건이 없으면 find_related_books를 library_book_id 없이(null) 부른다.
+- find_related_books 결과의 이유는 basis_text와 소개에만 근거한다. 결과가 비면 note대로 한다.
 
 도서관 안내
 - 운영 시간, 휴관, 연락처, 시설 위치, 대출 기간과 권수, 반납일을 물으면 get_library_guide로 \
@@ -138,6 +148,7 @@ def build_librarian_profiles(
     tools = (
         SEARCH_COLLECTION,
         FIND_BOOK,
+        FIND_RELATED_BOOKS,
         GET_BOOK_DETAIL,
         GET_LIBRARY_GUIDE,
         *(t for e in extensions for t in e.tools),

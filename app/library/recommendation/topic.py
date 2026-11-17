@@ -5,7 +5,7 @@
 (예: 어린이 도서)은 여기서 모른다. 어린이 기능이 조건을 만들어 넘긴다.
 
 설정(`TopicSettings`)은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지
-않는다(`add-related-books`).
+않는다(`add-topic-search-tool`).
 """
 
 from collections.abc import Mapping, Sequence

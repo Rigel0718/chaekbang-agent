@@ -49,11 +49,12 @@ def _answer(*book_ids: int, reason: str = "좋아요") -> LibrarianAnswer:
 
 
 async def test_profile_tools(session: AsyncSession) -> None:
-    """[agent/librarian] 조회 tool / 프로필의 tool"""
+    """[agent/librarian] 조회 tool / 프로필의 tool, 프로필의 관련 책 tool"""
     for prof in build_librarian_profiles().values():
         assert [t.name for t in prof.tools] == [
             "search_collection",
             "find_book",
+            "find_related_books",
             "get_book_detail",
             "get_library_guide",
         ]
@@ -427,6 +428,7 @@ async def test_no_writes(session: AsyncSession, library_a: Tenant) -> None:
     assert names == {
         "search_collection",
         "find_book",
+        "find_related_books",
         "get_book_detail",
         "get_library_guide",
     }  # 모두 조회

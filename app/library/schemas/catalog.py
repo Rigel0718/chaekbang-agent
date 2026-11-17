@@ -205,6 +205,13 @@ class BookSummary(BaseModel):
     status_synced_at: datetime | None  # 가져오기 기관의 대출 상태 갱신 시각
 
 
+class RelatedBook(BookSummary):
+    """관련 책 결과. 근거는 코드가 신호에서 만든다."""
+
+    basis: list[str]  # 근거 코드: 오른 신호 이름 모두(series, author, kdc, vector, popular …)
+    basis_text: list[str]  # 근거 문구, 두 개까지(`같은 시리즈`, `같은 분류 813.7`)
+
+
 class BookSuggestion(BaseModel):
     """자동완성 항목. 입력할 때마다 부르므로 가볍게 둔다."""
 

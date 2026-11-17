@@ -23,10 +23,10 @@
 | `schemas/` | Pydantic 스키마 |
 | `importing/` | 파일 읽기, 머리글 인식, 정규화. DB와 HTTP를 모른다 |
 | `deps.py` | 현재 직원·기관, 역할 |
-| `hooks.py` | 기관 개별 기능의 접점 |
+| `hooks.py` | 기관 개별 기능의 접점(사건, 관련 책 범위 제공자) |
 | `enrichment_targets.py` | 운영자 층 접점 구현, 처리 현황 |
 | `recommendation/` | `search`(추천 가능 조건, 키워드 검색), `lookup`(서명·저자 찾기, 자동완성, 문장 속 서명, 고른 책 확인), `checks`(소장 검사), `cards`(요약과 카드), `events`(노출 기록) |
-| `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest` |
+| `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest`, `GET /catalog/books/{id}/similar`(비슷한 책) |
 | `api/guide.py`, `services/guide.py` | `GET/PUT /library/guide`, `/library/closures`. 개관 여부(`day_status`), 반납 예정일(`due_date`, `compute_due_date`) |
 | `recommendation/authors.py` | 같은 지은이의 책 `same_author_books`, 지은이 키 SQL 식 `writer_keys_sql` |
 | `services/author_keys.py` | 저자 키 다시 맞추기 `rebuild_author_keys`, 맞춰지지 않은 분류기호 세기 |
@@ -34,12 +34,14 @@
 | `recommendation/embeddings.py` | 기관 도서 벡터 적재 `run_library_embedding`, 기관을 지정한 공식 서지 벡터 적재 조건 `held_official_ids`, 두 층 유사도 조회 `similar_books`(범위 조건, 종류별 가중 평균), 저장된 벡터로 이웃 조회 `neighbors_of`(인코딩 없음), 저장된 벡터 읽기 `book_vectors` |
 | `recommendation/ranking.py` | 순수 함수: 역순위 합 `fuse_rrf`, 시리즈 묶기 `cap_series`, 결과 다양화 `mmr`. DB를 모른다 |
 | `recommendation/topic.py` | 주제로 찾기 `find_by_topic`(키워드·벡터 순위를 합침), 깊은 키워드 순위 `keyword_ranking`, 설정 `TopicSettings` |
-| `recommendation/related.py` | 비슷한 책 `find_similar`(같은 시리즈·같은 저자·KDC·벡터 이웃·함께 대출, 판본 제외 `editions_of`, 근거), 최근 기록 `find_from_history`(기록 신호), 우리 도서관 인기 `popular_ranking`, 정보나루 인기 `national_popular_ranking`, ISBN 순위 → 소장 책 `held_ranking`, 대출 신호 공급 `LoanSignals`, 설정 `SimilarSettings`·`HistorySettings` |
+| `recommendation/related.py` | 비슷한 책 `find_similar`(같은 시리즈·같은 저자·KDC·벡터 이웃·함께 대출, 판본 제외 `editions_of`, 근거), 최근 기록 `find_from_history`(기록 신호), 우리 도서관 인기 `popular_ranking`, 정보나루 인기 `national_popular_ranking`, ISBN 순위 → 소장 책 `held_ranking`, 대출 신호 공급 `LoanSignals`, 벡터 근거만 있는 책의 최소 유사도, 설정 `SimilarSettings`·`HistorySettings` |
+| `recommendation/basis.py` | 관련 책의 근거 코드 `basis_codes`와 문구 `basis_texts`(순수 함수) |
+| `services/related.py` | 제품 경로: 비슷한 책 `similar_for_book`, 대화 세션의 책으로 최근 기록 `related_for_session`. REST와 tool이 이 함수만 부른다 |
 | `models/embedding.py` | `BookEmbedding`(공식 서지 없는 기관 도서·모델·텍스트 버전·종류마다 벡터 하나) |
-| `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 검색 tool을 만드는 `search_tool` |
+| `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `find_related_books`(관련 책), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 tool을 만드는 `search_tool`·`related_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
 | `privacy.py` | 개인정보 가리기 |
-| `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장, 노출 기록, 끝난 세션 삭제 |
+| `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장(책 id 칸), 노출 기록, 끝난 세션 삭제. 세션의 책 `session_books` |
 
 ## 규칙
 
@@ -83,13 +85,15 @@
 - 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
 - `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
 - tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장 일부가 들어 있을 수 있어서다.
+- **관련 책 tool** `find_related_books(library_book_id | None)`: id가 있으면 비슷한 책, 비우면 대화 세션의 책으로 최근 기록(세션에 책이 없으면 우리 도서관 인기)이다. 비슷한 책 API와 같은 service(`services/related.py`)를 쓴다. 결과는 검색 결과와 같은 값에 `basis_text`를 더하고, 비면 `note`가 다음 할 일을 알린다. 입력의 책 id는 실행 기록에 남긴다(개인정보가 아니다).
+- **대화 세션의 책**: `chat_messages.library_book_ids`에 이용자 행은 고른 책·찾은 책, 답 행은 카드가 된 추천 책의 id를 코드가 쓴다. 실행 전에 그 세션의 책을 최신 순, 서로 다른 책으로 모아 실행 값(`SESSION_BOOKS`)으로 넘긴다. service가 그 기관에서 추천할 수 있는 책만 남겨 3권까지 쓴다. LLM은 이 목록을 정하지 않는다. 세션이 끝나면 메시지와 함께 지워진다.
 
 ## 같은 저자
 
 - 책의 지은이 키는 두 층에서 읽는다. 공식 서지에 연결된 책은 기여자(`book_contributors`) 중 `author`·`original`의 이름 맞춤 키, 연결되지 않은 책은 저자 키다. 연결된 책은 기관이 적은 저자를 보지 않는다.
 - 저자 키는 연결 여부와 상관없이 채운다. 연결이 풀리거나 생겨도 다시 계산하지 않기 위해서다. 읽는 쪽이 연결 여부로 고른다.
 - 그린이는 기본에 넣지 않는다. 추천 실험에서 어린이 도서일 때 넣는 변형을 비교한다.
-- `same_author_books`는 그 기관의 추천 가능한 책만 돌려준다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
+- `same_author_books`는 그 기관의 추천 가능한 책만 돌려준다. 비슷한 책의 같은 저자 신호로 제품에 나간다(`services/related.py`).
 - 서명·저자 찾기는 저자 키가 아니라 원문의 자모 키로 한다.
 
 ## 도서 임베딩
@@ -104,14 +108,14 @@
 - 증분 적재는 현재 모델·텍스트 버전·종류의 벡터가 없거나 해시가 다른 대상만 인코딩한다. 공식 서지 채움으로 공식 서지가 생기면 다음 증분이 잡는다. 기관 값을 고쳐도 공식 서지 벡터는 바뀌지 않는다. 해시는 자르기 전 전체 텍스트의 값이라, `EMBEDDING_MAX_TOKENS`를 바꾼 뒤에는 `--full`로 다시 적재한다.
 - 배치 흐름(`app/central/embedding.py`의 `run_layer`)은 두 층이 같이 쓴다. 인코딩 호출 동안 트랜잭션을 잡지 않고 배치마다 커밋한다. 중간에 멈추면 끝난 배치는 남고 증분으로 이어 한다.
 - 적재는 운영자가 `scripts/embed_books.py`로 돌린다(공식 서지, 기관 도서 순서. `--layer`로 한 층만). 서버 실행 중 자동 적재는 없다. 파생 값만 쓰고 기관이 정한 값은 바꾸지 않으며 훅을 부르지 않는다.
-- `similar_books`는 그 기관의 추천 가능한 책을 기준으로 연결된 책은 공식 서지 벡터, 연결되지 않은 책은 기관 도서 벡터를 붙여 한 순위로 합친다(`UNION ALL`). 조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가 결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
+- `similar_books`는 그 기관의 추천 가능한 책을 기준으로 연결된 책은 공식 서지 벡터, 연결되지 않은 책은 기관 도서 벡터를 붙여 한 순위로 합친다(`UNION ALL`). 조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가 결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다. 주제로 찾기의 벡터 신호로만 쓰고, REST와 tool에는 아직 잇지 않았다(`add-topic-search-tool`).
 - `similar_books`의 `within`은 순위를 매기기 전에 거는 기관 도서 id 조건이다(어린이 도서처럼 뜻은 부르는 쪽만 안다). 뽑은 뒤 거르면 조건 밖의 책에 밀려 몇 권 안 남는다. `weights`는 종류별 가중치이고 점수는 그 책에 벡터가 있는 종류들의 유사도 가중 평균이다(필드별 벡터 `title`·`category`·`description`을 합칠 때 쓴다). 종류 하나면 이전과 같다.
 
 ## 주제로 찾기
 
 - `find_by_topic`은 "공룡 책", "가벼운 에세이" 같은 요청의 후보 순위를 만든다. LLM을 쓰지 않는다. 키워드 순위(`search.py`의 `ranked_query`와 같은 점수, 10권 상한 없음)와 벡터 순위를 역순위 합(RRF)으로 합치고, 같은 시리즈를 상한까지만 남기고(빠진 권수를 적는다), MMR로 순서를 고친다.
 - 범위(그 기관, 추천 가능, `within`)는 신호마다 순위를 매기기 전에 건다. 결과마다 합친 점수와 신호별 순위(근거)가 있다. 난수가 없어 같은 입력이면 같은 결과다.
-- 설정(`TopicSettings`: 신호 가중치, 벡터 질의 입력, 종류 가중치, 깊이, k, 시리즈 상한, λ)은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지 않았다(`add-related-books`). AI 사서는 지금처럼 `search_collection`을 쓴다.
+- 설정(`TopicSettings`: 신호 가중치, 벡터 질의 입력, 종류 가중치, 깊이, k, 시리즈 상한, λ)은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지 않았다(`add-topic-search-tool`). AI 사서는 지금처럼 `search_collection`을 쓴다.
 - 벡터 인덱스는 없다. 5,000권(공식 4,500 + 기관 500) 두 층 조회가 약 45ms다(처음 한 번 약 68ms).
 - CPU에서 한 권에 약 1.45초가 걸린다(ONNX, 배치 4). 전체 적재는 드물게, 평소에는 증분으로 돌린다.
 
@@ -122,9 +126,21 @@
 - 기준 책 자신과 같은 책의 다른 판본은 내지 않는다. 판본 규칙은 `editions_of`다: 판본·묶음 표기를 지운 표시 서명에서 공백·문장부호를 지운 값이 같고 지은이가 겹친다. 괄호 안 권 표기(`(봄·여름)`)도 판본으로 본다(한계).
 - `category_scope`는 벡터 이웃을 같은 외부 분류 원문 안으로 좁힌다. 외부 분류는 상위 분야라 KDC 세목 대신으로 쓰지 않는다.
 - 같은 KDC의 단위(`kdc_level`)는 세목(기본, 소수점 첫째 자리까지), 세 자리, 계층(세목 먼저, 그다음 세 자리)이고, 단위 안 순서(`kdc_order`)는 서명 순(기본) 또는 기준 책 벡터 순이다. `kdc_scope`는 진단용으로 벡터 이웃을 같은 KDC 단위 안으로 좁힌다.
-- 함께 대출(`co_loan`)은 정보나루 함께 대출 ISBN 순위에서 그 기관이 가진 추천 가능한 책만 남긴 순위다(`held_ranking`: 공식 서지 ISBN 먼저, 없으면 기관 도서 ISBN). 순위는 `LoanSignals`가 준다(실험은 파일, 제품 테이블은 `add-related-books`에서). `mania`·`reader`는 진단 신호다. ISBN 없는 기준 책이나 공급이 없으면 비어 있다.
+- 함께 대출(`co_loan`)은 정보나루 함께 대출 ISBN 순위에서 그 기관이 가진 추천 가능한 책만 남긴 순위다(`held_ranking`: 공식 서지 ISBN 먼저, 없으면 기관 도서 ISBN). 순위는 `LoanSignals`가 준다(실험은 파일, 제품 테이블은 정보나루 약관 확인 뒤 `add-loan-signal-store`에서). `mania`·`reader`는 진단 신호다. ISBN 없는 기준 책이나 공급이 없으면 비어 있다.
 - `find_from_history`는 최근 기록(책 목록)에서 고른다. `mean`은 기록 책 벡터의 평균, `per-book`은 책마다 만든 비슷한 책 순위의 RRF다(근거 이름 `book:<id>`). 기록 책 중 그 기관의 책만 근거로 쓴다. `mean`은 기록 신호(`signals`: 같은 KDC, 겹치는 저자, 기록 책마다의 함께 대출 RRF)를 벡터 평균 순위와 RRF로 합칠 수 있다(기본은 벡터만). 결과가 모자라면 `popular_ranking`(최근 180일 대출 행 수, 그 기관만)으로 먼저, 그다음 정보나루 인기(`national_popular_ranking`, `popular_group`: 기본은 조건 없음 `all`, 어린이 조건이면 부르는 쪽이 어린이 연령 묶음 이름을 넘긴다)로 채운다. 기록이 비어 있으면 인기로만 채우고, 둘 다 비면 빈 결과다(신착·무작위로 채우지 않는다). 인기는 순위 신호로 섞지 않는다.
-- 범위(그 기관, 추천 가능, `within`)는 신호마다 순위 전에 건다. 다른 기관의 기준 책은 NotFoundError다. 설정은 추천 실험이 정한다. REST와 tool에는 아직 잇지 않았다(`add-related-books`).
+- 범위(그 기관, 추천 가능, `within`)는 신호마다 순위 전에 건다. 다른 기관의 기준 책은 NotFoundError다. 설정은 추천 실험이 정한다.
+- `min_vector_similarity`는 근거가 벡터 이웃 하나뿐인 책 중 기준 책 벡터와의 코사인이 문턱보다 낮은 책을 뺀다. 규칙 근거가 있는 책은 빼지 않고, 뺀 자리를 채우지 않는다. 기본은 `None`(빼지 않음)이다.
+
+## 관련 책 (제품 경로)
+
+- `services/related.py`가 제품 경로다. 비슷한 책 API(`GET /catalog/books/{id}/similar`)와 AI 사서 tool이 이 함수만 부른다.
+  - 추천 실험의 기본 설정(`SimilarSettings()`, `HistorySettings()`)을 그대로 쓴다. 여기서 설정을 다시 고르지 않는다.
+  - 저장된 벡터만 쓴다. 모델 이름은 설정의 `embedding_model`이고 임베딩 서버를 부르지 않는다. 적재 전인 책은 벡터 이웃이 비어 규칙 신호만 남는다. 새 책은 `scripts/embed_books.py --incremental`로 적재한다.
+  - 대출 신호 공급이 없다. 함께 대출은 비고, 인기 채우기는 우리 도서관 인기에서 끝난다. 정보나루 인기는 테이블이 생긴 뒤(`add-loan-signal-store`)다. 가져오기 기관처럼 대출 행이 없으면 "아무거나"는 빈 결과다.
+  - 기준 책은 그 기관의 찾을 수 있는 책이어야 한다(`get_findable`). 아니면 NotFoundError(404)다.
+- 결과마다 근거 코드(오른 신호 모두)와 문구(두 개까지)가 있다(`recommendation/basis.py`). 순서는 시리즈 → 지은이 → 분류 → 내용 → 인기다. 분류 문구는 그 책의 표시 KDC 세목(`같은 분류 813.7`)이다. 지은이 이름은 넣지 않는다(카드에 있다).
+- **범위 제공자**: 기관 개별 기능은 `hooks.register_related_scope`로 기준 책(들)에 따라 결과를 좁힐 조건을 등록한다. 공통 코드는 조건의 뜻을 모르고, 부르는 쪽 `within`과 등록된 조건을 모두 건다. 서버를 거치지 않는 진입점(평가)도 같은 등록을 해야 한다.
+- 질의, 실행 기록, 노출 기록을 남기지 않는다.
 
 ## 도서관 안내
 

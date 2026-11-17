@@ -3,8 +3,13 @@
 도서관 안내(`get_library_guide`)는 입력이 없다. 날짜·요일·반납 예정일은 코드가 계산해 결과에 넣고,
 LLM은 날짜를 정하거나 세지 않는다.
 
-쓰기 tool(대출, 반납, 희망도서)은 없다. 기관 개별 기능은 `search_tool`로 검색 범위만 좁힌 tool을
-만든다. tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장의 일부가 들어 있을 수 있어서다.
+쓰기 tool(대출, 반납, 희망도서)은 없다. 기관 개별 기능은 `search_tool`, `related_tool`로 범위만
+좁힌 tool을 만든다. tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장의 일부가 들어 있을
+수 있어서다. 관련 책 tool의 기관 도서 id는 개인정보가 아니라서 남긴다.
+
+관련 책 tool(`find_related_books`)은 책 id가 있으면 비슷한 책, 비우면 대화 세션의 책(실행 값
+`SESSION_BOOKS`, 대화 코드가 넘긴다)으로 최근 기록 추천이다. REST의 비슷한 책 API와 같은
+service를 쓴다.
 """
 
 from collections.abc import Callable
@@ -20,10 +25,20 @@ from app.library.recommendation.lookup import find_books
 from app.library.recommendation.search import Candidate, get_candidate, search_collection
 from app.library.schemas.guide import DaySchedule, DayStatus, GuideRead, Span
 from app.library.services.guide import get_guide
+from app.library.services.related import (
+    SESSION_BOOKS,
+    RelatedItem,
+    related_for_session,
+    similar_for_book,
+)
 
 DESCRIPTION_LIMIT = 200
 TOC_LIMIT = 600
 NO_DESCRIPTION = "소개 정보가 없습니다. 내용을 추측하지 마세요."
+NO_RELATED = (
+    "비슷한 소장 도서를 찾지 못했다. search_collection으로 다른 낱말을 찾아보고, 그래도 없으면 "
+    "없다고 말하고 희망도서를 안내한다."
+)
 
 
 class SearchInput(ToolInput):
@@ -44,6 +59,16 @@ class FindInput(ToolInput):
 class GuideInput(ToolInput):
     # 입력이 없다. strict 스키마가 required 목록을 요구해서 빈 목록을 둔다
     model_config = ConfigDict(extra="forbid", json_schema_extra={"required": []})
+
+
+class RelatedInput(ToolInput):
+    library_book_id: int | None = Field(
+        description=(
+            "이 책과 비슷한 책을 찾을 때 그 책의 library_book_id(고른 책, 찾은 책, 결과의 책). "
+            "조건 없이 추천할 때는 null이다. 그러면 이 대화에서 본 책이나 도서관 인기 책으로 "
+            "찾는다"
+        )
+    )
 
 
 class DetailInput(ToolInput):
@@ -126,6 +151,44 @@ async def _results(ctx: ToolContext, candidates: list[Candidate]) -> list[dict[s
     return [search_result(c, shelf.get(c.library_book.id, NO_SHELF)) for c in candidates]
 
 
+def related_tool(
+    name: str,
+    description: str,
+    status_label: str,
+    within: Callable[[int], Select] | None = None,
+) -> Tool:
+    """관련 책 tool. within은 기관 도서 id 조건을 만드는 함수다."""
+
+    async def handler(ctx: ToolContext, data: RelatedInput) -> dict[str, Any]:
+        scope = within(ctx.library_id) if within is not None else None
+        if data.library_book_id is not None:
+            items = await similar_for_book(
+                ctx.session, ctx.library_id, data.library_book_id, within=scope
+            )
+        else:
+            history = ctx.values.get(SESSION_BOOKS, ())
+            items = await related_for_session(ctx.session, ctx.library_id, history, within=scope)
+        return await _related_results(ctx, items)
+
+    return Tool(
+        name, description, RelatedInput, handler, status_label, record_fields=("library_book_id",)
+    )
+
+
+async def _related_results(ctx: ToolContext, items: list[RelatedItem]) -> dict[str, Any]:
+    """관련 책 결과: 검색 결과와 같은 값에 근거 문구. 비면 다음 할 일을 note로 준다."""
+    ids = [i.candidate.library_book.id for i in items]
+    shelf = await shelf_of(ctx.session, ctx.library_id, ids)
+    books = [
+        {
+            **search_result(i.candidate, shelf.get(i.candidate.library_book.id, NO_SHELF)),
+            "basis_text": list(i.basis_text),
+        }
+        for i in items
+    ]
+    return {"books": books, "note": None if books else NO_RELATED}
+
+
 async def _find(ctx: ToolContext, data: FindInput) -> list[dict[str, Any]]:
     found = await find_books(ctx.session, ctx.library_id, data.query)
     return await _results(ctx, [f.candidate for f in found])
@@ -151,6 +214,15 @@ FIND_BOOK = Tool(
     FindInput,
     _find,
     "책을 찾고 있어요",
+)
+
+FIND_RELATED_BOOKS = related_tool(
+    "find_related_books",
+    "이 도서관 소장 도서에서 관련 책을 찾는다. library_book_id를 주면 그 책과 비슷한 책"
+    "(같은 시리즈, 같은 지은이, 같은 분류, 내용이 비슷한 책)이고, null이면 이 대화에서 본 "
+    "책과 비슷한 책이나 도서관에서 많이 빌린 책이다. 최대 5권이고 책마다 근거(basis_text)가 "
+    "있다.",
+    "비슷한 책을 찾고 있어요",
 )
 
 GET_BOOK_DETAIL = Tool(
