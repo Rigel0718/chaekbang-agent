@@ -95,13 +95,14 @@ async def test_unreachable() -> None:
     assert caught.value.failure is EmbeddingFailure.UNREACHABLE
 
 
-async def test_timeout_is_a_server_error() -> None:
+async def test_timeout_is_its_own_failure() -> None:
     """[catalog/book-embeddings] 운영자 실행의 출력과 중단 (응답 시간 초과)"""
     fake = FakeTei()
     fake.error = httpx.ReadTimeout("timeout")
     with pytest.raises(EmbeddingError) as caught:
         await fake.embedder().encode_documents(["문서"])
-    assert caught.value.failure is EmbeddingFailure.SERVER_ERROR
+    assert caught.value.failure is EmbeddingFailure.TIMEOUT
+    assert "문서" not in str(caught.value)
 
 
 async def test_server_error_hides_input() -> None:

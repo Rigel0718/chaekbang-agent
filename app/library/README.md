@@ -37,8 +37,9 @@
 | `recommendation/related.py` | 비슷한 책 `find_similar`(같은 시리즈·같은 저자·KDC·벡터 이웃·함께 대출, 판본 제외 `editions_of`, 근거), 최근 기록 `find_from_history`(기록 신호), 우리 도서관 인기 `popular_ranking`, 정보나루 인기 `national_popular_ranking`, ISBN 순위 → 소장 책 `held_ranking`, 대출 신호 공급 `LoanSignals`, 벡터 근거만 있는 책의 최소 유사도, 설정 `SimilarSettings`·`HistorySettings` |
 | `recommendation/basis.py` | 관련 책의 근거 코드 `basis_codes`와 문구 `basis_texts`(순수 함수) |
 | `services/related.py` | 제품 경로: 비슷한 책 `similar_for_book`, 대화 세션의 책으로 최근 기록 `related_for_session`. REST와 tool이 이 함수만 부른다 |
+| `services/topic.py` | 제품 경로: 주제로 찾기 `search_by_topic`(기본 설정, 10권, 키워드 순위로 내려가기, 키워드 근거 없음), 실행 값 이름 `QUERY_ENCODER`. 소장 도서 검색 tool이 이 함수만 부른다 |
 | `models/embedding.py` | `BookEmbedding`(공식 서지 없는 기관 도서·모델·텍스트 버전·종류마다 벡터 하나) |
-| `tools.py` | AI 사서의 조회 tool: `search_collection`, `find_book`(서명·저자 찾기), `find_related_books`(관련 책), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 tool을 만드는 `search_tool`·`related_tool` |
+| `tools.py` | AI 사서의 조회 tool: `search_collection`(주제로 찾기), `find_book`(서명·저자 찾기), `find_related_books`(관련 책), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 tool을 만드는 `search_tool`·`related_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
 | `privacy.py` | 개인정보 가리기 |
 | `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장(책 id 칸), 노출 기록, 끝난 세션 삭제. 세션의 책 `session_books` |
@@ -80,7 +81,7 @@
 ## AI 사서
 
 - 추천 가능한 책은 대출 가능이나 대출 중 사본이 있는 그 기관의 책이다(`recommendation/search.py`의 `recommendable_ids`). 검색과 소장 검사가 이 한 곳을 쓴다.
-- 검색은 표시 값의 서명(4), 부제·시리즈·저자(3), 소개(1)를 공백을 지운 부분 문자열로 찾고 가중치를 더한다. 최대 10권이다.
+- 키워드 검색은 표시 값의 서명(4), 부제·시리즈·저자(3), 소개(1)를 공백을 지운 부분 문자열로 찾고 가중치를 더한다. 최대 10권이다. AI 사서의 소장 도서 검색 tool은 이 순위와 벡터 순위를 합친 주제로 찾기(`services/topic.py`)를 쓰고, 결과는 `{books, note}`다.
 - 기관 개별 기능은 `LibrarianExtension`(tool, 최종 검사, 프롬프트 문구)으로 끼운다. 이 패키지는 기능을 이름으로 부르지 않는다. 조립은 `app/main.py`가 하고, 평가도 같은 `build_librarian_profiles`를 부른다.
 - 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
 - `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
@@ -108,14 +109,19 @@
 - 증분 적재는 현재 모델·텍스트 버전·종류의 벡터가 없거나 해시가 다른 대상만 인코딩한다. 공식 서지 채움으로 공식 서지가 생기면 다음 증분이 잡는다. 기관 값을 고쳐도 공식 서지 벡터는 바뀌지 않는다. 해시는 자르기 전 전체 텍스트의 값이라, `EMBEDDING_MAX_TOKENS`를 바꾼 뒤에는 `--full`로 다시 적재한다.
 - 배치 흐름(`app/central/embedding.py`의 `run_layer`)은 두 층이 같이 쓴다. 인코딩 호출 동안 트랜잭션을 잡지 않고 배치마다 커밋한다. 중간에 멈추면 끝난 배치는 남고 증분으로 이어 한다.
 - 적재는 운영자가 `scripts/embed_books.py`로 돌린다(공식 서지, 기관 도서 순서. `--layer`로 한 층만). 서버 실행 중 자동 적재는 없다. 파생 값만 쓰고 기관이 정한 값은 바꾸지 않으며 훅을 부르지 않는다.
-- `similar_books`는 그 기관의 추천 가능한 책을 기준으로 연결된 책은 공식 서지 벡터, 연결되지 않은 책은 기관 도서 벡터를 붙여 한 순위로 합친다(`UNION ALL`). 조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가 결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다. 주제로 찾기의 벡터 신호로만 쓰고, REST와 tool에는 아직 잇지 않았다(`add-topic-search-tool`).
+- `similar_books`는 그 기관의 추천 가능한 책을 기준으로 연결된 책은 공식 서지 벡터, 연결되지 않은 책은 기관 도서 벡터를 붙여 한 순위로 합친다(`UNION ALL`). 조회에 쓴 인코더의 모델 이름, 현재 텍스트 버전, 종류의 벡터만 비교한다. 공식 서지 벡터가 결과에 오르는 길은 이 기관의 추천 가능한 기관 도서가 그 공식 서지를 가리키는 것뿐이다. 주제로 찾기의 벡터 신호로 쓴다(AI 사서의 소장 도서 검색, `services/topic.py`).
 - `similar_books`의 `within`은 순위를 매기기 전에 거는 기관 도서 id 조건이다(어린이 도서처럼 뜻은 부르는 쪽만 안다). 뽑은 뒤 거르면 조건 밖의 책에 밀려 몇 권 안 남는다. `weights`는 종류별 가중치이고 점수는 그 책에 벡터가 있는 종류들의 유사도 가중 평균이다(필드별 벡터 `title`·`category`·`description`을 합칠 때 쓴다). 종류 하나면 이전과 같다.
 
 ## 주제로 찾기
 
 - `find_by_topic`은 "공룡 책", "가벼운 에세이" 같은 요청의 후보 순위를 만든다. LLM을 쓰지 않는다. 키워드 순위(`search.py`의 `ranked_query`와 같은 점수, 10권 상한 없음)와 벡터 순위를 역순위 합(RRF)으로 합치고, 같은 시리즈를 상한까지만 남기고(빠진 권수를 적는다), MMR로 순서를 고친다.
 - 범위(그 기관, 추천 가능, `within`)는 신호마다 순위를 매기기 전에 건다. 결과마다 합친 점수와 신호별 순위(근거)가 있다. 난수가 없어 같은 입력이면 같은 결과다.
-- 설정(`TopicSettings`: 신호 가중치, 벡터 질의 입력, 종류 가중치, 깊이, k, 시리즈 상한, λ)은 추천 실험(`evals/recommendation`)이 정한다. REST와 tool에는 아직 잇지 않았다(`add-topic-search-tool`). AI 사서는 지금처럼 `search_collection`을 쓴다.
+- 설정(`TopicSettings`: 신호 가중치, 벡터 질의 입력, 종류 가중치, 깊이, k, 시리즈 상한, λ)은 추천 실험(`evals/recommendation`)이 정한다. 기본은 `hybrid-k60`에 벡터 질의를 낱말로 둔 것이다(`add-topic-search-tool` 결정 2, 문장과 차이 없음, 여러 턴·다시 찾기 때문). 시리즈 묶기·MMR은 끈다.
+- **제품 경로**(`services/topic.py`의 `search_by_topic`): AI 사서의 소장 도서 검색(`search_collection`, 어린이 `search_children_books`)이 이 함수만 부른다. 낱말이 있으면 기본 설정으로 앞 10권, 없으면 둘러보기(`search.search_collection`)다. 여기서 설정을 다시 고르지 않는다(결과 수만 10).
+  - 질의 인코더는 대화 코드가 실행 값(`QUERY_ENCODER`)으로 넘긴다(`app/central`의 `GuardedEmbedder`, 라우터의 `get_query_encoder`). 인코더가 없거나 실패하면(꺼짐, 시간 제한, 다른 모델, 쉬는 중) 키워드 순위만으로 내려간다. 그 결과는 같은 낱말의 키워드 검색과 같다. 로그에는 실패 종류만 남고 이용자 답과 tool 결과에는 드러내지 않는다.
+  - 키워드 순위가 비고 벡터 순위로만 나오면 결과의 `note`가 소개로 맞는지 보라고 알린다(키워드 근거 없음). 결과를 비우는 유사도 문턱은 없다. 결과가 비면 `note`가 다시 찾기나 희망도서를 알린다.
+  - 내려가기를 `find_by_topic` 안에 두지 않는다. 실험이 같은 함수를 부르므로 실험 중의 인코딩 실패가 조용히 키워드만으로 바뀌면 안 된다.
+  - 이용자 문장은 받지 않는다. 벡터 질의는 LLM이 넘긴 낱말을 이은 것이다.
 - 벡터 인덱스는 없다. 5,000권(공식 4,500 + 기관 500) 두 층 조회가 약 45ms다(처음 한 번 약 68ms).
 - CPU에서 한 권에 약 1.45초가 걸린다(ONNX, 배치 4). 전체 적재는 드물게, 평소에는 증분으로 돌린다.
 

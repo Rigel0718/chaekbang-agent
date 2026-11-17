@@ -7,10 +7,16 @@
 배치 흐름(`run_layer`)은 공식 서지 벡터와 기관 도서 벡터가 같이 쓴다. 층은 대상 읽기, 저장된 해시
 읽기, 저장만 넘긴다(`EmbeddingLayer`). 인코딩 호출 동안 트랜잭션을 잡지 않고 배치마다 저장을
 끝낸다. 중간에 멈춰도 끝난 배치는 남고 증분 적재로 이어 한다.
+
+서비스 중 질의 인코딩은 `GuardedEmbedder`로 감싼다. 시간 제한, 실패 뒤 쉬기, 처음 한 번 모델 확인을
+더하고, 실패하면 `EmbeddingError`를 낸다. 실패를 어떻게 다룰지(키워드 순위로 내려가기)는 부르는
+쪽이 정한다.
 """
 
+import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -18,6 +24,7 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import clock
 from app.core.config import get_settings
 
 
@@ -26,6 +33,8 @@ class EmbeddingFailure(StrEnum):
     SERVER_ERROR = "server_error"  # 서버가 오류를 돌려줬다
     BAD_RESPONSE = "bad_response"  # 벡터 수나 차원이 요청과 다르다
     MODEL_MISMATCH = "model_mismatch"  # 서버가 다른 모델을 제공한다
+    TIMEOUT = "timeout"  # 시간 제한 안에 답하지 않았다
+    PAUSED = "paused"  # 앞의 실패 뒤 쉬는 중이라 부르지 않았다
 
 
 class EmbeddingError(Exception):
@@ -52,6 +61,59 @@ class Embedder(Protocol):
     async def encode_queries(self, texts: Sequence[str]) -> list[list[float]]:
         """검색 질의를 인코딩한다."""
         ...
+
+
+class GuardedEmbedder:
+    """서비스 중 질의 인코딩. 안쪽 인코더에 시간 제한, 실패 뒤 쉬기, 처음 한 번 모델 확인을 더한다.
+
+    - 시간 제한을 넘으면 `TIMEOUT`이다. 처음 쓸 때의 모델 확인도 같은 시간 제한 안에 든다.
+    - 실패하면 `pause`초 동안 안쪽 인코더를 부르지 않고 바로 `PAUSED`를 낸다(상세에 앞 실패 종류).
+    - 모델 확인은 성공하면 다시 하지 않는다. 실패(다른 모델 포함)는 쉬기 뒤 다시 확인한다.
+    - 문서는 인코딩하지 않는다. 제품은 저장된 벡터만 쓰고 적재는 운영자 실행이 한다.
+    - 잠금을 두지 않는다. 동시에 확인이 두 번 불려도 결과는 같다.
+    """
+
+    def __init__(self, inner: Embedder, *, timeout: float, pause: float) -> None:
+        self.inner = inner
+        self.name = inner.name
+        self.dim = inner.dim
+        self.timeout = timeout
+        self.pause = timedelta(seconds=pause)
+        self.checked = False
+        self.paused_until: datetime | None = None
+        self.last_failure: EmbeddingFailure | None = None
+        self.failures = 0  # 실패한 질의 인코딩 수(쉬는 중 포함). 평가가 출력한다
+
+    async def check(self) -> None:
+        await self.inner.check()
+        self.checked = True
+
+    async def encode_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        raise EmbeddingError(
+            EmbeddingFailure.BAD_RESPONSE, "질의 인코더는 문서를 인코딩하지 않는다"
+        )
+
+    async def encode_queries(self, texts: Sequence[str]) -> list[list[float]]:
+        if self.paused_until is not None and clock.now() < self.paused_until:
+            detail = self.last_failure.value if self.last_failure else ""
+            self.failures += 1
+            raise EmbeddingError(EmbeddingFailure.PAUSED, detail)
+        try:
+            async with asyncio.timeout(self.timeout):
+                if not self.checked:
+                    await self.check()
+                vectors = await self.inner.encode_queries(texts)
+        except TimeoutError:
+            error = EmbeddingError(EmbeddingFailure.TIMEOUT, f"{self.timeout}초")
+        except EmbeddingError as exc:
+            error = exc
+        else:
+            self.paused_until = None
+            return vectors
+        self.paused_until = clock.now() + self.pause
+        self.last_failure = error.failure
+        self.failures += 1
+        raise error
 
 
 @dataclass

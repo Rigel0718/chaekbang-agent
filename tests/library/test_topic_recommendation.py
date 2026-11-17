@@ -27,9 +27,14 @@ def _embedder(cosines: dict[str, float]) -> FakeEmbedder:
     )
 
 
+# 가짜 벡터는 문장 `질의`에 맞춰 있다. 벡터 질의 입력을 문장으로 둔다(기본값은 낱말).
+TEXT_INPUT = TopicSettings(vector_input="text")
+
+
 async def _find(session: AsyncSession, embedder, library_id: int, **options):
     options.setdefault("text", "질의")
     options.setdefault("keywords", ["공룡"])
+    options.setdefault("settings", TEXT_INPUT)
     found = await find_by_topic(session, embedder, library_id=library_id, **options)
     return [item.library_book_id for item in found]
 

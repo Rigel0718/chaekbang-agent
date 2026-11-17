@@ -31,6 +31,7 @@ from app.library.api import (
     members,
     staff,
 )
+from app.library.api.librarian import close_query_encoder
 from app.library.hooks import register_hook, register_related_scope
 from app.library.librarian import build_librarian_profiles
 from app.library.services.chat import purge_forever
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
     purge.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await purge
+    await close_query_encoder(app)
     await get_engine().dispose()
 
 

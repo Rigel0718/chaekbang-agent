@@ -131,7 +131,7 @@ async def test_children_tool_returns_children_only(
     """어린이 tool: 실제 분류로 정한 어린이 도서만 나온다."""
     ctx = ToolContext(catalog.library_id, session)
     data = SEARCH_CHILDREN_BOOKS.input_model(keywords=[])
-    rows = await SEARCH_CHILDREN_BOOKS.handler(ctx, data)
+    rows = (await SEARCH_CHILDREN_BOOKS.handler(ctx, data))["books"]
     assert rows
     assert {r["library_book_id"] for r in rows} <= catalog.children & catalog.recommendable
 
@@ -139,9 +139,11 @@ async def test_children_tool_returns_children_only(
 async def test_description_cut_in_tool(session: AsyncSession, catalog: SampleCatalog) -> None:
     """tool 결과: 실제 소개는 200자로 잘리고 소개를 지운 책은 비어 있다."""
     ctx = ToolContext(catalog.library_id, session)
-    rows = await SEARCH_COLLECTION.handler(
-        ctx, SEARCH_COLLECTION.input_model(keywords=["공룡", "그림책", "요리", "소설"])
-    )
+    rows = (
+        await SEARCH_COLLECTION.handler(
+            ctx, SEARCH_COLLECTION.input_model(keywords=["공룡", "그림책", "요리", "소설"])
+        )
+    )["books"]
     descriptions = [r["description"] for r in rows if r["description"]]
     assert descriptions
     assert all(len(d) <= DESCRIPTION_LIMIT + 1 for d in descriptions)

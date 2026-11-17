@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 <!-- 이 절은 세 줄까지만. 결정·수치·미룬 일은 docs/roadmap.md에 쓴다. -->
-진행 중: 없음(직전 `add-related-books` archive 끝) · 다음: `add-topic-search-tool`
+진행 중: 없음(직전 `add-topic-search-tool` archive 끝) · 다음: `add-recommendation-evals`
 change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾기, 비슷한 책, 최근 기록), 미룬 일은 `docs/roadmap.md`에 있다.
 
 ## OpenSpec 작업 규칙
@@ -80,7 +80,7 @@ uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
 uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움, 정보나루·카카오·YES24 세 키 필요 (--limit, --retry-failed)
-docker compose --profile embedding up -d embedder      # 임베딩 서버 (메모리 약 4GB, 처음에 모델 2.3GB 내려받기)
+docker compose --profile embedding up -d embedder      # 임베딩 서버 (메모리 약 4GB, 처음에 모델 2.3GB 내려받기). AI 사서 주제 검색의 벡터에도 쓰고, 없으면 키워드로 내려간다
 uv run python scripts/embed_books.py --incremental     # 운영자: 두 층 임베딩 적재 (--full, --layer official|library, --library-id, --batch-size, --kind)
 uv run python scripts/embedding_search.py "질의" --sample  # 임베딩 확인: 표본 적재 후 상위 5권 (--library-id N)
 uv run python scripts/rebuild_contributors.py         # 운영자: 기여자·저자 키를 지금 규칙으로 (--check는 차이만)

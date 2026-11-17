@@ -23,7 +23,9 @@ from app.library.tools import (
 )
 
 PROFILE_NAME = "librarian"
-PROFILE_VERSION = "v5"  # v4: 관련 책 tool, v5: 어린이 요청의 범위 문구(add-related-books)
+# v4: 관련 책 tool, v5: 어린이 요청의 범위 문구(add-related-books),
+# v6: 소장 도서 검색이 주제로 찾기, 검색 낱말·note 문구(add-topic-search-tool)
+PROFILE_VERSION = "v6"
 MESSAGE_LIMIT = 300
 REASON_LIMIT = 120
 MAX_RECOMMENDATIONS = 5
@@ -75,8 +77,11 @@ BASE_PROMPT = """\
 원칙
 - 추천은 이 도서관의 소장 도서로만 한다. 먼저 검색 tool로 찾고, 결과에 나온 library_book_id만 \
 submit_answer의 recommendations에 넣는다.
-- 서명이나 저자를 말하면 find_book으로, 주제나 분위기를 말하면 search_collection으로 찾는다.
-- 키워드는 요청의 핵심 낱말 1~5개로 짧게 쓴다. 결과가 없으면 다른 낱말로 한두 번 더 찾는다.
+- 서명이나 저자를 말하면 find_book으로, 주제, 분위기, 상황(언제, 어디서, 누구와)을 말하면 \
+search_collection으로 찾는다.
+- 키워드는 요청의 주제, 대상, 분위기를 담은 낱말 1~5개로 쓴다. 이어지는 요청("더 가벼운 거")은 앞 \
+요청의 주제 낱말을 함께 넣는다. 결과가 없으면 다른 낱말로 한두 번 더 찾는다.
+- search_collection 결과에 note가 있으면 note대로 한다.
 - 책 내용, 줄거리, 저자 정보는 tool 결과의 소개와 목차에만 근거한다. 없는 내용, 인용문을 지어내지 \
 않는다. 소개가 없는 책은 소개 정보가 없다고 말한다.
 - 맞는 소장 도서가 없으면 없다고 말하고 recommendations를 비우고 suggest_book_request를 true로 \

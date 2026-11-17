@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.llm import LlmClient
 from app.agent.models import AgentRun, AgentStep, StepKind
 from app.agent.profile import Profile
+from app.central.embedding import Embedder
 from app.features.children.checks import CHILDREN_TOOL_NAMES
 from app.features.children.rules import is_children_request
 from app.features.children.service import children_book_ids
@@ -108,6 +109,7 @@ async def run_scenario(
     profile: Profile,
     catalog: SampleCatalog,
     scenario: Scenario,
+    encoder: Embedder | None = None,
 ) -> ScenarioResult:
     await setup_guide(session, catalog.library_id, scenario.guide)
     basis = await guide_basis(session, catalog.library_id, scenario.guide)
@@ -130,7 +132,7 @@ async def run_scenario(
         )
         session_id = prepared.session_id
         texts.append(prepared.user_text)
-        stream = [e async for e in chat.stream_turn(session, llm, profile, prepared)]
+        stream = [e async for e in chat.stream_turn(session, llm, profile, prepared, encoder)]
         events = {e.name: e.data for e in stream}
         done = events["done"]
         tools, input_tokens, output_tokens, steps = await _run_facts(
@@ -166,5 +168,6 @@ async def run_scenarios(
     profile: Profile,
     catalog: SampleCatalog,
     scenarios: Sequence[Scenario],
+    encoder: Embedder | None = None,
 ) -> list[ScenarioResult]:
-    return [await run_scenario(session, llm, profile, catalog, s) for s in scenarios]
+    return [await run_scenario(session, llm, profile, catalog, s, encoder) for s in scenarios]

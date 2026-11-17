@@ -9,6 +9,9 @@
 - 어린이 구분은 등록과 같은 경로(`apply_category`)로 실제 분류 값에서 정한다.
 - 공식 서지의 기여자는 채움과 같은 경로(`sync_contributors`)로 만든다. 저자 키는 모델이 정한다.
 - 사본 상태는 기관이 가상이라 ISBN 순서에 고정한 규칙으로 만든다. 표본을 다시 받으면 책이 바뀐다.
+- 인코더를 넘기면 벡터 두 층(공식 서지 벡터, 기관 도서 벡터, 종류 `full`)을 운영자 실행과 같은 적재
+  코드로 같은 트랜잭션에 넣는다. 평가는 문서 벡터 캐시(`DOC_VECTORS`)를 쓴 인코더를 넘겨, 처음
+  한 번만 임베딩 서버로 인코딩한다.
 """
 
 import json
@@ -22,7 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.contributors import sync_contributors
+from app.central.embedding import Embedder
 from app.central.models import Book, ExternalSource
+from app.central.official_embeddings import run_official_embedding
 from app.core.isbn import InvalidIsbnError, normalize_isbn
 from app.features.children.models import Audience, LibraryBookAudience
 from app.features.children.service import apply_category
@@ -34,8 +39,11 @@ from app.library.models.catalog import (
     LibraryBook,
 )
 from app.library.models.library import Library, LibraryType, LoanMode
+from app.library.recommendation.embeddings import run_library_embedding
 
 DATA_FILE = Path(__file__).parent / "data" / "yes24_sample.json"
+DOC_VECTORS = DATA_FILE.parent / "doc_vectors.json"  # 표본 문서 벡터 캐시
+QUERY_VECTORS = DATA_FILE.parent / "query_vectors.json"  # 평가 중 질의 벡터 캐시
 LIBRARY_NAME = "평가용 가상 작은도서관"
 
 
@@ -78,6 +86,7 @@ class SampleCatalog:
     official: set[int] = field(default_factory=set)  # 공식 서지에 이은 책
     barcode_only: set[int] = field(default_factory=set)  # 표본의 ISBN이 ISBN이 아닌 책
     shelved: int | None = None  # 서가 위치를 따로 둔 책(안내 평가의 책 위치 시나리오)
+    vectors: int = 0  # 적재한 벡터 수(두 층 합)
 
     @property
     def recommendable(self) -> set[int]:
@@ -119,9 +128,16 @@ def _text(row: dict[str, Any], description: str | None) -> str:
 
 
 async def load_catalog(
-    session: AsyncSession, sample: Sample, *, loan_mode: LoanMode = LoanMode.INTERNAL
+    session: AsyncSession,
+    sample: Sample,
+    *,
+    loan_mode: LoanMode = LoanMode.INTERNAL,
+    embedder: Embedder | None = None,
 ) -> SampleCatalog:
-    """가상 기관을 만들고 표본을 넣는다. 커밋은 부르는 쪽의 savepoint 안에서 일어난다."""
+    """가상 기관을 만들고 표본을 넣는다. 커밋은 부르는 쪽의 savepoint 안에서 일어난다.
+
+    인코더가 있으면 표본의 두 층 벡터도 넣는다. 인코딩이 멈추면 `EmbeddingError`를 그대로 올린다.
+    """
     library = Library(
         name=f"{LIBRARY_NAME} ({loan_mode.value})",
         type=LibraryType.SMALL_LIBRARY,
@@ -203,4 +219,21 @@ async def load_catalog(
     )
     catalog.children = set(stored)
     await session.commit()
+    if embedder is not None:
+        catalog.vectors = await _load_vectors(session, embedder, library.id)
     return catalog
+
+
+async def _load_vectors(session: AsyncSession, embedder: Embedder, library_id: int) -> int:
+    official = select(LibraryBook.book_id).where(
+        LibraryBook.library_id == library_id, LibraryBook.book_id.is_not(None)
+    )
+    total = 0
+    for run in (
+        await run_official_embedding(session, embedder, full=True, within=official),
+        await run_library_embedding(session, embedder, full=True, library_id=library_id),
+    ):
+        if run.stopped is not None:
+            raise run.stopped
+        total += run.encoded
+    return total

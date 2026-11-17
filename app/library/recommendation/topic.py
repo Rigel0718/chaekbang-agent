@@ -33,7 +33,9 @@ TOPIC_DEPTH = 30
 class TopicSettings:
     keyword_weight: float = 1.0  # 0이면 키워드 신호를 쓰지 않는다
     vector_weight: float = 1.0  # 0이면 벡터 신호를 쓰지 않는다(인코더를 부르지 않는다)
-    vector_input: Literal["text", "keywords"] = "text"  # 벡터 질의: 이용자 문장 / 낱말을 이은 것
+    # 벡터 질의: 이용자 문장 / 낱말을 이은 것. 제품은 낱말이다(여러 턴·다시 찾기에서 맥락을 담는다,
+    # 합친 순위에서 문장과 차이 없음. add-topic-search-tool design 결정 2). 낱말이 비면 문장을 쓴다
+    vector_input: Literal["text", "keywords"] = "keywords"
     weights: Mapping[TextKind, float] = field(default_factory=lambda: {TextKind.FULL: 1.0})
     depth: int = TOPIC_DEPTH  # 신호마다 가져올 순위 깊이
     rrf_k: int = RRF_K

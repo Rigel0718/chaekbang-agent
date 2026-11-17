@@ -10,6 +10,10 @@ LLM은 날짜를 정하거나 세지 않는다.
 관련 책 tool(`find_related_books`)은 책 id가 있으면 비슷한 책, 비우면 대화 세션의 책(실행 값
 `SESSION_BOOKS`, 대화 코드가 넘긴다)으로 최근 기록 추천이다. REST의 비슷한 책 API와 같은
 service를 쓴다.
+
+소장 도서 검색 tool(`search_collection`)은 낱말이 있으면 주제로 찾기(`services/topic.py`, 키워드
+순위와 벡터 순위를 합침), 없으면 둘러보기다. 질의 인코더는 실행 값(`QUERY_ENCODER`)으로 받고, 없거나
+실패하면 키워드 순위로 내려간다. 결과는 `{books, note}`이고 임베딩 서버 상태는 드러내지 않는다.
 """
 
 from collections.abc import Callable
@@ -22,7 +26,7 @@ from app.agent.tools import Tool, ToolContext, ToolInput
 from app.core.kdc import kdc_class_name
 from app.library.recommendation.cards import Shelf, shelf_of
 from app.library.recommendation.lookup import find_books
-from app.library.recommendation.search import Candidate, get_candidate, search_collection
+from app.library.recommendation.search import Candidate, get_candidate
 from app.library.schemas.guide import DaySchedule, DayStatus, GuideRead, Span
 from app.library.services.guide import get_guide
 from app.library.services.related import (
@@ -31,10 +35,19 @@ from app.library.services.related import (
     related_for_session,
     similar_for_book,
 )
+from app.library.services.topic import QUERY_ENCODER, search_by_topic
 
 DESCRIPTION_LIMIT = 200
 TOC_LIMIT = 600
 NO_DESCRIPTION = "소개 정보가 없습니다. 내용을 추측하지 마세요."
+NO_SEARCH_RESULT = (
+    "맞는 소장 도서가 없다. 다른 낱말로 한 번 더 찾고, 그래도 없으면 없다고 말하고 희망도서를 "
+    "안내한다."
+)
+NO_KEYWORD_MATCH = (
+    "낱말이 들어간 소장 도서가 없어 내용이 가까운 책만 찾았다. 소개를 보고 요청과 맞는 책만 "
+    "추천하고, 맞는 책이 없으면 없다고 말하고 희망도서를 안내한다."
+)
 NO_RELATED = (
     "비슷한 소장 도서를 찾지 못했다. search_collection으로 다른 낱말을 찾아보고, 그래도 없으면 "
     "없다고 말하고 희망도서를 안내한다."
@@ -133,14 +146,19 @@ def search_tool(
 ) -> Tool:
     """소장 도서 검색 tool. within은 기관 도서 id 조건을 만드는 함수다."""
 
-    async def handler(ctx: ToolContext, data: SearchInput) -> list[dict[str, Any]]:
-        found = await search_collection(
+    async def handler(ctx: ToolContext, data: SearchInput) -> dict[str, Any]:
+        found = await search_by_topic(
             ctx.session,
             ctx.library_id,
             data.keywords,
+            encoder=ctx.values.get(QUERY_ENCODER),
             within=within(ctx.library_id) if within is not None else None,
         )
-        return await _results(ctx, found)
+        books = await _results(ctx, found.candidates)
+        note = (
+            NO_SEARCH_RESULT if not books else NO_KEYWORD_MATCH if found.keyword_missing else None
+        )
+        return {"books": books, "note": note}
 
     return Tool(name, description, SearchInput, handler, status_label)
 
@@ -202,8 +220,9 @@ async def _detail(ctx: ToolContext, data: DetailInput) -> dict[str, Any]:
 
 SEARCH_COLLECTION = search_tool(
     "search_collection",
-    "이 도서관의 소장 도서에서 추천할 수 있는 책을 찾는다. 대출 가능이나 대출 중 사본이 있는 책만 "
-    "나오고 최대 10권이다. 소개는 앞부분만 나온다.",
+    "이 도서관의 소장 도서에서 추천할 수 있는 책을 낱말과 내용으로 찾는다. 대출 가능이나 대출 중 "
+    "사본이 있는 책만 나오고 최대 10권이다. 소개는 앞부분만 나온다. 결과의 note가 있으면 note대로 "
+    "한다.",
     "소장 도서를 찾고 있어요",
 )
 

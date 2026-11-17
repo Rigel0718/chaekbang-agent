@@ -12,6 +12,9 @@
 관련 책 시나리오(`Expect.RELATED`)는 `selected`의 책을 고른 턴(LLM 없음)으로 시작할 수 있다.
 `{children_title}`은 표본의 어린이 도서 하나의 서명으로 바뀐다. `related`는 마지막 턴에서 관련 책
 tool을 부를 모양이다: `book`은 고른 책·찾은 책의 id로, `empty`는 id 없이(null).
+
+주제 시나리오(`add-topic-search-tool`)는 상황 질의, 이어지는 요청, 다시 찾기, 비슷한 분야만 있는
+주제, 어린이 주제다. 표본(YES24 87권)에 요리·에세이·IT 책은 있고 반도체·우주 책은 없다.
 """
 
 from dataclasses import dataclass
@@ -25,6 +28,8 @@ class Expect(StrEnum):
     ANY = "any"  # 규칙 검사만 본다
     GUIDE = "guide"  # 답 문장이 contains를 모두 담고 absent를 담지 않음
     RELATED = "related"  # 관련 책 tool을 related 모양으로 부르고, 추천이 그 결과 안에 있음
+    # 추천이 없고 희망도서 안내 표시가 켜짐, 또는 추천한 책의 서지가 모두 topic 낱말을 담음
+    NO_MATCH_OR_ON_TOPIC = "no_match_or_on_topic"
 
 
 class Picked(StrEnum):
@@ -65,6 +70,7 @@ GUIDE_UNKNOWN = "[agent/librarian] 등록되지 않은 안내는 지어내지 �
 GUIDE_PHONE = "031-000-0000"  # evals/librarian/guide.py의 가상 대표 연락처
 TIME_PATTERN = r"\d{1,2}\s*시|\d{1,2}:\d{2}"
 RELATED = "[agent/librarian] 관련 책 요청에 답함"
+TOPIC = "[agent/librarian] 주제 요청에 답함"
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
@@ -278,5 +284,42 @@ SCENARIOS: tuple[Scenario, ...] = (
         traces=(CHILDREN_ONLY, f"{RELATED} / 근거를 지어내지 않음"),
         selected=Picked.CHILDREN,
         related=RelatedCall.BOOK,
+    ),
+    Scenario(
+        "situation-commute",
+        ("출퇴근 지하철에서 가볍게 읽을 책 있어요?",),
+        Expect.RECOMMEND,
+        children=False,
+        traces=(f"{TOPIC} / 상황 질의", GENERAL_NO_PERSONAL),
+    ),
+    Scenario(
+        "follow-up-lighter",
+        ("에세이 추천해 주세요", "좀 더 가벼운 거요"),
+        Expect.RECOMMEND,
+        children=False,
+        traces=(f"{TOPIC} / 이어지는 요청",),
+        topic="에세이",
+    ),
+    Scenario(
+        "topic-retry",
+        ("회사에 도시락 싸 갈 때 참고할 책 있어요?",),
+        Expect.RECOMMEND,
+        children=False,
+        traces=(GENERAL_NO_PERSONAL,),
+    ),
+    Scenario(
+        "not-held-near",
+        ("반도체 공정 기술서 있나요?",),
+        Expect.NO_MATCH_OR_ON_TOPIC,
+        children=False,
+        traces=(f"{TOPIC} / 비슷한 분야만 있는 주제",),
+        topic="반도체",
+    ),
+    Scenario(
+        "child-topic-vector",
+        ("초등학생이 읽을 우주 이야기 책 있어요?",),
+        Expect.ANY,
+        children=True,
+        traces=(CHILDREN_ONLY,),
     ),
 )

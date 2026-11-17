@@ -48,7 +48,7 @@ async def test_children_tool_only_children(session: AsyncSession, library_a: Ten
     llm = FakeLlm([search("공룡", name="search_children_books"), submit("추천", kids["id"])])
     await run_librarian(session, llm, library_a.id, "공룡 책", prof=_profile())
     [result] = _results(llm, 1)
-    ids = [row["library_book_id"] for row in json.loads(result.content)]
+    ids = [row["library_book_id"] for row in json.loads(result.content)["books"]]
     assert ids == [kids["id"]]
 
 
@@ -62,7 +62,7 @@ async def test_children_tool_other_library(
     llm = FakeLlm([search("공룡", name="search_children_books"), submit("없어요", suggest=True)])
     await run_librarian(session, llm, library_a.id, "공룡 책", prof=_profile())
     [result] = _results(llm, 1)
-    assert json.loads(result.content) == []
+    assert json.loads(result.content)["books"] == []
     assert ours["id"] != theirs["id"]
 
 

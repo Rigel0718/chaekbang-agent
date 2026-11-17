@@ -32,7 +32,7 @@
 | `external/yes24/goods.py` | GOODS API 역할 함수 |
 | `external/yes24/category.py` | CATEGORY API 역할 함수 `steady_sellers`(실험 장서 받기 전용) |
 | `external/yes24/contributors.py` | YES24 저자 원문 해석 `parse_yes24_author` |
-| `embedding.py` | 인코더 접점 `Embedder`(`encode_documents`, `encode_queries`, `check`, `name`, `dim`), `EmbeddingError`, 두 층의 배치 흐름 `run_layer`·`EmbeddingLayer`·`EmbeddingRun` |
+| `embedding.py` | 인코더 접점 `Embedder`(`encode_documents`, `encode_queries`, `check`, `name`, `dim`), `EmbeddingError`, 두 층의 배치 흐름 `run_layer`·`EmbeddingLayer`·`EmbeddingRun`, 서비스 중 질의 인코더 `GuardedEmbedder` |
 | `embedding_text.py` | 공식 서지 벡터의 텍스트 `official_embedding_text`(공식 값만, 조립 규칙은 `app/core/embedding_text.py`) |
 | `official_embeddings.py` | 공식 서지 벡터 적재 `run_official_embedding`(대상은 공식 서지 전부, `within`으로 좁힘) |
 | `external/tei.py` | Text Embeddings Inference 어댑터 `TeiEmbedder`, 모델별 질의 접두어 |
@@ -114,6 +114,7 @@
 - 항상 `normalize`와 `truncate`를 켠다. 입력 길이 한도(기본 512토큰)는 서버가 정한다. TEI에는 한도를 낮추는 옵션이 없어서 `docker/embedder/start.sh`가 모델 폴더의 `max_seq_length`를 `EMBEDDING_MAX_TOKENS`로 바꿔 띄운다. 모델의 원래 한도(8192토큰)로 띄우면 준비 단계에서 메모리가 6GB를 넘는다.
 - `check()`가 서버의 모델 이름과 입력 한도를 설정과 비교한다. 다르면 적재를 시작하지 않는다.
 - 오류에는 상태 코드와 종류만 남기고 입력 텍스트를 넣지 않는다.
+- **서비스 중 질의 인코딩**(AI 사서 주제로 찾기)은 `GuardedEmbedder`로 감싼다. 시간 제한(`EMBEDDING_QUERY_TIMEOUT_SECONDS`, 기본 2초)을 넘으면 `timeout`, 실패하면 `EMBEDDING_QUERY_PAUSE_SECONDS`(기본 30초) 동안 서버를 부르지 않고 `paused`를 낸다. 모델 확인(`check`)은 처음 쓸 때 한 번이고, 다른 모델이면 쉬기 뒤 다시 확인한다. 문서는 인코딩하지 않는다. 실패를 어떻게 다룰지(키워드 순위로 내려가기)는 부르는 쪽(`app/library/services/topic.py`)이 정한다. `EMBEDDING_QUERY_ENABLED=false`면 앱이 인코더를 만들지 않는다. 적재의 시간 제한(`EMBEDDING_TIMEOUT_SECONDS`)과 따로다.
 - 소개글은 로컬 컨테이너에만 보낸다. 외부 임베딩 API로 바꾸려면 YES24 이용 조건을 먼저 확인한다.
 
 ### 실행 방식: ONNX 변환본

@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     # TEI의 클라이언트 배치 한도(기본 32)를 넘지 않게 둔다
     embedding_batch_size: int = 4
     embedding_timeout_seconds: float = 600.0  # CPU에서 512토큰 32권에 2분쯤 걸린다
+    # 서비스 중 질의 인코딩(AI 사서 주제로 찾기). 꺼지거나 느리면 키워드 순위로 내려간다.
+    embedding_query_enabled: bool = True
+    embedding_query_timeout_seconds: float = 2.0  # 질의 하나는 CPU에서 약 0.2초
+    embedding_query_pause_seconds: float = 30.0  # 실패 뒤 이 시간 동안 서버를 부르지 않는다
 
 
 @lru_cache

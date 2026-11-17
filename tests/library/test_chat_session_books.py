@@ -130,7 +130,8 @@ async def test_this_turn_found_book_is_passed(
         patch.setattr(runner._Execution, "__init__", spy)
         fake_llm.script(submit("있어요.", suggest=False))
         await talk(kiosk_client, "데미안 있어요?")
-    assert seen == [{"session_book_ids": (demian["id"],)}]
+    # 인코더는 테스트에서 끈다(`chat_helpers.fake_llm`). 실행 값 이름은 모두 `app/library`의 상수다
+    assert seen == [{"session_book_ids": (demian["id"],), "query_encoder": None}]
 
 
 async def test_latest_three_books(

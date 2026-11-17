@@ -14,7 +14,7 @@
 | --- | --- |
 | `children/models.py` | `library_book_audiences`, `Audience`, `AudienceSource` |
 | `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호(파일과 공식 서지가 같은 규칙), 분류 원문, 어린이 요청 판단 |
-| `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`, `find_related_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
+| `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`(소장 도서 검색과 같은 주제로 찾기, 범위는 어린이 도서. 범위는 키워드·벡터 순위를 매기기 전에 건다), `find_related_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
 | `children/checks.py` | 어린이 최종 검사 |
 | `children/service.py` | 조회, 지정, 파일 근거, 외부 분류 근거, 갱신, 관련 책 범위 제공자(`related_scope`) |
 | `children/hook.py` | 기관 공통의 사건을 service로 잇는다 |
