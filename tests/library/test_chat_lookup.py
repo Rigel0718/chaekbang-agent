@@ -123,12 +123,17 @@ async def test_selected_only_row(
     session_id = event(events, "session")["session_id"]
     rows = (
         await session.execute(
-            select(ChatMessage.role, ChatMessage.content, ChatMessage.note).where(
-                ChatMessage.session_id == session_id
-            )
+            select(
+                ChatMessage.role,
+                ChatMessage.content,
+                ChatMessage.note,
+                ChatMessage.library_book_ids,
+            ).where(ChatMessage.session_id == session_id)
         )
     ).all()
-    assert [tuple(r) for r in rows] == [("user", "", f"[고른 책: #{demian['id']} 데미안]")]
+    assert [tuple(r) for r in rows] == [
+        ("user", "", f"[고른 책: #{demian['id']} 데미안]", [demian["id"]])
+    ]
 
 
 async def test_next_turn_context(kiosk_client: AsyncClient, fake_llm: LlmSlot, demian) -> None:

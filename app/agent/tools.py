@@ -1,12 +1,15 @@
 """tool 계약. 이름, 설명, 입력 스키마, 실행 함수로 정의하고 실행기와 같은 프로세스에서 돈다.
 
 입력 모델은 ToolInput을 상속한다. 정의되지 않은 값을 받지 않으므로 LLM은 library_id를 넣을 수 없고,
-기관은 실행기가 ToolContext로 주입한다. strict 스키마는 모든 필드를 필수로 요구해서 기본값을 쓰지
-않는다. 값이 없어도 되는 필드는 `T | None`으로 둔다.
+기관은 실행기가 ToolContext로 주입한다. 실행을 시작한 코드는 실행 값(`ToolContext.values`)도 넘길 수
+있다. 실행기는 그 뜻을 모른 채 읽기 전용으로 전하고, LLM은 바꿀 수 없으며 실행 기록에 남지
+않는다. strict 스키마는 모든 필드를 필수로 요구해서 기본값을 쓰지 않는다. 값이 없어도 되는 필드는
+`T | None`으로 둔다.
 """
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -17,10 +20,14 @@ class ToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+EMPTY_VALUES: Mapping[str, Any] = MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class ToolContext:
     library_id: int
     session: AsyncSession
+    values: Mapping[str, Any] = field(default=EMPTY_VALUES)  # 실행 값(읽기 전용)
 
 
 @dataclass(frozen=True)

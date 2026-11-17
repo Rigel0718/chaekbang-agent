@@ -8,8 +8,9 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import anyio
@@ -90,8 +91,11 @@ class _Execution:
         library_id: int,
         user_text: str,
         history: Sequence[UserMessage | AssistantMessage | Instruction],
+        tool_values: Mapping[str, Any] | None = None,
     ) -> None:
         self.session = session
+        # 실행 값은 tool에 그대로 전하고 기록에 남기지 않는다. 복사해 두어 바깥에서 고쳐도 같다
+        self.tool_values = MappingProxyType(dict(tool_values or {}))
         self.llm = llm
         self.profile = profile
         self.library_id = library_id
@@ -191,7 +195,8 @@ class _Execution:
         started = time.monotonic()
         self.tool_names.append(tool.name)
         try:
-            output = await tool.handler(ToolContext(self.library_id, self.session), data)
+            context = ToolContext(self.library_id, self.session, self.tool_values)
+            output = await tool.handler(context, data)
         except DomainError as exc:
             await self.session.rollback()
             await self.step(StepKind.TOOL, started, name=tool.name, is_error=True, detail=detail)
@@ -322,13 +327,15 @@ async def run(
     library_id: int,
     user_text: str,
     history: Sequence[UserMessage | AssistantMessage | Instruction] = (),
+    tool_values: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[RunEvent]:
     """library_id는 인증한 코드가 정한다. history는 이전 턴의 이용자 문장과 최종 답 글이다.
 
     history에는 코드의 안내(`Instruction`)도 넣을 수 있다. 안내는 이용자 문장이 아니므로 검사가 받는
-    `user_texts`에 들어가지 않는다.
+    `user_texts`에 들어가지 않는다. tool_values는 tool에 읽기 전용으로 전하는 실행 값이다. 실행기는
+    뜻을 모르고 기록에 남기지 않는다.
     """
-    execution = _Execution(session, llm, profile, library_id, user_text, history)
+    execution = _Execution(session, llm, profile, library_id, user_text, history, tool_values)
     await execution.start()
     try:
         try:

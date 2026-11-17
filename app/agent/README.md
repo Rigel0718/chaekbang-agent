@@ -6,6 +6,7 @@
 
 - tool 호출 루프와 입력 검증
 - 기관 범위 주입. LLM은 기관을 정할 수 없다
+- 실행 값 주입(`run(tool_values=…)` → `ctx.values`). 실행기는 뜻을 모른다
 - 최종 답 검사와 재시도, 위반 항목 정리, 고정 답
 - 한도와 오류 처리, 진행 사건
 - 실행 기록(`agent_runs`, `agent_steps`)
@@ -31,12 +32,13 @@
 - LLM 호출 동안 트랜잭션을 잡지 않는다. 단계 기록이 커밋해서 끝낸다.
 - 세션은 부르는 쪽이 넘긴다. tool과 검사는 그 세션 하나로 순서대로 돈다.
 - `run()`의 `history`에는 이전 이용자 문장과 답 외에 코드의 안내(`Instruction`)를 넣을 수 있다. 안내는 LLM에 developer 메시지로 가고, 검사가 받는 이용자 문장(`user_texts`)에는 들어가지 않는다.
+- `run()`의 `tool_values`는 실행을 시작한 코드가 tool에 넘기는 읽기 전용 값이다(예: AI 사서 대화의 세션 책 id). 실행기는 이름과 뜻을 모르고 그대로 `ctx.values`로 전한다. LLM 입력과 섞이지 않고(입력 모델은 `extra="forbid"`), 실행 기록에 남기지 않는다. 이름은 값을 쓰는 패키지가 상수로 정한다.
 - 실패는 덜 내보내는 쪽으로 간다. 검사가 죽으면 답은 나가지 않고 고정 답이 나간다.
 
 ## 새 tool 추가
 
 1. 입력 모델을 `ToolInput`으로 만든다. 필드에 기본값을 쓰지 않고, 없어도 되는 값은 `T | None`으로 둔다. `library_id`를 넣지 않는다.
-2. 패키지의 `tools.py`에 `Tool`을 정의하고 `ctx.library_id`, `ctx.session`으로 service를 부른다.
+2. 패키지의 `tools.py`에 `Tool`을 정의하고 `ctx.library_id`, `ctx.session`(필요하면 `ctx.values`)으로 service를 부른다.
 3. service의 도메인 오류는 그대로 올린다. LLM이 메시지를 받는다.
 4. 프로필의 `tools`에 넣는다.
 
