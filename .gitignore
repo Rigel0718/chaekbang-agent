@@ -5,8 +5,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-resume-project-summary.md
-
 study/
 
 # YES24 카테고리 응답 원본. 재배포 금지 조건 때문에 저장소에 넣지 않는다
