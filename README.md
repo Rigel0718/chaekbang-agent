@@ -17,7 +17,7 @@
 - **기관 분리**: books·libraries를 뺀 모든 테이블은 `library_id`를 가진다. 기관은 로그인 토큰으로 정해지고, 다른 기관의 데이터는 404로 응답한다.
 - **공식 서지**: `books`는 ISBN이 있는 책의 공식 서지다. 기관 API로는 쓸 수 없다.
 - **기관 도서와 사본**: 기관 도서는 그 기관의 책이다. 내부 id로 식별하고 ISBN은 선택이다. ISBN이 같은 공식 서지가 있으면 연결되고(`book_id`), 조회할 때 공식 값을 먼저 보여 준다. 연결된 도서는 ISBN만 고칠 수 있다. 사본은 등록번호(`accession_number`), 청구기호(`call_number`), 입수 구분(매입·납품은 구입가와 ISBN 필수, 기증은 기증처 선택, 가져온 사본은 `unknown`도 가능)을 가진다.
-- **운영 방식(`loan_mode`)**: `internal` 기관은 이 서비스에서 대출·반납하고, `imported` 기관은 기존 대출 프로그램에서 하므로 대출·반납 요청에 409로 안내한다.
+- **운영 방식(`loan_mode`)**: `internal` 기관은 이 서비스에서 대출·반납하고, `external`(외부 대출) 기관은 기존 대출 프로그램에서 하므로 대출·반납 요청에 409로 안내한다.
 
 ## 로컬 실행
 
@@ -59,7 +59,7 @@ uv run uvicorn app.main:app --reload
 | 기관 | 운영 방식 | 관리자 | 키오스크 |
 | --- | --- | --- | --- |
 | 햇살 작은도서관 | `internal` (대출 14일, 대출·연체 데이터 있음) | `sunny-admin` | `sunny-kiosk` |
-| 푸른숲 작은도서관 | `imported` | `forest-admin` | `forest-kiosk` |
+| 푸른숲 작은도서관 | `external` | `forest-admin` | `forest-kiosk` |
 
 비밀번호는 `.env`의 `SEED_ADMIN_PASSWORD`, `SEED_KIOSK_PASSWORD`다 (`.env.example`의 개발용 값).
 
@@ -82,7 +82,7 @@ uv run alembic downgrade base
 
 ## 장서 가져오기
 
-기존 대출 프로그램의 엑셀(xlsx)·CSV 내보내기로 장서를 채운다. `loan_mode = imported` 기관의 관리자만 쓸 수 있다.
+기존 대출 프로그램의 엑셀(xlsx)·CSV 내보내기로 장서를 채운다. `loan_mode = external` 기관의 관리자만 쓸 수 있다.
 
 1. `POST /holding-imports`에 파일을 올린다 (multipart `file`). 장서는 바뀌지 않고 미리 보기가 만들어진다.
 2. 응답의 `summary`(새 사본, 바뀐 사본, 건너뛴 행, 표기, 파일에서 빠진 사본 수)와 `GET /holding-imports/{id}/rows`를 확인한다.
@@ -148,7 +148,7 @@ uv run python -m evals.holdings_import
 - **대표 연락처에는 기관 대표 번호만 넣는다.** 담당자·자원봉사자의 개인 휴대폰 번호를 넣지 않는다. 이 번호는 키오스크 화면과 AI 사서 답에 그대로 나온다.
 - 개관 여부: 임시 휴관 → 공휴일 휴관(설정한 기관만) → 정기 휴관(운영 시간 구간이 없는 요일) → 개관. 운영 시간을 하나도 등록하지 않으면 `unknown`이다.
 - 공휴일은 `holidays` 패키지로 오프라인 계산한다(설날·추석·대체공휴일·선거일). 정부가 갑자기 정한 임시공휴일은 빠질 수 있으니 그날은 임시 휴관일로 등록한다.
-- 반납 예정일 = 대출일 + 기본 대출 기간(`PATCH /library`의 `default_loan_days`). 그날이 휴관이면 기본은 다음 개관일로 미루고(`next_open_day`), 무인 반납함이 있으면 `keep`으로 그대로 둔다. 자체 대출(`POST /loans`)도 같은 계산을 쓴다. 가져오기 기관은 실제 반납일을 기존 대출 프로그램이 정하므로 `due_is_estimate`가 true다. 기본 대출 기간을 그 프로그램과 맞춰 둔다.
+- 반납 예정일 = 대출일 + 기본 대출 기간(`PATCH /library`의 `default_loan_days`). 그날이 휴관이면 기본은 다음 개관일로 미루고(`next_open_day`), 무인 반납함이 있으면 `keep`으로 그대로 둔다. 자체 대출(`POST /loans`)도 같은 계산을 쓴다. 외부 대출 기관은 실제 반납일을 기존 대출 프로그램이 정하므로 `due_is_estimate`가 true다. 기본 대출 기간을 그 프로그램과 맞춰 둔다.
 - 화면의 "도서관 안내" 칸은 이 API로 그린다(LLM 없음). 대화로 물으면 AI 사서가 `get_library_guide` tool로 답한다.
 
 ## AI 사서

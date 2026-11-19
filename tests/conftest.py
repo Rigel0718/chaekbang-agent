@@ -147,8 +147,8 @@ async def library_a(session: AsyncSession) -> Tenant:
 
 @pytest.fixture
 async def library_b(session: AsyncSession) -> Tenant:
-    """가져오기 기관 (loan_mode=imported)."""
-    return await _tenant(session, "B 작은도서관", "imported", "b")
+    """외부 대출 기관 (loan_mode=external)."""
+    return await _tenant(session, "B 작은도서관", "external", "b")
 
 
 @pytest.fixture

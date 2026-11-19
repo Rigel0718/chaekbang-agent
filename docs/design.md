@@ -49,8 +49,8 @@ MVP는 작은도서관 하나에 집중하고, 독립서점은 같은 핵심 위
 | 가져오기 (기본) | 대출 프로그램을 이미 쓰는 기관 | 기존 시스템의 엑셀·CSV 내보내기를 가져온다. 다시 가져오면 바뀐 것만 반영하고, 파일에서 빠진 사본은 제적한다 | 가져온 파일의 대출 상태를 쓴다. 이용자 화면에는 마지막 갱신 시각을 함께 보여 준다 |
 | 자체 대출 | 대출 프로그램이 없는 기관, 데모 | 관리자 화면에서 등록한다 | AI 사서가 빌림·반납을 직접 처리한다 |
 
-- 기관마다 운영 방식(`loan_mode`: `imported` / `internal`)을 하나 고른다.
-- 가져오기 기관에서는 이용자 화면의 대출 tool을 끄고 "대출은 데스크에서" 안내로 바꾼다. 추천·큐레이션·희망도서는 두 방식 모두 같다.
+- 기관마다 운영 방식(`loan_mode`: `external` / `internal`)을 하나 고른다.
+- 외부 대출 기관에서는 이용자 화면의 대출 tool을 끄고 "대출은 데스크에서" 안내로 바꾼다. 추천·큐레이션·희망도서는 두 방식 모두 같다.
 - 가져오기는 기관마다 다른 열 구성을 받아야 한다. 머리글 인식, ISBN 정규화(하이픈, ISBN-10, 엑셀 숫자 셀), 중복 사본 처리는 결정적인 코드로 한다.
 
 ## 전체 구조
@@ -120,7 +120,7 @@ MVP는 작은도서관 하나에 집중하고, 독립서점은 같은 핵심 위
 | return_loan | 등록번호로 반납 처리 (자체 대출 기관만) | 쓰기 |
 | request_book | 희망도서 신청 남기기 | 쓰기 |
 
-v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린이 기능의 `search_children_books`, 최종 답 `submit_answer`만 넣는다. `get_curations`는 승인 흐름 뒤에, `get_popular_loans`는 가져오기 기관에 대출 기록이 없어 나중에, 쓰기 tool과 `search_external_books`는 `add-librarian-actions`에서 다룬다. 회원번호가 LLM과 대화 기록을 거치지 않게 입력 방식을 따로 설계해야 하기 때문이다.
+v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린이 기능의 `search_children_books`, 최종 답 `submit_answer`만 넣는다. `get_curations`는 승인 흐름 뒤에, `get_popular_loans`는 외부 대출 기관에 대출 기록이 없어 나중에, 쓰기 tool과 `search_external_books`는 `add-librarian-actions`에서 다룬다. 회원번호가 LLM과 대화 기록을 거치지 않게 입력 방식을 따로 설계해야 하기 때문이다.
 
 **원칙**
 
@@ -204,7 +204,7 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 
 | 테이블 | 내용 | 단계 |
 | --- | --- | --- |
-| libraries | 기관 (이름, 유형: small_library / bookstore, 운영 방식 loan_mode: imported / internal, 기본 대출 기간) | MVP |
+| libraries | 기관 (이름, 유형: small_library / bookstore, 운영 방식 loan_mode: external / internal, 기본 대출 기간) | MVP |
 | library_guides, library_opening_hours, library_closures, library_guide_entries | 도서관 안내: 대표 연락처·대출 권수·공휴일 휴관·반납일 규칙, 요일별 운영 시간, 임시 휴관일, 자유 항목(시설 위치·이용 규칙·알림) | MVP |
 | staff_users | 관리자 계정, 역할 (admin / kiosk) | MVP |
 | members | 이용자 회원번호, 이름 (최소 정보) | MVP |

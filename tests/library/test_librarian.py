@@ -382,7 +382,7 @@ async def test_card_other_library_dropped(
 
 
 async def test_imported_card_synced_at(session: AsyncSession, library_b: Tenant) -> None:
-    """[agent/librarian] 운영 방식별 안내 / 가져오기 기관의 카드"""
+    """[agent/librarian] 운영 방식별 안내 / 외부 대출 기관의 카드"""
     synced = (await session.execute(text("SELECT now() - interval '2 days'"))).scalar_one()
     book = await add_held_book(
         session, library_b.id, title="공룡", holding={"last_synced_at": synced}
@@ -396,12 +396,12 @@ async def test_prompt_by_loan_mode(
 ) -> None:
     """[agent/librarian] 운영 방식별 안내 / 운영 방식별 프로필"""
     systems = {}
-    for tenant, mode in ((library_a, LoanMode.INTERNAL), (library_b, LoanMode.IMPORTED)):
+    for tenant, mode in ((library_a, LoanMode.INTERNAL), (library_b, LoanMode.EXTERNAL)):
         llm = FakeLlm([submit("없어요", suggest=True)])
         await run_librarian(session, llm, tenant.id, prof=librarian(mode))
         systems[mode] = llm.requests[0]["system"]
-    assert systems[LoanMode.INTERNAL] != systems[LoanMode.IMPORTED]
-    assert "가져와" in systems[LoanMode.IMPORTED]
+    assert systems[LoanMode.INTERNAL] != systems[LoanMode.EXTERNAL]
+    assert "가져와" in systems[LoanMode.EXTERNAL]
     assert "가져와" not in systems[LoanMode.INTERNAL]
 
 

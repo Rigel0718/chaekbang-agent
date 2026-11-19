@@ -38,7 +38,7 @@ class Candidate:
     library_book: LibraryBook
     available_count: int
     on_loan_count: int
-    status_synced_at: datetime | None  # 가져오기 기관만. 사본 중 가장 오래된 갱신 시각
+    status_synced_at: datetime | None  # 외부 대출 기관만. 사본 중 가장 오래된 갱신 시각
 
     @property
     def recommendable(self) -> bool:
@@ -151,10 +151,10 @@ async def search_collection(
     query = ranked_query(library_id, clean_keywords(keywords), within).limit(
         min(limit, SEARCH_LIMIT)
     )
-    imported = await _loan_mode(session, library_id) == LoanMode.IMPORTED
+    external = await _loan_mode(session, library_id) == LoanMode.EXTERNAL
     rows = await session.execute(query)
     return [
-        Candidate(book, available, on_loan, synced if imported else None)
+        Candidate(book, available, on_loan, synced if external else None)
         for book, available, on_loan, synced in rows.unique()
     ]
 
@@ -171,9 +171,9 @@ async def get_candidates(
         .outerjoin(counts, counts.c.library_book_id == LibraryBook.id)
         .where(LibraryBook.library_id == library_id, LibraryBook.id.in_(library_book_ids))
     )
-    imported = await _loan_mode(session, library_id) == LoanMode.IMPORTED
+    external = await _loan_mode(session, library_id) == LoanMode.EXTERNAL
     return {
-        book.id: Candidate(book, available or 0, on_loan or 0, synced if imported else None)
+        book.id: Candidate(book, available or 0, on_loan or 0, synced if external else None)
         for book, available, on_loan, synced in rows.unique()
     }
 

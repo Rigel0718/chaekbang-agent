@@ -139,14 +139,14 @@ async def test_status_has_only_labels(
 async def test_imported_answer(
     kiosk_client_b: AsyncClient, fake_llm: LlmSlot, session: AsyncSession, library_b: Tenant
 ) -> None:
-    """[agent/librarian] 운영 방식별 안내 / 가져오기 기관의 카드"""
+    """[agent/librarian] 운영 방식별 안내 / 외부 대출 기관의 카드"""
     synced = clock.now() - timedelta(days=1)
     book = await add_held_book(
         session, library_b.id, title="공룡 백과", holding={"last_synced_at": synced}
     )
     fake_llm.script(submit("이 책요", book["id"]))
     answer = event(await talk(kiosk_client_b, "공룡 책"), "answer")
-    assert answer["loan_mode"] == "imported"
+    assert answer["loan_mode"] == "external"
     assert answer["recommendations"][0]["status_synced_at"] is not None
 
 

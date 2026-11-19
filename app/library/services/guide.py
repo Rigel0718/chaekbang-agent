@@ -189,7 +189,7 @@ async def get_guide(session: AsyncSession, library_id: int) -> GuideRead:
         loan_limit=guide.loan_limit if guide else None,
         loan_days=rules.loan_days,
         loan_mode=rules.loan_mode,
-        due_is_estimate=rules.loan_mode == LoanMode.IMPORTED,
+        due_is_estimate=rules.loan_mode == LoanMode.EXTERNAL,
         closed_on_public_holidays=rules.closed_on_public_holidays,
         due_on_closed_day=rules.due_rule,
         weekly_hours=[

@@ -42,6 +42,13 @@ async def test_invalid_loan_mode(admin_client: AsyncClient) -> None:
     assert res.status_code == 422
 
 
+async def test_old_loan_mode_value_rejected(admin_client: AsyncClient) -> None:
+    """[library/libraries] 기관 정보와 운영 방식 / 옛 운영 방식 값"""
+    res = await admin_client.patch("/library", json={"loan_mode": "imported"})
+    assert res.status_code == 422
+    assert (await admin_client.get("/library")).json()["loan_mode"] == "internal"
+
+
 async def test_kiosk_cannot_update_library(kiosk_client: AsyncClient) -> None:
     """[library/staff-auth] 역할별 접근 제한 (키오스크의 기관 수정은 403)"""
     res = await kiosk_client.patch("/library", json={"default_loan_days": 7})

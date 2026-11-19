@@ -23,7 +23,7 @@ class LibraryType(StrEnum):
 
 
 class LoanMode(StrEnum):
-    IMPORTED = "imported"  # 기존 대출 프로그램에서 가져오기
+    EXTERNAL = "external"  # 외부 대출: 기존 대출 프로그램에서 대출
     INTERNAL = "internal"  # AI 사서가 대출까지 처리
 
 
