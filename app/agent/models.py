@@ -52,6 +52,8 @@ class AgentRun(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, server_default="0")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 최종 답 tool이 고른 답 필드(`AnswerTool.record_fields`). completed·repaired일 때만 쓴다
+    answer_record: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class AgentStep(Base):

@@ -65,8 +65,10 @@ async def finish_run(
     cached_input_tokens: int,
     cache_write_tokens: int,
     output_tokens: int,
+    answer_record: dict[str, Any] | None = None,
 ) -> None:
     run.status = status
+    run.answer_record = answer_record
     run.input_tokens = input_tokens
     run.cached_input_tokens = cached_input_tokens
     run.cache_write_tokens = cache_write_tokens

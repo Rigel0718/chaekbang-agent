@@ -73,9 +73,14 @@ class AnswerTool:
     name: str
     description: str
     input_model: type[ToolInput]
+    # 검사를 통과한(또는 정리한) 답에서 실행 행에 남겨도 되는 필드. 문장은 넣지 않는다
+    record_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_all_fields(self.name, self.input_model)
+        unknown = set(self.record_fields) - set(self.input_model.model_fields)
+        if unknown:
+            raise ValueError(f"{self.name}: 기록할 답 필드가 답 구조에 없습니다: {sorted(unknown)}")
 
     @property
     def spec(self) -> ToolSpec:

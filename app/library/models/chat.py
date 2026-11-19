@@ -1,4 +1,4 @@
-"""AI 사서 대화와 추천 노출 기록 (기관별).
+"""AI 사서·운영 에이전트 대화와 추천 노출 기록 (기관별).
 
 대화는 진행 중에만 두고 세션이 끝나면 지운다. 메시지에는 가린 이용자 문장과 최종 답만 둔다.
 노출 기록은 세션과 잇지 않아서 세션을 지워도 남는다. 회원, 문장, 이유, 어린이 값은 두지 않는다.
@@ -31,12 +31,22 @@ class ChatRole(StrEnum):
     ASSISTANT = "assistant"
 
 
+class SessionKind(StrEnum):
+    """세션을 만든 경로. 세션은 그 경로에서만 쓰고 지운다."""
+
+    LIBRARIAN = "librarian"  # AI 사서(공용 화면)
+    ADMIN = "admin"  # 운영 에이전트(관리자)
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     __table_args__ = (UniqueConstraint("library_id", "id", name="uq_chat_sessions_library_id_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="RESTRICT"))
+    kind: Mapped[SessionKind] = mapped_column(
+        str_enum(SessionKind, "session_kind"), server_default=SessionKind.LIBRARIAN.value
+    )
     last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     busy_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 처리 중 표시
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -12,6 +12,7 @@
 - 서명·저자 찾기와 자동완성(LLM 없음)
 - 도서관 안내: 대표 연락처, 운영 시간, 휴관일, 이용 규칙, 자유 항목, 개관 여부와 반납 예정일 계산
 - AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
+- 운영 에이전트: 장서·대출 분석(정해진 분석 tool), 프로필, 관리자 대화
 
 ## 구성
 
@@ -42,7 +43,13 @@
 | `tools.py` | AI 사서의 조회 tool: `search_collection`(주제로 찾기), `find_book`(서명·저자 찾기), `find_related_books`(관련 책), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 tool을 만드는 `search_tool`·`related_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
 | `privacy.py` | 개인정보 가리기 |
-| `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장(책 id 칸), 노출 기록, 끝난 세션 삭제. 세션의 책 `session_books` |
+| `services/chat.py` | 대화 순서: 확인, 고른 책·찾은 책, 가리기, 실행, 카드, 저장(책 id 칸), 노출 기록, 끝난 세션 삭제. 세션의 책 `session_books`. 세션 종류(`SessionKind`)별 만료·일일 상한, 운영 에이전트도 쓰는 세션 열기 `open_session`·`release` |
+| `analytics/` | 분석 빌더: 분야 결정 `fields`(KDC 주류 + 분류 없음), 기간 `periods`(프리셋·월 숫자), 분석 축 `axes`(`AnalysisAxis`), 책 범위와 묶기 `scope`(`book_facts`, `BookFilter`) |
+| `services/analytics.py` | 분석 service 넷: 장서 현황 `collection_status`, 상태별 사본 `holdings_by_status`, 대출 통계 `loan_stats`, 안 빌린 책 `unborrowed_books`. REST는 아직 없고 tool이 부른다 |
+| `schemas/analytics.py` | 분석 결과 스키마. 필드는 허용 목록 테스트(`tests/library/test_admin_agent.py`)가 고정한다 |
+| `analytics_tools.py` | 운영 에이전트의 분석 tool 넷. 등록된 축으로 입력 모델을 조립 때 만든다 |
+| `admin_agent.py` | 운영 에이전트: 답 구조(`message`, `unsupported`), 프롬프트, 운영 방식별 프로필(`build_admin_profiles`), `AdminExtension` |
+| `services/admin_chat.py`, `api/admin_agent.py` | 관리자 대화 `POST /admin-agent/messages`, `DELETE /admin-agent/sessions/{id}`(키오스크 403) |
 
 ## 규칙
 
@@ -156,3 +163,16 @@
 - 반납 예정일은 `services/guide.py`의 한 함수가 정한다. REST, `get_library_guide` tool, 자체 대출(`create_loan`)이 같은 값을 쓴다. 이미 만든 대출의 `due_on`은 나중에 휴관일을 등록해도 바꾸지 않는다.
 - 공휴일은 `app/core/holidays.py`(`holidays` 패키지, 오프라인)다. 임시공휴일은 기관이 임시 휴관으로 등록한다.
 - 날짜·요일·시각은 코드가 계산해 tool 결과에 넣는다. LLM은 날짜를 세지 않는다.
+
+## 운영 에이전트
+
+- 정해진 분석 tool로 답한다. LLM은 분석 종류·기간·축(enum)만 고르고 숫자는 `services/analytics.py`가 센다. 자연어 SQL은 보류다(`add-admin-agent`).
+- **분야**는 공식 서지 KDC → 기관 도서 KDC → 사본 청구기호(제적 아닌 사본 중 가장 작은 id) 앞 세 자리 → 분류 없음 순서다. 키워드·벡터 검색으로 세지 않는다. 분야 그룹에는 0인 분야와 분류 없음도 늘 넣어 합이 전체와 같다.
+- **제적 사본**은 장서 수와 그룹에서 빼고 `withdrawn_copies`로 따로 센다. 대출 건수에는 넣는다(기록이 남는다). 권당 대출의 분모는 지금 사본 수다. 책 순위에서 사본이 모두 제적된 책은 `in_collection=false`다. 안 빌린 책은 기간 시작 전에 등록됐고 지금 사본이 있는 서명만이다.
+- **기간**은 프리셋 7개 또는 월 숫자(미래면 작년)이고 `clock.today()`로 계산한다. 결과에 계산한 기간(`period.label`)을 넣는다. 대출은 빌린 날이 기간 안이면 센다.
+- **한도**: 순위 10/최대 20, 목록 20/최대 50. 목록과 순위는 `total`, `shown`, `truncated`를 낸다. 같은 수는 건수 → 서명 가나다순 → id다.
+- **분석 축**: 기관 개별 기능은 `AdminExtension(axes=...)`으로 축을 넘긴다. 이 패키지는 축 이름을 부르지 않는다. 배정이 없는 책은 기본값이다. 축이 없으면 tool 입력에도 없다.
+- **개인정보**: 분석은 `members`와 `holdings.donor`를 읽지 않는다. 연체는 건수만 낸다. 분석 tool 입력은 enum과 정수라 모두 실행 기록에 남긴다. 답의 `unsupported`는 최종 답의 기록 필드로 실행 행에 남고, 질문 문장은 새로 저장하지 않는다.
+- **운영 방식**: 외부 대출 기관 프로필에는 대출 통계·안 빌린 책 tool이 없다(대출 행이 없다). 사본의 대출 중 상태는 장서 현황의 상태 묶기로 답한다.
+- 최종 검사는 없다. 답의 숫자가 tool 결과에 있는지는 평가(`evals/admin_agent`)로 잰다.
+- 세션은 AI 사서와 같은 테이블이고 종류(`kind`)로 나눈다. 다른 종류의 세션 id는 404다. 만료는 30분, 일일 상한은 200으로 AI 사서와 따로다.
