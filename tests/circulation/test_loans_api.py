@@ -159,7 +159,7 @@ async def _imported_shelf(session: AsyncSession, library_b: Tenant) -> None:
 async def test_imported_library_borrow(
     kiosk_client_b: AsyncClient, session: AsyncSession, library_b: Tenant
 ) -> None:
-    """[circulation/loans] 운영 방식에 따른 대출 차단 / 가져오기 기관에서 대출"""
+    """[circulation/loans] 운영 방식에 따른 대출 차단 / 외부 대출 기관에서 대출"""
     await _imported_shelf(session, library_b)
     res = await _borrow(kiosk_client_b)
     assert res.status_code == 409
@@ -170,7 +170,7 @@ async def test_imported_library_borrow(
 async def test_imported_library_return(
     kiosk_client_b: AsyncClient, session: AsyncSession, library_b: Tenant
 ) -> None:
-    """[circulation/loans] 운영 방식에 따른 대출 차단 / 가져오기 기관에서 반납"""
+    """[circulation/loans] 운영 방식에 따른 대출 차단 / 외부 대출 기관에서 반납"""
     await _imported_shelf(session, library_b)
     res = await _return(kiosk_client_b)
     assert res.status_code == 409

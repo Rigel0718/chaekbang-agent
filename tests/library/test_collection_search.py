@@ -205,7 +205,7 @@ async def test_other_library_excluded(
 
 
 async def test_imported_synced_at(session: AsyncSession, library_b: Tenant) -> None:
-    """[catalog/collection-search] 대출 상태 시각 / 가져오기 기관"""
+    """[catalog/collection-search] 대출 상태 시각 / 외부 대출 기관"""
     old = clock.now() - timedelta(days=3)
     new = clock.now() - timedelta(hours=1)
     await add_held_book(

@@ -202,7 +202,7 @@ class BookSummary(BaseModel):
     cover_url: str | None  # 원본 URL. 저장하지 않는다
     cover_source: str | None  # 표지 출처
     product_url: str | None  # 출처의 상품 링크
-    status_synced_at: datetime | None  # 가져오기 기관의 대출 상태 갱신 시각
+    status_synced_at: datetime | None  # 외부 대출 기관의 대출 상태 갱신 시각
 
 
 class RelatedBook(BookSummary):

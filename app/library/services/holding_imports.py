@@ -181,11 +181,11 @@ def _record_plans(rows: list[dict[str, Any]], plans: list[RowPlan]) -> list[dict
     ]
 
 
-async def _require_imported_library(session: AsyncSession, library_id: int, *, lock: bool) -> None:
+async def _require_external_library(session: AsyncSession, library_id: int, *, lock: bool) -> None:
     query = select(Library).where(Library.id == library_id)
     library = await session.scalar(query.with_for_update() if lock else query)
     assert library is not None
-    if library.loan_mode != LoanMode.IMPORTED:
+    if library.loan_mode != LoanMode.EXTERNAL:
         raise ConflictError(INTERNAL_LIBRARY)
 
 
@@ -198,7 +198,7 @@ async def create_preview(
     column_overrides: dict[str, str] | None = None,
 ) -> HoldingImport:
     """파일을 해석해 미리 보기를 저장한다. 장서는 바꾸지 않는다."""
-    await _require_imported_library(session, library_id, lock=False)
+    await _require_external_library(session, library_id, lock=False)
     try:
         table = read_table(filename, content)
         match = find_header(table, column_overrides)
@@ -287,7 +287,7 @@ async def apply_import(
     session: AsyncSession, library_id: int, import_id: int, *, confirm_withdraw: bool = False
 ) -> HoldingImport:
     """저장된 행을 현재 장서와 다시 비교해 한 트랜잭션으로 적용한다."""
-    await _require_imported_library(session, library_id, lock=True)
+    await _require_external_library(session, library_id, lock=True)
     record = await get_owned(session, HoldingImport, library_id, import_id, label=LABEL)
     await session.refresh(record)  # 기관 행을 잠근 뒤의 상태로 판단한다
     if record.status == ImportStatus.APPLIED:

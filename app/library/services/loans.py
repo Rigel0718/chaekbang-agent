@@ -27,10 +27,10 @@ class LoanFilter(StrEnum):
 
 
 async def _library_for_circulation(session: AsyncSession, library_id: int) -> Library:
-    """가져오기 기관은 기존 대출 프로그램에서 대출하므로 여기서 처리하지 않는다."""
+    """외부 대출 기관은 기존 대출 프로그램에서 대출하므로 여기서 처리하지 않는다."""
     library = await session.get(Library, library_id)
     assert library is not None
-    if library.loan_mode == LoanMode.IMPORTED:
+    if library.loan_mode == LoanMode.EXTERNAL:
         raise ConflictError(DESK_ONLY)
     return library
 

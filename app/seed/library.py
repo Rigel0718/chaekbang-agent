@@ -19,7 +19,7 @@ class SeedLibrary:
 
 
 SUNNY = SeedLibrary("sunny", "햇살 작은도서관", LoanMode.INTERNAL)
-FOREST = SeedLibrary("forest", "푸른숲 작은도서관", LoanMode.IMPORTED)
+FOREST = SeedLibrary("forest", "푸른숲 작은도서관", LoanMode.EXTERNAL)
 LIBRARIES = (SUNNY, FOREST)
 
 

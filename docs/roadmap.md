@@ -30,6 +30,7 @@ MVP는 약 8주다. 이전 방향(무인 서점)의 1주차 결과는 저장소 
 | 17 | `add-related-books` | 이긴 설정을 제품에 내보내기: 찾은 책 카드 아래 비슷한 책(LLM 없음), AI 사서 tool, REST. 미룬 일 D.3·D.4 | 찾은 책 아래 비슷한 책이 LLM 없이 나옴 | 끝남 (issue #41) |
 | 18 | `add-topic-search-tool` | 주제로 찾기(`hybrid-k60`)를 AI 사서에 잇기: 서비스 중 임베딩 서버, 꺼졌을 때 키워드 검색, LLM 평가 전후 비교 | 주제 요청이 키워드+벡터 순위로 답하고 평가가 나빠지지 않음 | 끝남 (issue #44) |
 | 19 | `add-recommendation-evals` | 대화 추천 평가(LLM 포함): 실험 장서 60항목을 실제 대화로, 기존 어울림 라벨로 카드 Hit@5·Recall@5·nDCG@5(묶음별), 실행 사이 비교, 실제 LLM 낱말 다시 보기, `related-anything` 판정. MVP 우선으로 어린이 지표 둘·모델 비교 등은 뺌(아래 미룬 일). LLM 채점은 최종 서비스 테스트에서 | 버전별 점수표 | 끝남 (issue #46) |
+| – | `rename-loan-mode-external` | 운영 방식 값 `imported` → `external`(사본 출처 `imported`와 구분). 용어는 방식 '외부 대출'/'자체 대출', 기관 '외부 대출 기관'/'자체 대출 기관'(상호대차 아님). design 없이 진행 | 옛 값은 422, 기존 기관은 마이그레이션으로 `external` | 끝남 |
 | 20 | `add-admin-agent` | 운영 에이전트, 자연어 SQL 분석과 안전장치, 장서 등록 | 분석 질문 정답률 측정 | **다음** |
 | 21 | `add-approval-flow` | 큐레이션·연체 안내·구매 요청서 초안 → 승인 → 실행 | 서버 재시작 후에도 승인 이어짐 | |
 | 22 | `add-librarian-actions` | 대출·반납·희망도서 tool, 회원번호 입력, 운영 방식에 따른 tool 끄기 | 회원번호가 대화 기록과 LLM에 남지 않고 대출됨 | |

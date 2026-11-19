@@ -120,7 +120,7 @@ class GuideRead(BaseModel):
     loan_limit: int | None
     loan_days: int  # 기관의 기본 대출 기간(읽기 전용, PATCH /library로 고친다)
     loan_mode: LoanMode
-    due_is_estimate: bool  # 가져오기 기관은 기존 대출 프로그램이 실제 반납일을 정한다
+    due_is_estimate: bool  # 외부 대출 기관은 기존 대출 프로그램이 실제 반납일을 정한다
     closed_on_public_holidays: bool
     due_on_closed_day: DueOnClosedDay
     weekly_hours: list[DayHours]

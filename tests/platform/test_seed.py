@@ -62,7 +62,7 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
     assert report["books"] == (45, 0)
     assert await _count(session, "libraries") == 2
     modes = set(await session.scalars(text("SELECT loan_mode FROM libraries")))
-    assert modes == {"internal", "imported"}
+    assert modes == {"internal", "external"}
 
     staff = (
         await session.execute(
@@ -73,7 +73,7 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
         )
     ).all()
     assert sorted(staff) == sorted(
-        [("internal", "admin"), ("internal", "kiosk"), ("imported", "admin"), ("imported", "kiosk")]
+        [("internal", "admin"), ("internal", "kiosk"), ("external", "admin"), ("external", "kiosk")]
     )
 
     assert await _count(session, "books") == 45

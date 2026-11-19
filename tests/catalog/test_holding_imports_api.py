@@ -130,9 +130,9 @@ async def test_other_library_record_is_404(
     assert (await admin_client.get(url)).status_code == 404
     assert (await admin_client.get(f"{url}/rows")).status_code == 404
     assert (await admin_client.get("/holding-imports")).json()["total"] == 0
-    # 적용은 자체 대출 기관이면 409가 먼저다. 같은 가져오기 기관끼리는 404다.
+    # 적용은 자체 대출 기관이면 409가 먼저다. 같은 외부 대출 기관끼리는 404다.
     await session.execute(
-        text("UPDATE libraries SET loan_mode = 'imported' WHERE id = :id"), {"id": library_a.id}
+        text("UPDATE libraries SET loan_mode = 'external' WHERE id = :id"), {"id": library_a.id}
     )
     assert (await admin_client.post(f"{url}/apply")).status_code == 404
     assert (await admin_client_b.get(url)).json()["status"] == "preview"
