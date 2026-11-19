@@ -17,6 +17,7 @@ from app.agent.llm import (
     UserMessage,
 )
 from app.agent.models import AgentRun, AgentStep, RunStatus, StepKind
+from app.agent.profile import Profile
 from app.agent.runner import AnswerEvent, DoneEvent, StatusEvent, run
 from app.agent.tools import AnswerTool, Tool, ToolInput
 from app.core.errors import NotFoundError
@@ -742,3 +743,63 @@ async def test_no_run_values(session: AsyncSession, library_a: Tenant) -> None:
     llm = FakeLlm([tool_turn(call("echo", {"keyword": "공룡"})), answer_turn()])
     await collect(session, llm, profile(echo_tool(handler)), library_a.id)
     assert handler.values == [{}]
+
+
+# --- 최종 답의 기록 필드 ---
+
+
+class KindAnswer(ToolInput):
+    message: str
+    kind: str | None
+
+
+KIND_TOOL = AnswerTool("submit", "최종 답", KindAnswer, record_fields=("kind",))
+KIND_FALLBACK = KindAnswer(message="지금은 답할 수 없습니다", kind=None)
+
+
+def _kind_profile(answer_tool: AnswerTool = KIND_TOOL) -> Profile:
+    return Profile(
+        name="test",
+        version="v1",
+        system_prompt="너는 시험용이다",
+        tools=(),
+        answer_tool=answer_tool,
+        fallback_answer=KIND_FALLBACK,
+    )
+
+
+def _kind_turn(message: str, kind: str | None) -> LlmTurn:
+    return tool_turn(call("submit", {"message": message, "kind": kind}, "answer"))
+
+
+async def test_answer_record_selected_fields(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 최종 답의 기록 필드 / 고른 필드만"""
+    llm = FakeLlm([_kind_turn("고유한 답 문장 7788", "topic_count")])
+    events = await collect(session, llm, _kind_profile(), library_a.id)
+    run_id = done(events).run_id
+    row = await _run_row(session, library_a.id, run_id)
+    assert row.answer_record == {"kind": "topic_count"}
+    dumped = str([row.__dict__] + [s.__dict__ for s in await _steps(session, library_a.id, run_id)])
+    assert "고유한 답 문장" not in dumped
+
+
+async def test_answer_record_not_selected(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 최종 답의 기록 필드 / 고르지 않은 tool"""
+    plain = AnswerTool("submit", "최종 답", KindAnswer)
+    llm = FakeLlm([_kind_turn("답", "topic_count")])
+    events = await collect(session, llm, _kind_profile(plain), library_a.id)
+    assert (await _run_row(session, library_a.id, done(events).run_id)).answer_record is None
+
+
+async def test_answer_record_fallback(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/runner] 최종 답의 기록 필드 / 고정 답"""
+    llm = FakeLlm([text_turn(), text_turn()])
+    events = await collect(session, llm, _kind_profile(), library_a.id)
+    row = await _run_row(session, library_a.id, done(events).run_id)
+    assert (row.status, row.answer_record) == (RunStatus.FALLBACK, None)
+
+
+def test_answer_record_field_must_exist() -> None:
+    """[agent/runner] 최종 답의 기록 필드 / 고른 필드만 (답 구조에 없는 필드)"""
+    with pytest.raises(ValueError):
+        AnswerTool("submit", "최종 답", KindAnswer, record_fields=("reason",))

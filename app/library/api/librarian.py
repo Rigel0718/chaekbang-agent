@@ -71,7 +71,7 @@ def _sse(event: chat.ServerEvent) -> str:
     return f"event: {event.name}\ndata: {json.dumps(event.data, ensure_ascii=False)}\n\n"
 
 
-async def _encode(events: AsyncIterator[chat.ServerEvent]) -> AsyncIterator[str]:
+async def encode_events(events: AsyncIterator[chat.ServerEvent]) -> AsyncIterator[str]:
     async for event in events:
         yield _sse(event)
 
@@ -104,7 +104,7 @@ async def post_message(
     )
     profile = request.app.state.librarian_profiles[prepared.loan_mode]
     return StreamingResponse(
-        _encode(chat.stream_turn(session, llm, profile, prepared, encoder)),
+        encode_events(chat.stream_turn(session, llm, profile, prepared, encoder)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store"},
     )

@@ -17,6 +17,10 @@ LLM보다 먼저 `found` 사건으로 보낸다. 고른 책만 보낸 턴은 LLM
 
 질의 인코더: 부르는 쪽(라우터, 평가)이 넘긴 인코더를 실행 값(`QUERY_ENCODER`)으로 넘겨 소장 도서
 검색의 벡터 질의에 쓴다. 없으면 검색은 키워드 순위로 돈다.
+
+세션 종류: 세션은 만든 경로의 종류(`SessionKind`)를 가진다. 조회와 삭제는 늘 기관 + 종류로 걸어
+다른 종류의 세션은 없는 것과 같다. 만료 시간과 일일 실행 상한은 종류마다 따로다. 세션 열기·가리기·
+상한·처리 중 표시는 운영 에이전트 대화(`services/admin_chat.py`)도 같은 함수를 쓴다.
 """
 
 import asyncio
@@ -41,7 +45,7 @@ from app.central.embedding import Embedder
 from app.core import clock
 from app.core.config import get_settings
 from app.core.errors import ConflictError, LimitExceededError, NotFoundError
-from app.library.models.chat import ChatMessage, ChatRole, ChatSession
+from app.library.models.chat import ChatMessage, ChatRole, ChatSession, SessionKind
 from app.library.models.library import Library, LoanMode
 from app.library.privacy import mask_personal
 from app.library.recommendation.cards import build_cards, build_summaries
@@ -83,14 +87,41 @@ class PreparedTurn:
     session_book_ids: tuple[int, ...] = ()  # 이번 턴까지 그 세션의 책, 최신 순, 서로 다른 책
 
 
-def _idle() -> timedelta:
-    return timedelta(minutes=get_settings().librarian_session_idle_minutes)
+@dataclass(frozen=True)
+class KindRules:
+    idle_minutes: int
+    daily_run_limit: int
+    limit_message: str
+
+
+def kind_rules(kind: SessionKind) -> KindRules:
+    settings = get_settings()
+    if kind == SessionKind.ADMIN:
+        return KindRules(
+            settings.admin_session_idle_minutes,
+            settings.admin_daily_run_limit,
+            "오늘 운영 에이전트 이용 한도에 이르렀습니다. 내일 다시 이용해 주세요",
+        )
+    return KindRules(
+        settings.librarian_session_idle_minutes,
+        settings.librarian_daily_run_limit,
+        "오늘 AI 사서 이용 한도에 이르렀습니다. 내일 다시 이용해 주세요",
+    )
+
+
+def _idle(kind: SessionKind) -> timedelta:
+    return timedelta(minutes=kind_rules(kind).idle_minutes)
 
 
 def _expired(now: datetime):
-    """무입력 시간이 지났고 처리 중이 아닌 세션."""
+    """무입력 시간(종류마다 다름)이 지났고 처리 중이 아닌 세션."""
     return and_(
-        ChatSession.last_active_at < now - _idle(),
+        or_(
+            *(
+                and_(ChatSession.kind == kind, ChatSession.last_active_at < now - _idle(kind))
+                for kind in SessionKind
+            )
+        ),
         or_(ChatSession.busy_until.is_(None), ChatSession.busy_until < now),
     )
 
@@ -110,7 +141,10 @@ def _today_start(now: datetime) -> datetime:
     return datetime.combine(now.astimezone(zone).date(), time.min, tzinfo=zone)
 
 
-async def _check_daily_limit(session: AsyncSession, library_id: int, profile_name: str) -> None:
+async def check_daily_limit(
+    session: AsyncSession, library_id: int, profile_name: str, kind: SessionKind
+) -> None:
+    rules = kind_rules(kind)
     runs = await session.scalar(
         select(func.count()).where(
             AgentRun.library_id == library_id,
@@ -118,18 +152,19 @@ async def _check_daily_limit(session: AsyncSession, library_id: int, profile_nam
             AgentRun.started_at >= _today_start(clock.now()),
         )
     )
-    if (runs or 0) >= get_settings().librarian_daily_run_limit:
-        raise LimitExceededError("오늘 AI 사서 이용 한도에 이르렀습니다. 내일 다시 이용해 주세요")
+    if (runs or 0) >= rules.daily_run_limit:
+        raise LimitExceededError(rules.limit_message)
 
 
 async def _active_session(
-    session: AsyncSession, library_id: int, session_id: uuid.UUID
+    session: AsyncSession, library_id: int, session_id: uuid.UUID, kind: SessionKind
 ) -> ChatSession:
     chat = await session.scalar(
         select(ChatSession).where(
             ChatSession.id == session_id,
             ChatSession.library_id == library_id,
-            ChatSession.last_active_at >= clock.now() - _idle(),
+            ChatSession.kind == kind,
+            ChatSession.last_active_at >= clock.now() - _idle(kind),
         )
     )
     if chat is None:
@@ -168,7 +203,7 @@ async def _claim(session: AsyncSession, library_id: int, session_id: uuid.UUID) 
         raise ConflictError("이전 질문에 답하는 중입니다. 답이 나온 뒤에 다시 보내 주세요")
 
 
-async def _history(session: AsyncSession, library_id: int, session_id: uuid.UUID) -> History:
+async def load_history(session: AsyncSession, library_id: int, session_id: uuid.UUID) -> History:
     """이전 대화. 책 표시는 이용자 문장 앞의 안내(`Instruction`)가 된다."""
     rows = await session.execute(
         select(ChatMessage.role, ChatMessage.content, ChatMessage.note)
@@ -198,6 +233,26 @@ async def session_books(
     return tuple(dict.fromkeys(book_id for ids in rows for book_id in ids or ()))
 
 
+async def open_session(
+    session: AsyncSession, library_id: int, session_id: uuid.UUID | None, kind: SessionKind
+) -> tuple[ChatSession, LoanMode]:
+    """새 세션을 만들거나 진행 중인 그 종류의 세션을 찾고, 턴 상한을 본 뒤 처리 중 표시를 잡는다."""
+    loan_mode = await session.scalar(select(Library.loan_mode).where(Library.id == library_id))
+    assert loan_mode is not None
+    if session_id is None:
+        chat = ChatSession(
+            id=uuid.uuid4(), library_id=library_id, kind=kind, last_active_at=clock.now()
+        )
+        session.add(chat)
+        await session.flush()
+    else:
+        chat = await _active_session(session, library_id, session_id, kind)
+        if await _turns(session, library_id, chat.id) >= get_settings().librarian_max_turns:
+            raise ConflictError("이 대화의 질문 수 한도에 이르렀습니다. 새 대화를 시작하세요")
+    await _claim(session, library_id, chat.id)
+    return chat, loan_mode
+
+
 def _books_note(template: str, books: Sequence[Candidate]) -> str:
     listed = ", ".join(f"#{c.library_book.id} {c.library_book.shown('title')}" for c in books)
     return template.format(books=listed)
@@ -218,19 +273,9 @@ async def prepare_turn(
     await purge_expired(session, library_id)
     selected = await get_findable(session, library_id, selected_id) if selected_id else None
     if text is not None:
-        await _check_daily_limit(session, library_id, profile_name)
-    loan_mode = await session.scalar(select(Library.loan_mode).where(Library.id == library_id))
-    assert loan_mode is not None
-    if session_id is None:
-        chat = ChatSession(id=uuid.uuid4(), library_id=library_id, last_active_at=clock.now())
-        session.add(chat)
-        await session.flush()
-    else:
-        chat = await _active_session(session, library_id, session_id)
-        if await _turns(session, library_id, chat.id) >= get_settings().librarian_max_turns:
-            raise ConflictError("이 대화의 질문 수 한도에 이르렀습니다. 새 대화를 시작하세요")
-    await _claim(session, library_id, chat.id)
-    history = await _history(session, library_id, chat.id)
+        await check_daily_limit(session, library_id, profile_name, SessionKind.LIBRARIAN)
+    chat, loan_mode = await open_session(session, library_id, session_id, SessionKind.LIBRARIAN)
+    history = await load_history(session, library_id, chat.id)
     masked = await mask_personal(session, library_id, text) if text is not None else None
     if selected is not None:
         books, note = [selected], _books_note(SELECTED_NOTE, [selected])
@@ -261,15 +306,13 @@ def _answer_text(message: str, cards: Sequence[BookCard]) -> str:
     return f"{message}\n{BOOKS_NOTE.format(books=books)}"
 
 
-async def _release(session: AsyncSession, prepared: PreparedTurn) -> None:
+async def release(session: AsyncSession, library_id: int, session_id: uuid.UUID) -> None:
+    """처리 중 표시를 푼다. 실패해도 표시는 시간이 지나면 풀린다."""
     try:
         await session.rollback()
         await session.execute(
             update(ChatSession)
-            .where(
-                ChatSession.id == prepared.session_id,
-                ChatSession.library_id == prepared.library_id,
-            )
+            .where(ChatSession.id == session_id, ChatSession.library_id == library_id)
             .values(busy_until=None)
         )
         await session.commit()
@@ -329,7 +372,7 @@ async def stream_turn(
             yield ServerEvent("done", {"run_id": None, "status": SELECTED_STATUS})
         finally:
             with anyio.CancelScope(shield=True):
-                await asyncio.shield(_release(session, prepared))
+                await asyncio.shield(release(session, prepared.library_id, prepared.session_id))
         return
     note = (Instruction(prepared.note),) if prepared.note else ()
     events = run(
@@ -358,17 +401,24 @@ async def stream_turn(
 
         async def cleanup() -> None:
             await events.aclose()
-            await _release(session, prepared)
+            await release(session, prepared.library_id, prepared.session_id)
 
         with anyio.CancelScope(shield=True):
             await asyncio.shield(cleanup())
 
 
-async def end_session(session: AsyncSession, library_id: int, session_id: uuid.UUID) -> None:
-    """직접 초기화. 다른 기관의 세션은 없는 것과 같다."""
+async def end_session(
+    session: AsyncSession,
+    library_id: int,
+    session_id: uuid.UUID,
+    kind: SessionKind = SessionKind.LIBRARIAN,
+) -> None:
+    """직접 초기화. 다른 기관이나 다른 종류의 세션은 없는 것과 같다."""
     result = await session.execute(
         delete(ChatSession).where(
-            ChatSession.id == session_id, ChatSession.library_id == library_id
+            ChatSession.id == session_id,
+            ChatSession.library_id == library_id,
+            ChatSession.kind == kind,
         )
     )
     if not result.rowcount:

@@ -140,8 +140,13 @@ class _Execution:
             **values,
         )
 
-    async def finish(self, status: RunStatus) -> None:
+    async def finish(self, status: RunStatus, answer: Any = None) -> None:
         assert self.record is not None
+        fields = self.profile.answer_tool.record_fields
+        kept = status in (RunStatus.COMPLETED, RunStatus.REPAIRED) and answer is not None
+        answer_record = (
+            answer.model_dump(mode="json", include=set(fields)) if kept and fields else None
+        )
         await self.session.rollback()  # 끝나지 않은 tool 트랜잭션을 버린다
         await records.finish_run(
             self.session,
@@ -151,12 +156,13 @@ class _Execution:
             cached_input_tokens=self.cached_input_tokens,
             cache_write_tokens=self.cache_write_tokens,
             output_tokens=self.output_tokens,
+            answer_record=answer_record,
         )
         self.finished = True
 
     async def end(self, answer: Any, status: RunStatus) -> AsyncIterator[RunEvent]:
         """기록을 끝낸 뒤 내보낸다. 소비자가 답만 받고 멈춰도 중단으로 남지 않는다."""
-        await self.finish(status)
+        await self.finish(status, answer)
         yield AnswerEvent(answer)
         yield DoneEvent(self.run_id, status)
 

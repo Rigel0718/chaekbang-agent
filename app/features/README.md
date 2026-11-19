@@ -16,6 +16,7 @@
 | `children/rules.py` | 판단 규칙: 별치기호, 자료실, 부가기호(파일과 공식 서지가 같은 규칙), 분류 원문, 어린이 요청 판단 |
 | `children/tools.py` | AI 사서에 끼우는 값: `search_children_books`(소장 도서 검색과 같은 주제로 찾기, 범위는 어린이 도서. 범위는 키워드·벡터 순위를 매기기 전에 건다), `find_related_children_books`, 어린이 검사, 프롬프트 문구(`children_extension`) |
 | `children/checks.py` | 어린이 최종 검사 |
+| `children/analytics.py` | 운영 에이전트에 끼우는 값: 분석 축 `audience`(어린이 / 어린이로 분류되지 않음, 기본값 `general`)와 프롬프트 문구(`admin_extension`) |
 | `children/service.py` | 조회, 지정, 파일 근거, 외부 분류 근거, 갱신, 관련 책 범위 제공자(`related_scope`) |
 | `children/hook.py` | 기관 공통의 사건을 service로 잇는다 |
 | `children/api.py` | `/children` 라우터 |
@@ -42,6 +43,11 @@
 - `app/main.py`에서 `children_extension()`을 빼면 tool, 검사, 프롬프트 문구가 함께 빠지고 AI 사서는 그대로 돈다.
 - `find_related_children_books`는 관련 책 tool(`find_related_books`)과 입력·방식이 같고 범위만 그 기관의 어린이 도서다.
 - 프롬프트 문구는 어린이 요청의 뜻을 판단 규칙과 같게 적는다. 아이나 나이를 말하지 않은 주제 요청(공룡 책)과 부모가 읽을 육아·훈육 책에는 어린이 tool을 쓰지 않는다. 이 문구 없이 관련 책 tool 줄만 더했을 때 LLM이 일반 요청에도 어린이 tool을 썼다(`add-related-books` 평가).
+
+**운영 에이전트의 어린이 축**
+
+- `admin_extension()`을 `app/main.py`가 운영 에이전트 조립에 넘긴다. 빼면 tool 입력의 `audience`와 프롬프트 문구가 함께 빠지고 다른 분석은 그대로 돈다.
+- 그 기관에서 `children`으로 구분된 책만 배정하고, 행이 없거나 `general`인 책은 기본값 `general`로 센다. 결과 이름은 "어린이로 분류되지 않음"이다.
 
 **관련 책 범위**
 

@@ -1,0 +1,299 @@
+"""평가 기관: 코드로 만드는 가상 자체 대출 기관과 외부 대출 기관. 오늘은 2026-11-19로 고정한다.
+
+실험 장서는 대출 기록이 없고 분포를 정할 수 없어 쓰지 않는다. 숫자의 정답은 pytest가 보장하므로
+여기서는 질문마다 가려낼 수 있는 분포만 만든다. 서명은 가상이고 회원 이름도 가상이다. 같은 코드로
+두 번 만들면 같은 결과가 나온다(id만 다르다).
+
+책 표: (서명, KDC, 어린이, 사본 상태들, 입수, 등록, 대출 날짜들). 대출 날짜 뒤의 `!`는 반납하지 않은
+대출이고, `?`는 반납하지 않았고 반납 예정일이 지난 대출(연체)이다.
+"""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import clock
+from app.core.contributors import author_keys
+
+TODAY = date(2026, 11, 19)
+NOW = datetime(2026, 11, 19, 5, 0, tzinfo=UTC)  # 기관 시간대 14:00
+REGISTERED = datetime(2025, 6, 1, tzinfo=UTC)
+NEW = datetime(2026, 11, 5, tzinfo=UTC)
+
+A, D, U = "purchased", "donated", "unknown"
+
+# 서명, KDC(None이면 분류 없음, `청:`이면 청구기호로만), 어린이, 사본 상태, 입수, 등록, 대출
+BOOKS: tuple[tuple, ...] = (
+    # 문학 10
+    (
+        "바람이 머무는 집",
+        "813.7",
+        False,
+        ("available", "available"),
+        A,
+        REGISTERED,
+        ("2026-09-03", "2026-10-02", "2026-11-02", "2026-11-09"),
+    ),
+    (
+        "겨울 정원의 편지",
+        "813.7",
+        False,
+        ("available",),
+        A,
+        REGISTERED,
+        ("2026-09-10", "2026-11-03", "2026-11-12"),
+    ),
+    ("새벽 기차", "813.6", False, ("available",), D, REGISTERED, ("2026-10-05", "2026-11-04")),
+    ("시인의 산책", "811.7", False, ("available",), A, REGISTERED, ("2026-11-06",)),
+    ("작은 섬의 여름", "813.7", False, ("available",), A, REGISTERED, ()),
+    ("오래된 서점", "813.7", False, ("available",), A, REGISTERED, ("2026-09-15",)),
+    (
+        "달빛 그림책",
+        "813.8",
+        True,
+        ("available", "available"),
+        A,
+        REGISTERED,
+        ("2026-09-20", "2026-10-11", "2026-11-05", "2026-11-10", "2026-11-14!"),
+    ),
+    ("고양이 동화집", "813.8", True, ("available",), D, REGISTERED, ("2026-10-20", "2026-11-07")),
+    ("숲속 친구들", "813.8", True, ("available",), A, REGISTERED, ("2026-11-08",)),
+    ("마음의 온도", "814.7", False, ("damaged",), A, REGISTERED, ("2026-09-08",)),
+    # 자연과학 6
+    (
+        "별자리 이야기",
+        "443",
+        True,
+        ("available", "available"),
+        A,
+        REGISTERED,
+        ("2026-09-12", "2026-10-15", "2026-11-11"),
+    ),
+    (
+        "공룡 대탐험",
+        "457",
+        True,
+        ("available",),
+        A,
+        REGISTERED,
+        ("2026-09-22", "2026-10-01", "2026-10-25", "2026-11-01?"),
+    ),
+    ("곤충 관찰 일기", "495", True, ("available",), D, REGISTERED, ("2026-10-30?",)),
+    ("어린이 실험실", "407", True, ("lost",), A, REGISTERED, ("2026-09-05",)),
+    ("우주의 기원", "443.1", False, ("available",), A, REGISTERED, ("2026-10-08",)),
+    ("생물의 진화", "476", False, ("available",), A, REGISTERED, ()),
+    # 기술과학 4
+    (
+        "집밥 요리책",
+        "594.5",
+        False,
+        ("available", "available"),
+        A,
+        REGISTERED,
+        ("2026-09-18", "2026-10-18", "2026-11-16!"),
+    ),
+    ("아기 건강 백과", "598.1", False, ("available",), A, REGISTERED, ("2026-10-28",)),
+    ("코딩 첫걸음", "566", False, ("available",), A, REGISTERED, ()),
+    ("텃밭 가꾸기", "523", False, ("available",), D, REGISTERED, ()),
+    # 사회과학 4
+    ("경제 쉽게 읽기", "320", False, ("available",), A, REGISTERED, ("2026-10-12",)),
+    ("우리 동네 이야기", "331", False, ("available",), A, REGISTERED, ()),
+    ("교육의 미래", "370", False, ("available",), A, REGISTERED, ("2026-09-25",)),
+    ("법 없이도 사는 법", "360", False, ("lost",), A, REGISTERED, ()),
+    # 역사 4
+    (
+        "조선의 하루",
+        "911.05",
+        False,
+        ("available",),
+        A,
+        REGISTERED,
+        ("2026-09-02", "2026-10-03", "2026-11-17!"),
+    ),
+    ("세계 여행 지도", "981", False, ("available",), A, REGISTERED, ()),
+    ("위인 열 명", "990", True, ("available",), A, REGISTERED, ("2026-10-22",)),
+    ("옛 지도 여행", "981.1", False, ("withdrawn",), A, REGISTERED, ("2026-09-07", "2026-09-27")),
+    # 예술 3
+    ("수채화 시작하기", "651", False, ("available",), A, REGISTERED, ()),
+    ("동요 모음", "670", True, ("available",), D, REGISTERED, ("2026-10-30",)),
+    ("축구의 모든 것", "695", False, ("available",), A, REGISTERED, ("2026-11-18!",)),
+    # 철학·종교 2
+    ("생각하는 법", "160", False, ("available",), A, REGISTERED, ()),
+    ("마음 공부", "220", False, ("available",), U, REGISTERED, ()),
+    # 청구기호로만 분류 1
+    ("동네 산책 지도", "청:981.2-김12ㄷ", False, ("available",), A, REGISTERED, ()),
+    # 분류 없음 4 (별치기호 청구기호 포함)
+    ("이름 없는 노트", None, False, ("available",), D, REGISTERED, ()),
+    ("그림 낱말 카드", "청:아 710-가12", True, ("available",), A, REGISTERED, ("2026-11-06",)),
+    ("마을 신문 모음", None, False, ("available", "withdrawn"), A, REGISTERED, ()),
+    ("오래된 사진첩", None, False, ("available",), U, REGISTERED, ()),
+    # 한 번도 빌리지 않은 책 8(안 빌린 책 목록이 20을 넘게)
+    ("백과사전 첫 권", "030", False, ("available",), A, REGISTERED, ()),
+    ("신문 읽기", "070", False, ("available",), A, REGISTERED, ()),
+    ("한글 맞춤법", "711", False, ("available",), A, REGISTERED, ()),
+    ("영어 첫걸음", "740", False, ("available",), A, REGISTERED, ()),
+    ("고전 시가", "811", False, ("available",), A, REGISTERED, ()),
+    ("단편 소설선", "813.6", False, ("available",), A, REGISTERED, ()),
+    ("여행 수필", "816", False, ("available",), A, REGISTERED, ()),
+    ("요가 입문", "517", False, ("available",), A, REGISTERED, ()),
+    # 최근 등록 2(안 빌린 책의 기간 중 등록)
+    ("새로 온 그림책", "813.8", True, ("available",), A, NEW, ()),
+    ("새로 온 과학책", "400", False, ("available",), A, NEW, ()),
+)
+
+EXTERNAL_BOOKS: tuple[tuple, ...] = (
+    ("외부 기관 소설", "813.7", ("available", "on_loan")),
+    ("외부 기관 과학책", "443", ("available",)),
+    ("외부 기관 요리책", "594", ("lost",)),
+)
+
+
+@dataclass(frozen=True)
+class EvalLibraries:
+    internal_id: int
+    external_id: int
+    titles: dict[str, int]  # 자체 대출 기관의 서명 → 기관 도서 id
+
+
+@contextmanager
+def fixed_clock() -> Iterator[None]:
+    """오늘을 고정하고, 지금은 NOW부터 실제로 흐른 만큼 더한다(실행 시간 기록이 남게)."""
+    original_today, original_now = clock.today, clock.now
+    started = original_now()
+    clock.today = lambda: TODAY  # type: ignore[assignment]
+    clock.now = lambda: NOW + (original_now() - started)  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        clock.today, clock.now = original_today, original_now  # type: ignore[assignment]
+
+
+async def _insert(session: AsyncSession, table: str, returning: bool = True, **values) -> int:
+    cols = ", ".join(values)
+    params = ", ".join(f":{k}" for k in values)
+    tail = " RETURNING id" if returning else ""
+    row = await session.execute(
+        text(f"INSERT INTO {table} ({cols}) VALUES ({params}){tail}"), values
+    )
+    return row.scalar_one() if returning else 0
+
+
+async def _library(session: AsyncSession, name: str, loan_mode: str) -> int:
+    return await _insert(
+        session,
+        "libraries",
+        name=name,
+        type="small_library",
+        loan_mode=loan_mode,
+        default_loan_days=14,
+    )
+
+
+def _classification(value: str | None) -> tuple[str | None, str | None]:
+    """(KDC, 청구기호)."""
+    if value is None:
+        return None, None
+    if value.startswith("청:"):
+        return None, value.removeprefix("청:")
+    return value, f"{value}-평가"
+
+
+async def _book(session: AsyncSession, library_id: int, title: str, kdc, created_at) -> int:
+    author = "평가 저자"
+    return await _insert(
+        session,
+        "library_books",
+        library_id=library_id,
+        title=title,
+        author=author,
+        author_keys=author_keys(author),
+        kdc=kdc,
+        created_at=created_at,
+    )
+
+
+async def build_libraries(session: AsyncSession, suffix: str = "") -> EvalLibraries:
+    """기관 이름은 유일해야 해서, 같은 트랜잭션에서 두 번 만들 때는 suffix를 준다."""
+    internal = await _library(session, f"평가용 자체 대출 작은도서관{suffix}", "internal")
+    external = await _library(session, f"평가용 외부 대출 작은도서관{suffix}", "external")
+    members = [
+        await _insert(
+            session, "members", library_id=internal, member_number=f"E{i:04d}", name=f"평가회원{i}"
+        )
+        for i in range(1, 6)
+    ]
+    titles: dict[str, int] = {}
+    accession = 0
+    for index, (title, cls, children, statuses, acquisition, created, loans) in enumerate(BOOKS):
+        kdc, call_number = _classification(cls)
+        book_id = await _book(session, internal, title, kdc, created)
+        titles[title] = book_id
+        if children:
+            await _insert(
+                session,
+                "library_book_audiences",
+                returning=False,
+                library_id=internal,
+                library_book_id=book_id,
+                audience="children",
+                audience_source="manual",
+            )
+        holdings = []
+        for status in statuses:
+            accession += 1
+            holdings.append(
+                await _insert(
+                    session,
+                    "holdings",
+                    library_id=internal,
+                    library_book_id=book_id,
+                    accession_number=f"EV{accession:05d}",
+                    call_number=call_number,
+                    status=status,
+                    acquisition_type=acquisition,
+                    purchase_price=13000 if acquisition == A else None,
+                    donor="평가 기증자" if acquisition == D else None,
+                )
+            )
+        for n, raw in enumerate(loans):
+            active, overdue = raw.endswith("!"), raw.endswith("?")
+            loaned = date.fromisoformat(raw.rstrip("!?"))
+            due = loaned + timedelta(days=14)
+            holding = holdings[n % len(holdings)]  # 같은 사본의 대출이 겹치지 않게 돌아가며
+            await _insert(
+                session,
+                "loans",
+                library_id=internal,
+                holding_id=holding,
+                member_id=members[(index + n) % len(members)],
+                loaned_on=loaned,
+                due_on=due if not overdue else min(due, TODAY - timedelta(days=4)),
+                returned_on=None if active or overdue else loaned + timedelta(days=7),
+            )
+            if active or overdue:
+                await session.execute(
+                    text("UPDATE holdings SET status = 'on_loan' WHERE id = :id"), {"id": holding}
+                )
+    for title, kdc, statuses in EXTERNAL_BOOKS:
+        book_id = await _book(session, external, title, kdc, REGISTERED)
+        for status in statuses:
+            accession += 1
+            await _insert(
+                session,
+                "holdings",
+                library_id=external,
+                library_book_id=book_id,
+                accession_number=f"EX{accession:05d}",
+                call_number=f"{kdc}-외부",
+                status=status,
+                acquisition_type=A,
+                purchase_price=13000,
+                source="imported",
+                last_synced_at=datetime(2026, 11, 18, 0, 0, tzinfo=UTC),
+            )
+    await session.commit()
+    return EvalLibraries(internal, external, titles)

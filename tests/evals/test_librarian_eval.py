@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from evals.admin_agent.scenarios import SCENARIOS as ADMIN_SCENARIOS
 from evals.librarian.catalog import BookState, SampleCatalog
 from evals.librarian.checks import (
     ScenarioResult,
@@ -165,10 +166,13 @@ def _missing_traces(traces: set[str], roots: list[Path]) -> set[str]:
 
 
 def test_scenarios_cover_eval_requirements() -> None:
-    """현재 스펙과 진행 중인 change의 평가로 확인하는 시나리오가 모두 평가 시나리오에 있다."""
+    """현재 스펙과 진행 중인 change의 평가로 확인하는 시나리오가 모두 평가 시나리오에 있다.
+
+    AI 사서 평가(`evals/librarian`)와 운영 에이전트 평가(`evals/admin_agent`)를 함께 본다.
+    """
     _, expected = _spec_scenarios(_spec_roots())
     assert len(expected) >= 5
-    covered = {trace for s in SCENARIOS for trace in s.traces}
+    covered = {trace for s in (*SCENARIOS, *ADMIN_SCENARIOS) for trace in s.traces}
     assert expected <= covered, expected - covered
 
 

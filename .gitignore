@@ -19,3 +19,5 @@ evals/collection/data/
 evals/recommendation/data/
 # 대화 추천 평가의 문서·질의 벡터와 실행 결과. 실험 장서 서지와 책 키가 들어 있다
 evals/conversation/data/
+# 운영 에이전트 평가의 실행 결과. 가상 기관이지만 실행마다 쌓여서 넣지 않는다
+evals/admin_agent/data/

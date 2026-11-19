@@ -179,9 +179,12 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 
 | Tool | 하는 일 | 승인 필요 |
 | --- | --- | --- |
-| run_analytics_query | 자연어 질문을 SQL로 바꿔 장서·대출 현황 분석 (읽기 전용) | ✗ |
-| get_collection_status | 분야별·어린이/일반별 장서 규모, 훼손·분실 현황 | ✗ |
-| list_overdue_loans | 연체 목록 (자체 대출 기관) | ✗ |
+| get_collection_status | 장서 사본·서명 수. 분야(KDC 주류)·어린이/일반·입수 구분·상태로 묶음. 제적은 따로 셈 | ✗ |
+| list_holdings_by_status | 분실·훼손·대출 중 사본 목록 | ✗ |
+| get_loan_stats | 기간 대출 수(분야·어린이/일반·책 순위), 분야별 권당 대출, 지금 대출 중·연체 건수 (자체 대출 기관) | ✗ |
+| list_unborrowed_books | 기간에 한 번도 빌리지 않은 책 (자체 대출 기관) | ✗ |
+| run_analytics_query | 자연어 질문을 SQL로 바꿔 분석. **보류**: 정해진 분석 tool로 먼저 간다(`add-admin-agent`) | ✗ |
+| list_overdue_loans | 연체 목록 (자체 대출 기관). 회원은 LLM에 보내지 않는다 | ✗ |
 | import_holdings | 기존 시스템의 엑셀·CSV로 장서 가져오기, 애매한 건 확인 요청. 공식 서지는 운영자가 따로 채운다 | 애매한 건만 |
 | register_books | ISBN 목록이나 바코드로 장서 등록 (자체 대출 기관, 가져오기로 빠진 책) | 애매한 건만 |
 | draft_curation | 이달의 추천·주제 큐레이션 초안 → 승인하면 이용자 화면에 게시 | ✓ |
@@ -190,7 +193,9 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 
 **승인 흐름**: 초안(draft) → 승인 대기(pending_approval) → 승인(approved) → 게시·확정(published / confirmed). 승인 대기 상태는 DB에 저장하고, 승인되면 에이전트 실행을 이어서 진행한다. 서버가 재시작돼도 실행이 유지된다.
 
-**자연어 SQL 안전장치**
+**정해진 분석 tool** (`add-admin-agent`): LLM은 분석 종류·기간(프리셋이나 월 숫자)·축(enum)만 고르고, 숫자는 service가 결정적으로 계산한다. 분야는 공식 서지 KDC → 기관 도서 KDC → 청구기호 순서로 코드가 정한다. 어린이·일반 축은 어린이 기능이 등록한다. 결과에 회원·기증자가 없고, 정해진 분석으로 답할 수 없는 질문은 종류(`unsupported`)만 실행 기록에 남긴다. 외부 대출 기관에는 대출 행이 없어 대출 tool을 뺀다.
+
+**자연어 SQL 안전장치** (보류. 못 한 질문 기록이 모이면 열지 정한다)
 
 - 읽기 전용 DB role과 분석용 view만 연다.
 - sqlglot으로 SELECT만 통과시키고, statement_timeout과 LIMIT을 강제한다.

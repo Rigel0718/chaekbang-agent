@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     librarian_session_idle_minutes: int = 5
     librarian_max_turns: int = 20  # 한 세션의 턴 수
     librarian_daily_run_limit: int = 500  # 기관별 하루 실행 수 (기관 시간대 기준)
+    # 운영 에이전트 대화(관리자). 턴 상한은 AI 사서와 같은 값을 쓴다. 실행 수는 따로 센다.
+    admin_session_idle_minutes: int = 30
+    admin_daily_run_limit: int = 200
 
     # 로컬 임베딩 서버(TEI). 꺼져 있어도 서버와 테스트는 돌고, 임베딩 적재만 멈춘다.
     embedding_base_url: str = "http://localhost:8090"

@@ -13,11 +13,14 @@ from app.core.errors import (
     LimitExceededError,
     NotFoundError,
 )
+from app.features.children.analytics import admin_extension
 from app.features.children.api import router as children_router
 from app.features.children.hook import ChildrenHook
 from app.features.children.service import related_scope as children_related_scope
 from app.features.children.tools import children_extension
+from app.library.admin_agent import build_admin_profiles
 from app.library.api import (
+    admin_agent,
     auth,
     book_enrichment,
     catalog,
@@ -40,6 +43,8 @@ from app.library.services.chat import purge_forever
 register_hook(ChildrenHook())
 register_related_scope(children_related_scope)
 LIBRARIAN_EXTENSIONS = (children_extension(),)
+# 운영 에이전트에 끼우는 기관 개별 기능(분석 축, 프롬프트 문구). 빼면 그 축이 tool에서 빠진다.
+ADMIN_EXTENSIONS = (admin_extension(),)
 
 
 @asynccontextmanager
@@ -57,6 +62,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="chaekbang-agent", lifespan=lifespan)
 # AI 사서 프로필은 운영 방식별로 하나씩이다. 라우터가 기관의 loan_mode로 고른다.
 app.state.librarian_profiles = build_librarian_profiles(LIBRARIAN_EXTENSIONS)
+# 운영 에이전트 프로필도 운영 방식별이다. 외부 대출 기관에는 대출 tool이 없다.
+app.state.admin_profiles = build_admin_profiles(ADMIN_EXTENSIONS)
 app.include_router(auth.router)
 app.include_router(library.router)
 app.include_router(guide.router)
@@ -70,6 +77,7 @@ app.include_router(holding_imports.router)
 app.include_router(members.router)
 app.include_router(loans.router)
 app.include_router(librarian.router)
+app.include_router(admin_agent.router)
 
 
 @app.exception_handler(NotFoundError)
