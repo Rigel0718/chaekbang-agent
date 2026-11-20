@@ -8,6 +8,9 @@
 - 초안 충실도: 초안을 기대하면 성공한 `draft_curation`이 하나이고 결과가 승인 대기이며, 그 책
   (`library_book_ids`)이 모두 같은 턴의 `search_collection` 결과에 있고, 서로 다른 3~10권이고, 답에
   `draft_say`가 있다. 기대하지 않으면 성공한 `draft_curation`이 없어야 맞다.
+  연체 안내문 틀을 기대하면(`notice`) 성공한 `draft_overdue_notice`가 하나이고 결과가 승인 대기이며,
+  그 틀 문장(러너가 저장된 행에서 읽은 `templates`)과 답에 평가 기관 회원 값(`MEMBER_MARKS`)이
+  없고, 답에 `draft_say`가 있다. 기대하지 않으면 성공한 `draft_overdue_notice`가 없어야 맞다.
 """
 
 import json
@@ -16,7 +19,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from evals.admin_agent.scenarios import Call, Scenario
+from evals.admin_agent.scenarios import MEMBER_MARKS, Call, Scenario
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _LIST_MARK = re.compile(r"(?m)^\s*(?:[-*]\s*)?\d+[.)]\s")
@@ -38,6 +41,7 @@ class TurnRecord:
     unsupported: str | None
     status: str
     calls: list[ToolCallRecord]
+    templates: list[str] = field(default_factory=list)  # 이 턴에 만든 안내문 틀 문장
     input_tokens: int = 0
     output_tokens: int = 0
 
@@ -112,8 +116,32 @@ def _label(options: Sequence[Call]) -> str:
 DRAFT_MIN, DRAFT_MAX = 3, 10
 
 
+def notice_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
+    """연체 안내문 틀의 틀린 까닭. 비면 맞다."""
+    notices = [c for c in turn.calls if c.name == "draft_overdue_notice" and not c.is_error]
+    if not scenario.notice:
+        return [f"기대하지 않은 안내문 틀 {len(notices)}개"] if notices else []
+    if len(notices) != 1:
+        return [f"안내문 틀 {len(notices)}개"]
+    notes = []
+    if (notices[0].result or {}).get("status") != "pending_approval":
+        notes.append("승인 대기가 아님")
+    leaked = sorted({m for m in MEMBER_MARKS for body in turn.templates if m in body})
+    if leaked:
+        notes.append(f"틀에 회원 값 {leaked}")
+    if any(m in turn.message for m in MEMBER_MARKS):
+        notes.append("답에 회원 값")
+    if scenario.draft_say and not any(w in turn.message for w in scenario.draft_say):
+        notes.append(f"안내 낱말 없음 {list(scenario.draft_say)}")
+    return notes
+
+
 def draft_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
-    """초안 충실도의 틀린 까닭. 비면 맞다."""
+    """초안 충실도의 틀린 까닭(큐레이션과 연체 안내문 틀). 비면 맞다."""
+    return curation_notes(scenario, turn) + notice_notes(scenario, turn)
+
+
+def curation_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
     drafts = [c for c in turn.calls if c.name == "draft_curation" and not c.is_error]
     if not scenario.draft:
         return [f"기대하지 않은 초안 {len(drafts)}개"] if drafts else []

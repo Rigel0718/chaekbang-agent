@@ -103,13 +103,13 @@ def test_scenarios_trace_admin_eval_requirements() -> None:
     """[platform/admin-agent-evals] 시나리오 라벨 / 스펙 추적"""
     _, by_eval = _spec_scenarios(_spec_roots())
     admin = {t for t in by_eval if t.startswith("[agent/admin]")}
-    assert len(admin) == 10
+    assert len(admin) == 14
     covered = {trace for s in SCENARIOS for trace in s.traces}
     assert admin <= covered, admin - covered
     every, _ = _spec_scenarios(_spec_roots())
     assert covered <= every
-    assert len(SCENARIOS) == 27
-    assert len({s.id for s in SCENARIOS}) == 27
+    assert len(SCENARIOS) == 31
+    assert len({s.id for s in SCENARIOS}) == 31
 
 
 def test_invented_number() -> None:
@@ -179,10 +179,30 @@ async def test_summary_files(tmp_path: Path, engine) -> None:
     assert total.passed
 
 
+NOTICE_BODY = "{이름}님, '{서명}' 반납 예정일({반납예정일})이 {연체일수}일 지났어요."
+
+
+@dataclass
+class NoticeLlm:
+    """안내문 틀 초안 tool이 있으면 틀을 올리고 승인 대기 안내로 답한다. 없으면 바로 답한다."""
+
+    model: str = "fake-model"
+    body: str = NOTICE_BODY
+
+    async def complete(
+        self, *, system: str, tools: list[ToolSpec], messages: list[Message]
+    ) -> LlmTurn:
+        answered = any(getattr(m, "call_id", None) for m in messages)
+        if not answered and "draft_overdue_notice" in [t.name for t in tools]:
+            return tool_turn(call("draft_overdue_notice", {"template": self.body}, "n1"))
+        message = "승인 대기로 올렸어요. 관리 화면에서 승인하면 연체 안내 목록이 만들어져요."
+        return tool_turn(call("submit_answer", {"message": message, "unsupported": None}))
+
+
 async def test_rolled_back(tmp_path: Path, engine) -> None:
     """[platform/admin-agent-evals] 평가 기관 / 되돌림"""
-    scenarios = [s for s in SCENARIOS if s.id == "total"]
-    await run_all(AnswerOnlyLlm(), scenarios, tmp_path, get_settings().test_database_url)
+    scenarios = [s for s in SCENARIOS if s.id in {"total", "overdue-notice"}]
+    await run_all(NoticeLlm(), scenarios, tmp_path, get_settings().test_database_url)
     async with engine.connect() as conn:
         names = await conn.scalar(
             select(func.count()).select_from(Library).where(Library.name.like("평가용 %"))
@@ -193,7 +213,11 @@ async def test_rolled_back(tmp_path: Path, engine) -> None:
         curations = await conn.scalar(
             text("SELECT count(*) FROM curations WHERE title = :t"), {"t": PENDING_CURATION}
         )
-    assert (names, sessions, curations) == (0, 0, 0)
+        templates = await conn.scalar(
+            text("SELECT count(*) FROM overdue_notice_templates WHERE body = :b"),
+            {"b": NOTICE_BODY},
+        )
+    assert (names, sessions, curations, templates) == (0, 0, 0, 0)
 
 
 def test_must_say_alternatives() -> None:
@@ -302,3 +326,54 @@ def test_science_word_accepts_both_readings() -> None:
         ]
         result = score(scenario, _turn(f"과학책은 {copies}권이에요(KDC 기준).", calls=calls))
         assert result.passed, (fields, result)
+
+
+def _noticed(status: str = "pending_approval") -> ToolCallRecord:
+    return ToolCallRecord("draft_overdue_notice", {}, False, {"status": status, "template_id": 1})
+
+
+def test_template_with_member_name() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 회원 이름이 든 틀"""
+    scenario = Scenario("s", "q", notice=True)
+    ok = _turn("승인 대기로 올렸어요", calls=[_noticed()])
+    ok.templates = ["{이름}님 {서명} {반납예정일}"]
+    assert score(scenario, ok).draft_ok
+    leaked = _turn("승인 대기로 올렸어요", calls=[_noticed()])
+    leaked.templates = ["평가회원1님 {서명} {반납예정일}"]
+    result = score(scenario, leaked)
+    assert not result.draft_ok
+    assert any("회원 값" in n for n in result.draft_notes)
+    in_answer = _turn("평가회원1님 안내문을 승인 대기로 올렸어요", calls=[_noticed()])
+    in_answer.templates = ["{이름}님 {서명} {반납예정일}"]
+    assert not score(scenario, in_answer).draft_ok
+
+
+def test_unexpected_template_and_notice_rules() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 기대하지 않은 초안 (안내문 틀)"""
+    analysis = Scenario("s", "몇 권이야?")
+    assert not score(analysis, _turn("51권", calls=[_noticed()])).draft_ok
+    notice = Scenario("s", "q", notice=True)
+    assert not score(notice, _turn("승인 대기", calls=[])).draft_ok
+    assert not score(notice, _turn("승인 대기", calls=[_noticed("draft")])).draft_ok
+    assert not score(notice, _turn("만들었어요", calls=[_noticed()])).draft_ok
+    assert not score(notice, _turn("승인 대기", calls=[_noticed(), _noticed()])).draft_ok
+
+
+async def test_notice_scenarios_end_to_end(tmp_path: Path, engine) -> None:
+    """[platform/admin-agent-evals] 평가 지표: 안내문 틀을 실제 경로의 저장된 행으로 잰다"""
+    ids = {"overdue-notice", "overdue-notice-name", "overdue-notice-external"}
+    scenarios = [s for s in SCENARIOS if s.id in ids]
+    rows = await run_all(NoticeLlm(), scenarios, tmp_path, get_settings().test_database_url)
+    by_id = {s.id: (turn, result) for s, turn, result in rows}
+    for scenario_id in ("overdue-notice", "overdue-notice-name"):
+        turn, result = by_id[scenario_id]
+        assert result.draft_ok, (scenario_id, result)
+        assert turn.templates == [NOTICE_BODY]
+    external_turn, _ = by_id["overdue-notice-external"]
+    assert external_turn.calls == []
+    leaky = NoticeLlm(body="평가회원1님 {서명} {반납예정일}")
+    [(_, _, leaked)] = await run_all(
+        leaky, [s for s in SCENARIOS if s.id == "overdue-notice-name"], tmp_path / "leak",
+        get_settings().test_database_url,
+    )  # fmt: skip
+    assert not leaked.draft_ok

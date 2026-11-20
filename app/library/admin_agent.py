@@ -2,14 +2,16 @@
 
 관리 담당자의 장서·대출 질문에 정해진 분석 tool(`analytics_tools.py`)의 결과로 답한다. 주제
 큐레이션을 요청하면 소장 도서 검색(AI 사서와 같은 tool)으로 찾은 책으로 초안을 만들어 승인 대기로
-올린다(`curation_tools.py`). 승인·게시 tool은 없다. 숫자는 tool이
-내고, LLM은 분석·기간·축을 고르고 결과를 옮겨 말한다. 정해진 분석으로 답할 수 없는 질문은 못
-한다고 말하고 종류(`unsupported`)를 고른다. 종류는 실행 행에 남고(최종 답의 기록 필드), 질문 문장은
-남지 않는다.
+올린다(`curation_tools.py`). 자체 대출 기관에서는 연체 목록을 보고 연체 안내문 틀(자리표시가
+든 문장)을 승인 대기로 올린다(`overdue_tools.py`). 회원 값은 LLM에 가지 않는다. 승인·게시·확정
+tool은 없다. 숫자는 tool이 내고, LLM은 분석·기간·축을 고르고 결과를 옮겨 말한다. 정해진
+분석으로 답할 수 없는 질문은 못 한다고 말하고 종류(`unsupported`)를 고른다. 종류는 실행 행에
+남고(최종 답의 기록 필드), 질문 문장은 남지 않는다.
 
 조립은 `app/main.py`가 한다. 기관 개별 기능은 `AdminExtension`으로 분석 축과 프롬프트 문구를
 넘기고, 이 모듈은 기능을 이름으로 부르지 않는다. 프롬프트에 날짜 같은 실행마다 바뀌는 값을 넣지
-않는다. 외부 대출 기관에는 대출 행이 없어 대출 tool을 뺀다.
+않는다. 외부 대출 기관에는 대출 행이 없어 대출 tool과 연체 안내 tool을 빼고, 연체 안내 규칙도
+자체 대출 기관의 문구에만 둔다.
 
 최종 검사는 없다. 답의 숫자가 tool 결과에 있는지는 평가(`evals/admin_agent`)로 먼저 잰다(design
 `add-admin-agent` 결정 11).
@@ -27,10 +29,11 @@ from app.library.analytics.axes import AnalysisAxis
 from app.library.analytics_tools import analytics_tools
 from app.library.curation_tools import DRAFT_CURATION
 from app.library.models.library import LoanMode
+from app.library.overdue_tools import DRAFT_OVERDUE_NOTICE, LIST_OVERDUE_LOANS
 from app.library.tools import SEARCH_COLLECTION
 
 PROFILE_NAME = "admin"
-PROFILE_VERSION = "v2"
+PROFILE_VERSION = "v3"
 MESSAGE_LIMIT = 600
 
 FALLBACK_MESSAGE = "지금은 분석 결과를 드리기 어려워요. 잠시 뒤에 다시 물어봐 주세요."
@@ -125,16 +128,16 @@ last_90_days, 올해 → this_year, 작년 → last_year, 1년 동안·최근 1�
 - draft_curation이 오류를 돌려주면 오류대로 고쳐 다시 부른다.
 - 초안을 올렸으면 답에 제목과 권수, "승인 대기로 올렸어요. 관리 화면에서 승인하면 이용자 화면에 \
 게시돼요"를 말한다. unsupported는 null이다.
-- 승인, 반려, 게시, 내리기는 너가 할 수 없다. 승인해 달라고 하면 하지 말고 관리 화면에서 \
-승인하라고 안내하며 unsupported=other로 답한다.
+- 승인, 반려, 게시, 내리기, 확정은 너가 할 수 없다. 큐레이션이나 연체 안내문 틀을 승인해 달라고 \
+하면 하지 말고 관리 화면에서 승인하라고 안내하며 unsupported=other로 답한다.
 
 못 하는 분석
 - 정해진 분석으로 답할 수 없으면 숫자를 말하지 않고 "그 분석은 아직 못 해요"라고 한 뒤 할 수 있는 \
 분석을 한두 개 권한다. unsupported에 종류를 고른다.
 - topic_count: 분류가 아닌 주제로 세기("공룡 책 몇 권"). 분야 숫자로 바꿔 답하지 않는다.
 - patron_info: 이용자나 회원 개인에 대한 질문(누가 빌렸는지, 누가 연체했는지, 회원 정보). 회원 \
-이름, 회원번호를 말하지 않는다. 연체한 회원은 대출 관리 화면의 연체 목록에서 확인할 수 있다고 \
-안내하고, 연체 건수는 get_loan_stats의 current.overdue로 알려 줄 수 있다.
+이름, 회원번호, 전화번호를 말하지 않는다. 연체한 회원은 관리 화면의 연체 안내 목록에서 확인할 수 \
+있다고 안내하고, 연체 건수는 get_loan_stats의 current.overdue로 알려 줄 수 있다.
 - time_of_day: 시간대·요일별 이용. other_library: 다른 도서관과 비교.
 - no_data: 이 도서관에 그 데이터가 없다(입수일·최근 들어온 책, 희망도서 등).
 - other: 그 밖에 분석 tool로 답할 수 없는 질문.
@@ -145,13 +148,31 @@ LOAN_NOTES = {
     LoanMode.INTERNAL: """\
 대출 기록
 - 이 도서관은 이 시스템으로 대출한다. 대출 수와 대출 중 상태는 지금 기준이다.
+
+연체 안내
+- "연체된 책 뭐 있어?"처럼 연체된 책을 물으면 list_overdue_loans를 부른다. 답에는 total과 책의 \
+서명·연체 일수만 말한다. 결과에 빌린 사람이 없으니 누가 빌렸는지 말하지 않는다.
+- "연체 안내문 만들어 줘"면 draft_overdue_notice를 부른다. template은 연체한 회원 모두에게 쓰일 \
+안내 한 문장(300자 이내)이다. 회원마다 달라지는 값은 반드시 자리표시로 쓴다: {이름}, {서명}, \
+{반납예정일}, {연체일수}, {도서관}. {서명}과 {반납예정일}은 꼭 넣고, 다른 중괄호는 쓰지 않는다.
+- 담당자가 회원 이름, 회원번호, 전화번호를 말해도 틀에 직접 쓰지 않고 {이름}으로 쓴다. 날짜, 책 \
+제목, 도서관 이름도 직접 쓰지 않는다. 답에도 회원 값을 되풀이하지 않는다.
+- draft_overdue_notice가 오류를 돌려주면 오류대로 고쳐 다시 부른다.
+- 틀을 올렸으면 답에 "승인 대기로 올렸어요. 관리 화면에서 승인하면 이 틀로 연체 안내 목록이 \
+만들어져요"를 말한다. 회원별 문안은 관리 화면의 연체 안내 목록에서 보고, 이 시스템은 문자를 보내지 \
+않아 담당자가 목록을 보고 연락한다고 알린다. 지금 연체 건수는 overdue_count만 쓴다. unsupported는 \
+null이다.
 """,
     LoanMode.EXTERNAL: """\
 대출 기록
 - 이 도서관은 기존 대출 프로그램으로 대출한다. 이 시스템에는 대출 기록이 없어 대출 수, 인기 책, 안 \
-빌린 책, 연체를 알 수 없다. 이런 질문은 unsupported=no_data로 안내하고 숫자를 말하지 않는다.
+빌린 책, 연체를 알 수 없고 연체 안내문도 만들 수 없다. 이런 질문은 unsupported=no_data로 안내하고 \
+숫자를 말하지 않는다.
 - 사본의 대출 중 상태는 마지막으로 가져온 파일 기준이다. get_collection_status의 상태 묶기로 알려 \
 줄 수 있고, 지금과 다를 수 있다고 알린다.
+- 이 도서관에는 연체 안내문 틀도 연체 안내 목록도 없다. 연체 안내문을 만들어 달라고 하면 \
+unsupported=no_data로 답하고, 관리 화면·승인·연체 안내 목록을 안내하지 않는다. 연체는 기존 대출 \
+프로그램에서 확인하라고 안내한다.
 """,
 }
 
@@ -174,6 +195,7 @@ def build_admin_profiles(extensions: Sequence[AdminExtension] = ()) -> dict[Loan
                 *analytics_tools(axes, loans=mode == LoanMode.INTERNAL),
                 SEARCH_COLLECTION,
                 DRAFT_CURATION,
+                *((LIST_OVERDUE_LOANS, DRAFT_OVERDUE_NOTICE) if mode == LoanMode.INTERNAL else ()),
             ),
             answer_tool=ANSWER_TOOL,
             fallback_answer=FALLBACK_ANSWER,

@@ -1,4 +1,4 @@
-"""회원 service. 개인정보는 회원번호와 이름만 다룬다."""
+"""회원 service. 개인정보는 회원번호, 이름, 선택 전화번호만 다룬다(전화번호는 검색에 쓰지 않음)."""
 
 from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError

@@ -13,7 +13,7 @@
 - 도서관 안내: 대표 연락처, 운영 시간, 휴관일, 이용 규칙, 자유 항목, 개관 여부와 반납 예정일 계산
 - AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
 - 운영 에이전트: 장서·대출 분석(정해진 분석 tool), 프로필, 관리자 대화
-- 승인 흐름: 확정 작업의 공통 상태·전이, 큐레이션(초안 → 승인 → 게시)
+- 승인 흐름: 확정 작업의 공통 상태·전이, 큐레이션(초안 → 승인 → 게시), 연체 안내(틀 승인 → 확정, 목록은 계산)
 
 ## 구성
 
@@ -21,7 +21,7 @@
 | --- | --- |
 | `api/` | 라우터. 로직을 넣지 않는다 |
 | `services/` | 비즈니스 로직. REST API와 이후 에이전트 tool이 함께 쓴다 |
-| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `guide`(안내), `curation`(큐레이션) |
+| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `guide`(안내), `curation`(큐레이션), `overdue_notice`(연체 안내문 틀) |
 | `schemas/` | Pydantic 스키마 |
 | `importing/` | 파일 읽기, 머리글 인식, 정규화. DB와 HTTP를 모른다 |
 | `deps.py` | 현재 직원·기관, 역할 |
@@ -52,6 +52,8 @@
 | `admin_agent.py` | 운영 에이전트: 답 구조(`message`, `unsupported`), 프롬프트, 운영 방식별 프로필(`build_admin_profiles`), `AdminExtension` |
 | `services/admin_chat.py`, `api/admin_agent.py` | 관리자 대화 `POST /admin-agent/messages`, `DELETE /admin-agent/sessions/{id}`(키오스크 403) |
 | `approval.py` | 공통 승인 틀: 상태 `ApprovalStatus`, 종류별 전이 표 `TransitionTable`(`PUBLISHING`·`CONFIRMING`), 조건부 갱신 `transition`, 실행 상태 `mark_executed`, 승인 칸 `ApprovalMixin` |
+| `overdue_tools.py` | 운영 에이전트의 연체 tool: `list_overdue_loans`(회원 값 없는 결과 `OverdueLoanList`), `draft_overdue_notice`(틀을 승인 대기로, 입력 기록 없음). 자체 대출 기관 프로필에만 |
+| `services/overdue_notices.py`, `api/overdue_notices.py`, `overdue_template.py` | 연체 안내: 틀 관리 `/overdue-notice-templates`, 오늘의 목록 `GET /overdue-notices/today`(모두 관리자), 자리표시 검사·채우기(순수 함수) |
 | `services/curations.py`, `api/curations.py` | 큐레이션: 관리 `/curations`(관리자), 게시본 읽기 `GET /librarian/curations`(키오스크·관리자). REST와 두 에이전트 tool이 같은 service를 쓴다 |
 
 ## 규칙
@@ -188,7 +190,17 @@
   - 내용 수정·삭제는 `draft`에서만이다(`require_status`).
 - **승인과 실행은 한 트랜잭션**이다. 승인한 요청이 그 자리에서 실행(게시·확정)하고 `mark_executed`로 실행 상태와 시각(`executed_at`)을 둔다. 에이전트 실행을 다시 이어 가지 않는다. 상태가 DB에만 있으므로 서버가 다시 시작돼도 승인이 이어진다.
 - 승인·반려·내리기는 관리자만 한다. 승인자(`approved_by`)와 시각을 남기고, 만든 사람이 승인해도 된다.
-- **새 종류 더하기**(연체 안내, 구매 요청서): 테이블에 `ApprovalMixin`을 섞고 `library_id`로 나눈다. 확정하는 종류는 `CONFIRMING` 표를 쓴다. service에서 `transition`과 `mark_executed`를 부르고, 승인 뒤 할 일(확정)을 같은 트랜잭션 안에서 결정적인 코드로 한다. `app/models.py`의 `TENANT_TABLES`에 테이블을 넣는다.
+- **새 종류 더하기**(구매 요청서. 연체 안내가 `CONFIRMING`을 처음 쓴 예다): 테이블에 `ApprovalMixin`을 섞고 `library_id`로 나눈다. 확정하는 종류는 `CONFIRMING` 표를 쓴다. service에서 `transition`과 `mark_executed`를 부르고, 승인 뒤 할 일(확정)을 같은 트랜잭션 안에서 결정적인 코드로 한다. `app/models.py`의 `TENANT_TABLES`에 테이블을 넣는다.
+
+## 연체 안내
+
+- **승인은 틀에만** 받는다. 틀(`overdue_notice_templates`)은 문장 하나(300자)이고 `draft → pending_approval → confirmed`(`CONFIRMING`, 내리기 없음)다. 승인하면 같은 트랜잭션에서 확정한다. 그 기관이 쓰는 틀은 확정된 틀 가운데 `executed_at`이 가장 늦은 하나다(같으면 id가 큰 것). 이전 확정 틀의 상태는 바꾸지 않는다.
+- **연체 안내 목록**(`GET /overdue-notices/today`)은 승인 없이 요청할 때마다 계산한다. 지금의 연체 대출(`services/loans.py`와 같은 조건) × 쓰는 틀 × 회원 행으로 줄마다 문안을 채우고 저장하지 않는다. 확정된 틀이 없으면 409다. 회원번호 → 반납 예정일 → 대출 id 순이고 전부 돌려준다.
+- **자리표시** 다섯 개(`overdue_template.py`): `{이름}` `{서명}` `{반납예정일}` `{연체일수}` `{도서관}`. `{서명}`과 `{반납예정일}`은 필수다. 모르는 자리표시는 거부한다. 채우기는 `str.replace`이고 `str.format`은 쓰지 않는다. 연체 일수는 기관 시간대의 오늘 − 반납 예정일(달력 일수)이다.
+- **개인정보 경계**: 회원 값(이름·회원번호·전화번호)은 목록 REST의 줄과 채운 문안에만 있다. LLM은 틀만 쓴다. 틀을 저장할 때 `mask_personal`을 돌려 결과가 달라지면(전화번호·이메일·주민번호·그 기관 회원번호) 가리지 않고 거부하며(422) 메시지에 찾은 값을 넣지 않는다. 이름은 가리지 않는다(`privacy.py`의 방침).
+- **회원 전화번호**(`members.phone`)는 선택이고 숫자만 저장한다. 관리자 회원 API와 연체 안내 목록에서만 돌려주고 검색(`q`)에 쓰지 않는다. 다른 곳에 복사하거나 목록을 저장하지 않으므로 회원을 지우면 함께 사라진다.
+- **외부 대출 기관**은 이 시스템에 대출 기록이 없어 틀 API와 목록이 모두 409다(`services/overdue_notices.py`의 `_library`).
+- **운영 에이전트**: 자체 대출 기관 프로필에만 `list_overdue_loans`·`draft_overdue_notice`가 있고 연체 안내 규칙도 그 프로필의 문구(`LOAN_NOTES[INTERNAL]`)에만 있다. 연체 목록 결과는 서명·등록번호·반납 예정일·연체 일수와 수(20건까지)뿐이고, 틀 초안 결과에는 채운 문안이 없다. 카나리아 테스트(`tests/library/test_overdue_tools.py`)가 LLM 요청과 기록에 회원 값이 없음을 확인한다.
 
 ## 큐레이션
 

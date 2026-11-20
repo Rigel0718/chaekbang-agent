@@ -21,8 +21,9 @@ async def test_create_member(admin_client: AsyncClient) -> None:
     assert res.status_code == 201
     body = res.json()
     assert (body["member_number"], body["name"]) == ("M0001", "김이용")
-    # 최소 정보: 회원번호와 이름 외의 개인정보 필드가 없다
-    assert set(body) == {"id", "member_number", "name", "created_at"}
+    # 최소 정보: 회원번호, 이름, 선택 전화번호 외의 개인정보 필드가 없다
+    assert set(body) == {"id", "member_number", "name", "phone", "created_at"}
+    assert body["phone"] is None
 
 
 async def test_missing_name(admin_client: AsyncClient) -> None:
@@ -162,4 +163,70 @@ async def test_kiosk_cannot_list_members(kiosk_client: AsyncClient) -> None:
     """[library/staff-auth] 역할별 접근 제한 / 키오스크의 관리 작업 (GET /members)"""
     assert (await kiosk_client.get("/members")).status_code == 403
     res = await kiosk_client.post("/members", json={"member_number": "M1", "name": "김"})
+    assert res.status_code == 403
+
+
+async def test_create_member_with_phone(admin_client: AsyncClient) -> None:
+    """[circulation/members] 회원 등록과 최소 정보 / 전화번호와 함께 등록"""
+    res = await admin_client.post(
+        "/members", json={"member_number": "M0002", "name": "김이용", "phone": "010-1234-5678"}
+    )
+    assert res.status_code == 201
+    assert res.json()["phone"] == "01012345678"
+    spaced = await admin_client.post(
+        "/members", json={"member_number": "M0003", "name": "박이용", "phone": "02 123.4567"}
+    )
+    assert spaced.json()["phone"] == "021234567"
+    blank = await admin_client.post(
+        "/members", json={"member_number": "M0004", "name": "최이용", "phone": " "}
+    )
+    assert blank.json()["phone"] is None
+
+
+async def test_phone_format_rejected(admin_client: AsyncClient) -> None:
+    """[circulation/members] 회원 등록과 최소 정보 / 전화번호 형식 오류"""
+    for index, phone in enumerate(["1234", "010-1234-56789", "01012", "abc", "(02)123-4567"]):
+        res = await admin_client.post(
+            "/members", json={"member_number": f"X{index}", "name": "김이용", "phone": phone}
+        )
+        assert res.status_code == 422, phone
+    assert (await admin_client.get("/members")).json()["total"] == 0
+
+
+async def test_search_ignores_phone(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[circulation/members] 회원 조회·수정·삭제 / 전화번호로는 찾지 않음"""
+    await admin_client.post(
+        "/members", json={"member_number": "M0001", "name": "김하나", "phone": "01012345678"}
+    )
+    res = await admin_client.get("/members", params={"q": "5678"})
+    assert res.json()["items"] == []
+    assert res.json()["total"] == 0
+
+
+async def test_update_and_clear_phone(admin_client: AsyncClient) -> None:
+    """[circulation/members] 회원 조회·수정·삭제 / 전화번호 지우기"""
+    member = (
+        await admin_client.post(
+            "/members", json={"member_number": "M0001", "name": "김하나", "phone": "01012345678"}
+        )
+    ).json()
+    changed = await admin_client.patch(f"/members/{member['id']}", json={"phone": "010-9999-0000"})
+    assert changed.json()["phone"] == "01099990000"
+    cleared = await admin_client.patch(f"/members/{member['id']}", json={"phone": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["phone"] is None
+    assert cleared.json()["name"] == "김하나"
+    untouched = await admin_client.patch(f"/members/{member['id']}", json={"name": "김둘"})
+    assert untouched.json()["phone"] is None
+    bad = await admin_client.patch(f"/members/{member['id']}", json={"phone": "12"})
+    assert bad.status_code == 422
+
+
+async def test_kiosk_cannot_create_member_with_phone(kiosk_client: AsyncClient) -> None:
+    """[circulation/members] 회원 등록과 최소 정보 / 전화번호는 관리자 API에서만"""
+    res = await kiosk_client.post(
+        "/members", json={"member_number": "M1", "name": "김이용", "phone": "01012345678"}
+    )
     assert res.status_code == 403

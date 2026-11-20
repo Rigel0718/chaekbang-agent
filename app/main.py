@@ -35,6 +35,7 @@ from app.library.api import (
     library_books,
     loans,
     members,
+    overdue_notices,
     staff,
 )
 from app.library.api.librarian import close_query_encoder
@@ -83,6 +84,8 @@ app.include_router(librarian.router)
 app.include_router(admin_agent.router)
 app.include_router(curations.router)
 app.include_router(curations.published_router)
+app.include_router(overdue_notices.templates_router)
+app.include_router(overdue_notices.notices_router)
 # 화면은 정적 파일로 내준다. README·CLAUDE.md가 밖에 있도록 public/만 마운트한다.
 app.mount(
     "/ui", StaticFiles(directory=Path(__file__).parent / "web" / "public", html=True), name="ui"

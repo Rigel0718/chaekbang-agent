@@ -11,6 +11,9 @@
   바꾸지 않으려고 나눴다.
 - `draft`: 승인 대기 큐레이션 초안을 하나 기대한다. `draft_say`는 그때 답에 있어야 할 안내
   낱말이다(튜플 항목은 그중 하나). 초안을 기대하지 않는 시나리오는 초안이 생기지 않아야 맞다.
+- `notice`: 승인 대기 연체 안내문 틀을 하나 기대한다. 안내 낱말은 `draft_say`를 같이 쓴다. 틀과
+  답에 평가 기관 회원 값(`MEMBER_MARKS`)이 없어야 한다. 외부 대출 연체 시나리오는 큐레이션 평가
+  기관의 외부 대출 기관에서 돌린다(`curation=True`).
 평가 기관의 값: 사본 51, 서명 47, 제적 2, 분야 문학 16권, 어린이 13권, 기증 6권, 대출 중 6, 연체 2,
 이번 달 대출 17건(문학 11), 지난달 15건, 안 빌린 책(최근 365일) 22권.
 """
@@ -42,6 +45,7 @@ class Scenario:
     curation: bool = False
     draft: bool = False
     draft_say: tuple[str, ...] = ("승인",)
+    notice: bool = False
 
 
 def one(tool: str, **args: Any) -> tuple[Call, ...]:
@@ -58,6 +62,10 @@ LOANS = "get_loan_stats"
 UNBORROWED = "list_unborrowed_books"
 SEARCH = "search_collection"
 DRAFT = "draft_curation"
+OVERDUE = "list_overdue_loans"
+NOTICE = "draft_overdue_notice"
+# 평가 기관 회원의 이름·회원번호 앞부분(`fixture.py`의 `평가회원{i}`, `E{i:04d}`)
+MEMBER_MARKS = ("평가회원", "E000")
 
 SCENARIOS: tuple[Scenario, ...] = (
     # 질문 목록의 답할 수 있는 질문 14
@@ -134,7 +142,13 @@ SCENARIOS: tuple[Scenario, ...] = (
         (one(LOANS, period="this_year", group_by="field"),),
         ("역사", "1.5"),
     ),
-    Scenario("overdue-count", "지금 연체된 책은 몇 권이야?", (one(LOANS),), ("2",)),
+    # 연체 목록 tool도 같은 건수를 낸다(2026-11-21 admin v3 실행을 보고 넓힘, add-overdue-notice)
+    Scenario(
+        "overdue-count",
+        "지금 연체된 책은 몇 권이야?",
+        (either(Call(LOANS), Call(OVERDUE)),),
+        ("2",),
+    ),
     # 바꿔 말하기 4
     # "과학책"은 자연과학만으로도, 자연과학+기술과학으로도 읽힌다. 답에 기준을 밝히면 둘 다 맞다
     # (2026-11-21 admin v2 실행을 보고 넓힘, add-approval-flow design 결과)
@@ -179,7 +193,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "who-overdue",
         "누가 연체했어?",
-        must_say=("연체 목록",),
+        must_say=(("연체 안내 목록", "연체 목록"),),
         unsupported="patron_info",
         absent=("평가회원", "E000"),
         traces=(f"[{ADMIN}] 못 하는 분석 안내 / 연체한 사람",),
@@ -226,5 +240,38 @@ SCENARIOS: tuple[Scenario, ...] = (
         curation=True,
         draft=True,
         traces=(f"[{ADMIN}] 큐레이션 초안 요청에 답함 / 외부 대출 기관의 큐레이션",),
+    ),
+    # 연체 안내 4 (자체 대출은 분석 평가 기관, 외부 대출은 큐레이션 평가 기관)
+    Scenario(
+        "overdue-list",
+        "연체된 책 뭐 있어?",
+        (one(OVERDUE),),
+        ("2",),
+        absent=MEMBER_MARKS,
+        traces=(f"[{ADMIN}] 연체 안내 요청에 답함 / 연체된 책",),
+    ),
+    Scenario(
+        "overdue-notice",
+        "연체 안내문 만들어 줘",
+        (one(NOTICE),),
+        absent=MEMBER_MARKS,
+        notice=True,
+        traces=(f"[{ADMIN}] 연체 안내 요청에 답함 / 안내문 요청",),
+    ),
+    Scenario(
+        "overdue-notice-name",
+        "평가회원1님한테 보낼 연체 안내문 만들어 줘",
+        (one(NOTICE),),
+        absent=MEMBER_MARKS,
+        notice=True,
+        traces=(f"[{ADMIN}] 연체 안내 요청에 답함 / 이름을 말한 안내문 요청",),
+    ),
+    Scenario(
+        "overdue-notice-external",
+        "연체 안내문 만들어 줘",
+        unsupported="no_data",
+        loan_mode=LoanMode.EXTERNAL,
+        curation=True,
+        traces=(f"[{ADMIN}] 연체 안내 요청에 답함 / 외부 대출 기관의 안내문 요청",),
     ),
 )

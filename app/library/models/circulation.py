@@ -20,7 +20,7 @@ from app.library.models.catalog import Holding
 
 
 class Member(TimestampMixin, Base):
-    """개인정보는 회원번호와 이름만 둔다."""
+    """개인정보는 회원번호와 이름, 선택 전화번호(연체 안내 연락용)만 둔다."""
 
     __tablename__ = "members"
     __table_args__ = (
@@ -32,6 +32,7 @@ class Member(TimestampMixin, Base):
     library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="RESTRICT"))
     member_number: Mapped[str] = mapped_column(String(50))
     name: Mapped[str] = mapped_column(String(100))
+    phone: Mapped[str | None] = mapped_column(String(11))  # 숫자만, 관리자 API에서만 돌려준다
 
 
 class Loan(TimestampMixin, Base):
