@@ -187,15 +187,17 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | get_loan_stats | 기간 대출 수(분야·어린이/일반·책 순위), 분야별 권당 대출, 지금 대출 중·연체 건수 (자체 대출 기관) | ✗ |
 | list_unborrowed_books | 기간에 한 번도 빌리지 않은 책 (자체 대출 기관) | ✗ |
 | run_analytics_query | 자연어 질문을 SQL로 바꿔 분석. **보류**: 정해진 분석 tool로 먼저 간다(`add-admin-agent`) | ✗ |
-| list_overdue_loans | 연체 목록 (자체 대출 기관). 회원은 LLM에 보내지 않는다 | ✗ |
+| list_overdue_loans | 연체 대출 목록: 서명·등록번호·반납 예정일·연체 일수와 수(자체 대출 기관, 20건까지). 회원은 LLM에 보내지 않는다(`add-overdue-notice`) | ✗ |
 | import_holdings | 기존 시스템의 엑셀·CSV로 장서 가져오기, 애매한 건 확인 요청. 공식 서지는 운영자가 따로 채운다 | 애매한 건만 |
 | register_books | ISBN 목록이나 바코드로 장서 등록 (자체 대출 기관, 가져오기로 빠진 책) | 애매한 건만 |
 | search_collection | 소장 도서 검색(AI 사서와 같은 tool), 큐레이션 후보 찾기 | ✗ |
 | draft_curation | 주제 큐레이션 초안을 승인 대기로 올림 → 승인하면 게시(`add-approval-flow`) | ✓ |
-| draft_overdue_notice | 연체 안내문 초안 | ✓ |
+| draft_overdue_notice | 연체 안내문 **틀**(자리표시 `{이름}` `{서명}` `{반납예정일}` `{연체일수}` `{도서관}`가 든 문장 하나)을 승인 대기로 올림. 회원별 문안은 승인한 틀로 코드가 채운다(자체 대출 기관, `add-overdue-notice`) | ✓ |
 | draft_purchase_request | 부족 분야·희망도서·인기 대출을 근거로 보충 구매 요청서 초안 | ✓ |
 
 **승인 흐름**: 초안(draft) → 승인 대기(pending_approval) → 승인(approved) → 게시·확정(published / confirmed), 게시본을 내리면 archived. 상태는 초안 테이블마다의 `status` 칸에 저장하고 전이 규칙은 공통 코드 한 곳(`app/library/approval.py`)에 둔다. 에이전트 실행은 초안을 승인 대기로 올리면 끝나고, 승인과 그 뒤 실행(게시·확정)은 관리자의 요청에서 결정적인 코드가 한다. 상태가 DB에만 있어 서버가 재시작돼도 승인이 이어진다(`add-approval-flow`).
+
+**연체 안내는 틀에만 승인을 받는다**(`add-overdue-notice`): 회원에게 나갈 LLM 문장(틀)만 `draft → pending_approval → confirmed`를 거치고, 그 틀로 만드는 연체 안내 목록(`GET /overdue-notices/today`)은 지금의 연체 대출과 회원 값을 코드가 채워 요청할 때마다 계산한다(저장하지 않음, 승인 없음). 매번 승인하면 담당자가 쓰지 않기 때문이다. LLM은 회원 값을 보지 않고 틀 저장 때 개인정보 형태는 거부한다. 실제 발송은 하지 않는다.
 
 **정해진 분석 tool** (`add-admin-agent`): LLM은 분석 종류·기간(프리셋이나 월 숫자)·축(enum)만 고르고, 숫자는 service가 결정적으로 계산한다. 분야는 공식 서지 KDC → 기관 도서 KDC → 청구기호 순서로 코드가 정한다. 어린이·일반 축은 어린이 기능이 등록한다. 결과에 회원·기증자가 없고, 정해진 분석으로 답할 수 없는 질문은 종류(`unsupported`)만 실행 기록에 남긴다. 외부 대출 기관에는 대출 행이 없어 대출 tool을 뺀다.
 
@@ -216,7 +218,7 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | libraries | 기관 (이름, 유형: small_library / bookstore, 운영 방식 loan_mode: external / internal, 기본 대출 기간) | MVP |
 | library_guides, library_opening_hours, library_closures, library_guide_entries | 도서관 안내: 대표 연락처·대출 권수·공휴일 휴관·반납일 규칙, 요일별 운영 시간, 임시 휴관일, 자유 항목(시설 위치·이용 규칙·알림) | MVP |
 | staff_users | 관리자 계정, 역할 (admin / kiosk) | MVP |
-| members | 이용자 회원번호, 이름 (최소 정보) | MVP |
+| members | 이용자 회원번호, 이름, 선택 전화번호(연체 안내 연락용, 관리자 API에서만) | MVP |
 | books | 공식 서지: ISBN(필수), 제목, 저자, 출판사, 출간일, 정가, 분류, 소개, 표지 URL, 부제, 목차, 시리즈명, 시리즈 키(시리즈마다 이름 맞춤 키, 응답의 시리즈 목록에서 계산), 출처, 상품 링크, 분류 원문 (기관 공통, 기관은 쓸 수 없음) | MVP |
 | official_book_embeddings | 공식 서지 벡터 (pgvector, 1024차원). 공식 서지·모델 이름·텍스트 버전·종류마다 하나, 공식 값만으로 만들어 여러 기관이 함께 쓴다. 공식 서지 전부를 운영자가 `scripts/embed_books.py`로 적재한다 (기관 공통) | MVP |
 | book_contributors | 공식 서지의 기여자: 이름, 이름 맞춤 키, 역할(글·그림·옮김·엮음·감수·원저·그 밖), 역할 원문, 순서. 저자 원문을 출처별 해석기로 푼 파생 값이다 (기관 공통) | MVP |
@@ -226,6 +228,7 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | holding_imports | 장서 가져오기 기록: 파일, 열 매핑, 결과 건수, 확인 요청 행 | MVP |
 | loans | 대출: 사본, 회원, 대출일, 반납 예정일, 반납일 (자체 대출 기관) | MVP |
 | curations, curation_items | 큐레이션과 포함 도서(이유 한 줄), 승인 상태 칸 | MVP |
+| overdue_notice_templates | 연체 안내문 틀(문장 하나), 승인 상태 칸. 쓰는 틀은 가장 늦게 확정된 것. 회원 값·채운 문안은 저장하지 않는다 | MVP |
 | book_requests | 희망도서 신청 | MVP |
 | purchase_requests, purchase_request_items | 보충 구매 요청서와 항목, 상태 | MVP |
 | book_embeddings | 기관 도서 벡터 (pgvector, 1024차원). 공식 서지에 연결되지 않은 책(ISBN 없음, 못 찾음)만 둔다. 연결된 책은 공식 서지 벡터를 쓴다. 기관 도서·모델 이름·텍스트 버전·종류마다 벡터 하나와 임베딩 텍스트의 해시를 두고, 텍스트 원문은 저장하지 않는다(두 층 모두). 추천 가능한 책만 운영자가 `scripts/embed_books.py`로 적재한다. 조회는 두 층을 한 순위로 합친다 | MVP |

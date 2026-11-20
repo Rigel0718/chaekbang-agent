@@ -3,7 +3,8 @@
 
 tool 결과는 실행 기록에 없다. 그래서 프로필의 tool을 결과를 받아 두는 tool로 감싸 돌리고, 단계
 기록(입력은 tool이 고른 값만)과 순서대로 짝짓는다. 소장 도서 검색처럼 입력을 남기지 않는 tool도
-결과가 남는다. 감싼 tool은 이름, 입력, 실행 함수의 결과가 서비스와 같다.
+결과가 남는다. 감싼 tool은 이름, 입력, 실행 함수의 결과가 서비스와 같다. 안내문 틀 초안 tool은
+입력(틀 문장)도 남기지 않으므로, 결과의 `template_id`로 저장된 틀 문장을 읽어 채점에 넘긴다.
 """
 
 from dataclasses import replace
@@ -18,6 +19,7 @@ from app.agent.profile import Profile
 from app.agent.tools import Tool, ToolContext, ToolInput
 from app.library.admin_agent import PROFILE_NAME
 from app.library.models.library import LoanMode
+from app.library.models.overdue_notice import OverdueNoticeTemplate
 from app.library.services import admin_chat
 from evals.admin_agent.fixture import EvalLibraries
 from evals.admin_agent.scenarios import Scenario
@@ -72,6 +74,24 @@ async def _calls(
     return calls, tokens[0], tokens[1]
 
 
+async def _templates(
+    session: AsyncSession, library_id: int, calls: list[ToolCallRecord]
+) -> list[str]:
+    ids = [
+        c.result["template_id"]
+        for c in calls
+        if c.name == "draft_overdue_notice" and isinstance(c.result, dict)
+    ]
+    if not ids:
+        return []
+    rows = await session.scalars(
+        select(OverdueNoticeTemplate.body).where(
+            OverdueNoticeTemplate.library_id == library_id, OverdueNoticeTemplate.id.in_(ids)
+        )
+    )
+    return list(rows)
+
+
 def library_of(libraries: EvalLibraries, scenario: Scenario) -> int:
     internal = scenario.loan_mode == LoanMode.INTERNAL
     if scenario.curation:
@@ -97,12 +117,14 @@ async def run_scenario(
     }
     answer, done = events["answer"], events["done"]
     calls, input_tokens, output_tokens = await _calls(session, library_id, done["run_id"], results)
+    templates = await _templates(session, library_id, calls)
     return TurnRecord(
         question=scenario.question,
         message=answer["message"],
         unsupported=answer["unsupported"],
         status=done["status"],
         calls=calls,
+        templates=templates,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )

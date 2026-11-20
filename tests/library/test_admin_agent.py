@@ -241,7 +241,12 @@ def test_profile_tools_by_loan_mode() -> None:
     """[agent/admin] 운영 방식별 tool / 자체 대출 기관"""
     profiles = build_admin_profiles([admin_extension()])
     internal = {t.name for t in profiles[LoanMode.INTERNAL].tools}
-    assert internal == ANALYSIS_TOOLS | {"search_collection", "draft_curation"}
+    assert internal == ANALYSIS_TOOLS | {
+        "search_collection",
+        "draft_curation",
+        "list_overdue_loans",
+        "draft_overdue_notice",
+    }
     assert profiles[LoanMode.INTERNAL].answer_tool is ANSWER_TOOL
 
 
@@ -260,8 +265,10 @@ def test_profile_has_no_approval_tools() -> None:
     """[agent/admin] 운영 방식별 tool / 승인 tool 없음"""
     for profile in build_admin_profiles([admin_extension()]).values():
         names = {t.name for t in profile.tools}
-        assert not {n for n in names if any(w in n for w in ("approve", "reject", "publish"))}
-        assert names - ANALYSIS_TOOLS - {"search_collection"} == {"draft_curation"}
+        words = ("approve", "reject", "publish", "confirm")
+        assert not {n for n in names if any(w in n for w in words)}
+        writes = names - ANALYSIS_TOOLS - {"search_collection", "list_overdue_loans"}
+        assert writes <= {"draft_curation", "draft_overdue_notice"}
 
 
 def test_answer_length_limit() -> None:
@@ -282,3 +289,16 @@ def test_prompt_without_children_feature() -> None:
         assert "audience=children" in with_children[mode].system_prompt
         for tool in plain[mode].tools:
             assert "audience" not in str(tool.spec.parameters)
+
+
+def test_external_prompt_has_no_overdue_notice_rules() -> None:
+    """[agent/admin] 운영 방식별 tool / 외부 대출 기관 (연체 안내 규칙은 자체 대출 기관 문구에만)"""
+    profiles = build_admin_profiles([admin_extension()])
+    external = profiles[LoanMode.EXTERNAL].system_prompt
+    internal = profiles[LoanMode.INTERNAL].system_prompt
+    for word in ("draft_overdue_notice", "list_overdue_loans", "{이름}"):
+        assert word not in external, word
+        assert word in internal, word
+    assert (
+        "unsupported=no_data로 답하고, 관리 화면·승인·연체 안내 목록을 안내하지 않는다" in external
+    )

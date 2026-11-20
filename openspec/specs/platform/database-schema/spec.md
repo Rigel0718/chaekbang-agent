@@ -7,11 +7,11 @@
 ## Requirements
 
 ### Requirement: 마이그레이션으로 스키마 생성
-시스템은 빈 PostgreSQL 데이터베이스에 마이그레이션을 적용하면 테이블 24개(libraries, staff_users, staff_sessions, books, book_contributors, official_book_embeddings, library_books, library_book_audiences, holdings, holding_imports, members, loans, agent_runs, agent_steps, chat_sessions, chat_messages, recommendation_events, library_guides, library_opening_hours, library_closures, library_guide_entries, book_embeddings, curations, curation_items)와 문자열 유사도 확장, 벡터 확장, 한글 자모 분해 SQL 함수, chat_messages의 책 표시 칸과 책 id 칸, books와 library_books의 서명·저자 찾기 키 열, library_books의 저자 키 열, books의 시리즈 키 열을 모두 생성 SHALL 하고, 되돌린 뒤 다시 적용할 수 있어야 한다. 자모 분해 SQL 함수는 코드의 자모 분해 규칙과 같은 결과를 낸다. 찾기 키 열은 DB가 서명·저자에서 계산하는 생성 열이라 코드가 쓰지 않는다. 저자 키 열은 코드가 저장할 때 계산하는 열이고 비워 둘 수 없다(빈 목록은 된다). 시리즈 키 열은 코드가 저장할 때 계산하는 열이고 주지 않으면 빈 목록이다. chat_messages의 책 id 칸은 코드가 저장할 때 정하는 기관 도서 id 목록이고 비워 둘 수 없으며 주지 않으면 빈 목록이다. official_book_embeddings와 book_embeddings의 벡터 열은 1024차원이고 종류 칸은 비어 있을 수 없다. official_book_embeddings는 같은 공식 서지·모델 이름·텍스트 버전·종류의 행을, book_embeddings는 같은 기관 도서·모델 이름·텍스트 버전·종류의 행을 하나만 둘 수 있다. book_contributors는 같은 공식 서지에 같은 순서의 행을 하나만 둘 수 있고 이름과 이름 맞춤 키는 비어 있을 수 없다. curation_items는 같은 기관의 큐레이션과 기관 도서만 가리킨다.
+시스템은 빈 PostgreSQL 데이터베이스에 마이그레이션을 적용하면 테이블 25개(libraries, staff_users, staff_sessions, books, book_contributors, official_book_embeddings, library_books, library_book_audiences, holdings, holding_imports, members, loans, agent_runs, agent_steps, chat_sessions, chat_messages, recommendation_events, library_guides, library_opening_hours, library_closures, library_guide_entries, book_embeddings, curations, curation_items, overdue_notice_templates)와 문자열 유사도 확장, 벡터 확장, 한글 자모 분해 SQL 함수, chat_messages의 책 표시 칸과 책 id 칸, books와 library_books의 서명·저자 찾기 키 열, library_books의 저자 키 열, books의 시리즈 키 열을 모두 생성 SHALL 하고, 되돌린 뒤 다시 적용할 수 있어야 한다. 자모 분해 SQL 함수는 코드의 자모 분해 규칙과 같은 결과를 낸다. 찾기 키 열은 DB가 서명·저자에서 계산하는 생성 열이라 코드가 쓰지 않는다. 저자 키 열은 코드가 저장할 때 계산하는 열이고 비워 둘 수 없다(빈 목록은 된다). 시리즈 키 열은 코드가 저장할 때 계산하는 열이고 주지 않으면 빈 목록이다. chat_messages의 책 id 칸은 코드가 저장할 때 정하는 기관 도서 id 목록이고 비워 둘 수 없으며 주지 않으면 빈 목록이다. official_book_embeddings와 book_embeddings의 벡터 열은 1024차원이고 종류 칸은 비어 있을 수 없다. official_book_embeddings는 같은 공식 서지·모델 이름·텍스트 버전·종류의 행을, book_embeddings는 같은 기관 도서·모델 이름·텍스트 버전·종류의 행을 하나만 둘 수 있다. book_contributors는 같은 공식 서지에 같은 순서의 행을 하나만 둘 수 있고 이름과 이름 맞춤 키는 비어 있을 수 없다. curation_items는 같은 기관의 큐레이션과 기관 도서만 가리킨다. members의 전화번호 칸은 비어 있을 수 있다. overdue_notice_templates의 문장은 비어 있을 수 없다.
 
 #### Scenario: 빈 DB에 upgrade
 - **WHEN** 빈 데이터베이스에 `alembic upgrade head`를 실행하면
-- **THEN** 24개 테이블과 문자열 유사도 확장, 벡터 확장, 자모 분해 함수가 모두 존재한다
+- **THEN** 25개 테이블과 문자열 유사도 확장, 벡터 확장, 자모 분해 함수가 모두 존재한다
 
 #### Scenario: downgrade 후 재적용
 - **WHEN** `alembic downgrade base` 후 다시 `alembic upgrade head`를 실행하면
@@ -76,6 +76,14 @@
 #### Scenario: 큐레이션 포함 도서의 기관
 - **WHEN** A 기관 큐레이션의 포함 도서로 B 기관의 기관 도서를 직접 저장하려 하면
 - **THEN** 데이터베이스가 저장을 거부한다
+
+#### Scenario: 회원 전화번호 칸
+- **WHEN** 회원 행이 있는 DB에 마이그레이션을 적용한 뒤 members 열을 확인하면
+- **THEN** 비어 있을 수 있는 전화번호 칸이 있고, 기존 행의 값은 비어 있다
+
+#### Scenario: 안내문 틀의 저장 계층 규칙
+- **WHEN** overdue_notice_templates에 문장이 빈 행을, 상태 `rejected`인 행을 직접 저장하려 하면
+- **THEN** 데이터베이스가 둘 다 거부한다
 
 ### Requirement: 기관 데이터 테이블 구분
 모든 테이블은 기관 공통 테이블과 기관 데이터 테이블 중 정확히 하나에 MUST 속한다.

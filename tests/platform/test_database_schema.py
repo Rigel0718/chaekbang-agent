@@ -49,6 +49,7 @@ ALL_TABLES = {
     "recommendation_events",
     "curations",
     "curation_items",
+    "overdue_notice_templates",
     "library_guides",
     "library_opening_hours",
     "library_closures",
@@ -69,7 +70,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 24
+    assert len(ALL_TABLES) == 25
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -85,7 +86,7 @@ async def test_korean_collation_present(engine: AsyncEngine) -> None:
     """
     async with engine.connect() as conn:
         await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
-    assert len(await _table_names(engine)) == 24
+    assert len(await _table_names(engine)) == 25
 
 
 async def test_korean_collation_missing(engine: AsyncEngine) -> None:
@@ -167,6 +168,61 @@ async def test_chat_messages_book_ids_column(engine: AsyncEngine, migrated_db: s
         await conn.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
     assert found["library_book_ids"]["nullable"] is False
     assert old == []
+
+
+async def test_members_phone_column(engine: AsyncEngine, migrated_db: str) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 회원 전화번호 칸"""
+    config = alembic_config(migrated_db)
+    await asyncio.to_thread(command.downgrade, config, "-1")
+    try:
+        async with engine.begin() as conn:
+            library_id = await conn.scalar(
+                text(
+                    "INSERT INTO libraries (name, type, loan_mode, default_loan_days) "
+                    "VALUES ('전화번호 칸 도서관', 'small_library', 'internal', 14) RETURNING id"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO members (library_id, member_number, name) "
+                    "VALUES (:library, 'M0001', '옛 회원')"
+                ),
+                {"library": library_id},
+            )
+    finally:
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+    def columns(sync_conn):
+        return {c["name"]: c for c in inspect(sync_conn).get_columns("members")}
+
+    async with engine.begin() as conn:
+        found = await conn.run_sync(columns)
+        old = await conn.scalar(
+            text("SELECT phone FROM members WHERE library_id = :id"), {"id": library_id}
+        )
+        await conn.execute(text("DELETE FROM members WHERE library_id = :id"), {"id": library_id})
+        await conn.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
+    assert found["phone"]["nullable"] is True
+    assert old is None
+
+
+async def test_overdue_notice_template_rules(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 안내문 틀의 저장 계층 규칙"""
+    await assert_rejected(
+        session,
+        "overdue_notice_templates",
+        library_id=library_a.id,
+        body="",
+        match="body_not_empty",
+    )
+    await assert_rejected(
+        session,
+        "overdue_notice_templates",
+        library_id=library_a.id,
+        body="{서명} {반납예정일}",
+        status="rejected",
+        match="approval_status",
+    )
 
 
 async def test_downgrade_then_upgrade_again(engine: AsyncEngine, migrated_db: str) -> None:
