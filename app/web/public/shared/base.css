@@ -1,0 +1,79 @@
+:root {
+  --bg: #faf8f4;
+  --surface: #ffffff;
+  --text: #25221d;
+  --muted: #6b655b;
+  --line: #e4dfd5;
+  --accent: #2f6f5e;
+  --accent-soft: #e3f0ec;
+  --warn: #b4501f;
+  --radius: 12px;
+  --font: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.55; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* 책 카드: 검색 결과, 찾은 책, 추천, 비슷한 책이 모두 같은 모양이다 */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin: 10px 0;
+}
+.card-similar { background: var(--bg); margin: 8px 0 0; }
+
+.card-main { display: flex; gap: 14px; cursor: pointer; border-radius: 8px; }
+.card-main:hover { background: var(--accent-soft); }
+
+.cover {
+  flex: 0 0 72px;
+  height: 104px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--line);
+}
+.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover-empty { display: grid; place-items: center; background: var(--accent-soft); }
+.cover-letter { font-size: 32px; font-weight: 700; color: var(--accent); }
+
+.info { min-width: 0; }
+.info p { margin: 2px 0; }
+.title { margin: 0; font-size: 1.05em; line-height: 1.3; }
+.meta, .synced, .source { color: var(--muted); font-size: 0.85em; }
+.status { font-weight: 600; color: var(--warn); }
+.status.available { color: var(--accent); }
+.shelf { font-size: 0.9em; }
+.extra { font-size: 0.9em; padding-top: 4px; }
+.reason { color: var(--text); }
+.basis { color: var(--accent); }
+
+.source { margin: 6px 0 0; }
+.source a { color: inherit; }
+
+.actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.85em;
+}
+.btn:hover:not(:disabled) { background: var(--accent-soft); }
+
+.similar { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 6px; }
+.similar-note { margin: 4px 0; color: var(--muted); font-size: 0.9em; }
