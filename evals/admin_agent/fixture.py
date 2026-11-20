@@ -152,11 +152,37 @@ EXTERNAL_BOOKS: tuple[tuple, ...] = (
 )
 
 
+# 큐레이션 평가 기관(자체 대출·외부 대출 둘에 같은 책). 분석 라벨의 숫자가 바뀌지 않도록 분석 기관과
+# 따로 둔다. 주제 `공룡`·`우주`는 서명 키워드로 추천 가능한 책이 3권 이상 찾힌다. 서명, KDC, 소개,
+# 사본 상태.
+CURATION_BOOKS: tuple[tuple, ...] = (
+    (
+        "공룡 대탐험",
+        "457",
+        "공룡의 종류와 사는 곳을 그림으로 보여 주는 어린이 과학책",
+        ("available",),
+    ),
+    ("공룡 화석의 비밀", "457", "화석으로 공룡의 몸과 생활을 알아보는 책", ("available",)),
+    ("꼬마 공룡 뚜비", "813.8", "아기 공룡이 친구를 찾아 떠나는 그림책", ("on_loan",)),
+    ("공룡 시대 이야기", "457", "중생대 공룡이 살던 시대를 소개하는 책", ("available",)),
+    ("공룡 도감 옛판", "457", "예전 판 공룡 도감", ("withdrawn",)),
+    ("우주 여행 안내서", "443", "태양계 행성을 차례로 여행하듯 소개하는 책", ("available",)),
+    ("별과 우주의 탄생", "443", "별이 태어나고 우주가 넓어지는 과정을 쉽게 설명", ("available",)),
+    ("우주 정거장의 하루", "559", "우주 비행사가 정거장에서 보내는 하루", ("available",)),
+    ("집밥 한 그릇", "594.5", "매일 먹는 집밥 요리법", ("available",)),
+    ("바다로 간 고래", "813.8", "고래 가족의 바다 여행 그림책", ("available",)),
+)
+PENDING_CURATION = "가을 그림책 모음"  # 큐레이션 자체 대출 기관에 미리 있는 승인 대기 큐레이션
+
+
 @dataclass(frozen=True)
 class EvalLibraries:
     internal_id: int
     external_id: int
     titles: dict[str, int]  # 자체 대출 기관의 서명 → 기관 도서 id
+    curation_internal_id: int = 0
+    curation_external_id: int = 0
+    curation_titles: dict[str, int] | None = None  # 큐레이션 자체 대출 기관의 서명 → id
 
 
 @contextmanager
@@ -295,5 +321,74 @@ async def build_libraries(session: AsyncSession, suffix: str = "") -> EvalLibrar
                 source="imported",
                 last_synced_at=datetime(2026, 11, 18, 0, 0, tzinfo=UTC),
             )
+    curation_internal, curation_titles = await _curation_library(
+        session, f"평가용 큐레이션 자체 대출 작은도서관{suffix}", "internal", "CI"
+    )
+    curation_external, _ = await _curation_library(
+        session, f"평가용 큐레이션 외부 대출 작은도서관{suffix}", "external", "CE"
+    )
+    pending = await _insert(
+        session,
+        "curations",
+        library_id=curation_internal,
+        title=PENDING_CURATION,
+        status="pending_approval",
+    )
+    for position, title in enumerate(("꼬마 공룡 뚜비", "바다로 간 고래", "공룡 대탐험"), 1):
+        await _insert(
+            session,
+            "curation_items",
+            returning=False,
+            library_id=curation_internal,
+            curation_id=pending,
+            position=position,
+            library_book_id=curation_titles[title],
+            reason="그림이 많은 책",
+        )
     await session.commit()
-    return EvalLibraries(internal, external, titles)
+    return EvalLibraries(
+        internal,
+        external,
+        titles,
+        curation_internal,
+        curation_external,
+        curation_titles,
+    )
+
+
+async def _curation_library(
+    session: AsyncSession, name: str, loan_mode: str, prefix: str
+) -> tuple[int, dict[str, int]]:
+    library = await _library(session, name, loan_mode)
+    titles: dict[str, int] = {}
+    for n, (title, kdc, description, statuses) in enumerate(CURATION_BOOKS):
+        author = "평가 저자"
+        book_id = await _insert(
+            session,
+            "library_books",
+            library_id=library,
+            title=title,
+            author=author,
+            author_keys=author_keys(author),
+            kdc=kdc,
+            description=description,
+            created_at=REGISTERED,
+        )
+        titles[title] = book_id
+        for m, status in enumerate(statuses):
+            await _insert(
+                session,
+                "holdings",
+                library_id=library,
+                library_book_id=book_id,
+                accession_number=f"{prefix}{n:03d}{m}",
+                call_number=f"{kdc}-평가",
+                status=status,
+                acquisition_type=A,
+                purchase_price=13000,
+                source="imported" if loan_mode == "external" else "manual",
+                last_synced_at=(
+                    datetime(2026, 11, 18, 0, 0, tzinfo=UTC) if loan_mode == "external" else None
+                ),
+            )
+    return library, titles

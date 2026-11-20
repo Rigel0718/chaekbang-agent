@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.llm import LlmClient
 from app.agent.profile import Profile
 from app.agent.runner import AnswerEvent, DoneEvent, StatusEvent, run
+from app.central.embedding import Embedder
 from app.library.models.chat import ChatMessage, ChatRole, SessionKind
 from app.library.privacy import mask_personal
 from app.library.schemas.admin_agent import AdminAnswerPayload
@@ -30,6 +31,7 @@ from app.library.services.chat import (
     purge_expired,
     release,
 )
+from app.library.services.topic import QUERY_ENCODER
 
 KIND = SessionKind.ADMIN
 
@@ -75,9 +77,16 @@ async def _finish(
 
 
 async def stream_admin_turn(
-    session: AsyncSession, llm: LlmClient, profile: Profile, prepared: PreparedTurn
+    session: AsyncSession,
+    llm: LlmClient,
+    profile: Profile,
+    prepared: PreparedTurn,
+    encoder: Embedder | None = None,
 ) -> AsyncIterator[ServerEvent]:
-    """진행 사건은 바로 보내고, 답은 실행이 끝난 뒤 보낸다. 끝나거나 끊기면 표시를 푼다."""
+    """진행 사건은 바로 보내고, 답은 실행이 끝난 뒤 보낸다. 끝나거나 끊기면 표시를 푼다.
+
+    질의 인코더는 소장 도서 검색 tool의 벡터 질의에 쓴다(실행 값). 없으면 키워드 순위로 내려간다.
+    """
     assert prepared.user_text is not None
     events = run(
         session=session,
@@ -86,6 +95,7 @@ async def stream_admin_turn(
         library_id=prepared.library_id,
         user_text=prepared.user_text,
         history=prepared.history,
+        tool_values={QUERY_ENCODER: encoder},
     )
     try:
         yield ServerEvent("session", {"session_id": str(prepared.session_id)})

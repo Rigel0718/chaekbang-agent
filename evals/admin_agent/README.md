@@ -1,13 +1,13 @@
 # 운영 에이전트 평가
 
-운영 에이전트가 분석 질문에 맞는 tool과 입력을 고르고, 결과의 숫자만 옮겨 말하는지를 실제 LLM으로 잰다. 숫자 자체가 맞는지는 pytest(`tests/library/test_analytics.py`)가 본다. 이 평가는 고르기와 옮기기를 본다.
+운영 에이전트가 분석 질문에 맞는 tool과 입력을 고르고, 결과의 숫자만 옮겨 말하는지, 큐레이션 요청에 검색한 책으로 승인 대기 초안을 만드는지를 실제 LLM으로 잰다. 숫자 자체가 맞는지는 pytest(`tests/library/test_analytics.py`)가 본다. 이 평가는 고르기와 옮기기를 본다.
 
 ## 실행
 
 실제 LLM을 부른다. **돌리기 전에 호출 수와 비용을 알리고 승인을 받는다.**
 
 ```bash
-uv run python -m evals.admin_agent                        # 시나리오 23개
+uv run python -m evals.admin_agent                        # 시나리오 27개
 uv run python -m evals.admin_agent --only total,kids-science
 uv run python -m evals.admin_agent --model gpt-6-luna --out /tmp/admin-eval
 ```
@@ -22,9 +22,9 @@ uv run python -m evals.admin_agent --model gpt-6-luna --out /tmp/admin-eval
 
 | 파일 | 내용 |
 | --- | --- |
-| `fixture.py` | 평가 기관(자체 대출: 기관 도서 48·사본 53, 그중 제적 2. 외부 대출: 기관 도서 3)과 날짜 고정 |
-| `scenarios.py` | 시나리오 23개와 라벨(기대 호출, 있어야 할 값, 못 하는 분석 종류, 스펙 추적) |
-| `runner.py` | 서비스와 같은 대화 경로로 한 시나리오를 돌리고, 기록된 입력으로 tool 결과를 다시 구한다 |
+| `fixture.py` | 평가 기관(자체 대출: 기관 도서 48·사본 53, 그중 제적 2. 외부 대출: 기관 도서 3), 큐레이션 평가 기관 둘(자체·외부 대출, 같은 책 10권: 공룡 5(제적 1)·우주 3·그 밖 2, 승인 대기 큐레이션 1)과 날짜 고정 |
+| `scenarios.py` | 시나리오 27개와 라벨(기대 호출, 있어야 할 값, 못 하는 분석 종류, 초안 기대, 스펙 추적) |
+| `runner.py` | 서비스와 같은 대화 경로로 한 시나리오를 돌린다. tool을 결과를 받아 두는 tool로 감싸, 입력을 남기지 않는 검색 결과도 채점에 쓴다 |
 | `score.py` | 채점(LLM 없음) |
 | `__main__.py` | 실행, 결과 파일, 요약 |
 
@@ -35,10 +35,11 @@ uv run python -m evals.admin_agent --model gpt-6-luna --out /tmp/admin-eval
 | tool 선택 | 기대 호출이 실제 호출에 모두 있다. 적은 입력 값만 맞춰 보고(분야는 집합으로), 더 부른 호출은 상관없다 |
 | 숫자 충실도 | 있어야 할 값이 답에 모두 있고, 답의 모든 숫자가 그 턴의 tool 결과·질문·KDC 주류 번호(000~900) 안에 있다. 줄 앞의 목록 번호는 숫자로 보지 않는다. 없어야 할 값(회원 이름·번호)이 답에 없다 |
 | 못 하는 분석 분류 | 답의 `unsupported`가 라벨과 같다(분석으로 답했으면 null) |
+| 초안 충실도 | 초안을 기대하면 성공한 `draft_curation`이 하나이고 승인 대기이며, 책이 모두 같은 턴의 `search_collection` 결과에 있고, 서로 다른 3~10권이고, 답에 "승인"이 있다. 기대하지 않으면 초안이 없어야 맞다 |
 
 ## 라벨
 
-라벨은 Claude가 평가 기관의 분석 결과를 보고 쓰고, 사람이 전부 확인한다(23개, 약 10분). 평가 기관을 바꾸면 `scenarios.py` 머리말의 값과 `must_say`를 함께 고친다.
+라벨은 Claude가 평가 기관의 분석 결과를 보고 쓰고, 사람이 전부 확인한다(23개, 약 10분. 큐레이션 4개는 2026-11-21에 더함). 평가 기관을 바꾸면 `scenarios.py` 머리말의 값과 `must_say`를 함께 고친다.
 
 시나리오 묶음은 네 가지다.
 
@@ -46,3 +47,4 @@ uv run python -m evals.admin_agent --model gpt-6-luna --out /tmp/admin-eval
 - 바꿔 말하기 4개: 과학, 9월, 아동, 작년
 - 못 하는 분석 4개: 주제로 세기, 연체한 사람, 시간대, 최근 들어온 책
 - 외부 대출 기관의 대출 질문 1개
+- 큐레이션 4개(큐레이션 평가 기관): 공룡 만들기, 우주 이달의 추천, 승인 요청, 외부 대출 기관의 공룡 만들기

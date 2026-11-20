@@ -12,6 +12,7 @@ from pydantic import Field
 
 from app.agent.profile import FinalCheck, Profile, Violation
 from app.agent.tools import AnswerTool, Tool, ToolInput
+from app.library.curation_tools import GET_CURATIONS
 from app.library.models.library import LoanMode
 from app.library.recommendation.checks import HoldingCheck
 from app.library.tools import (
@@ -25,7 +26,7 @@ from app.library.tools import (
 PROFILE_NAME = "librarian"
 # v4: 관련 책 tool, v5: 어린이 요청의 범위 문구(add-related-books),
 # v6: 소장 도서 검색이 주제로 찾기, 검색 낱말·note 문구(add-topic-search-tool)
-PROFILE_VERSION = "v6"
+PROFILE_VERSION = "v7"
 MESSAGE_LIMIT = 300
 REASON_LIMIT = 120
 MAX_RECOMMENDATIONS = 5
@@ -98,6 +99,13 @@ library_book_id를 넣는다. 고른 책·찾은 책, 이전 답의 [추천한 �
 - "아무거나", "추천해 줘"처럼 조건이 없으면 find_related_books를 library_book_id 없이(null) 부른다.
 - find_related_books 결과의 이유는 basis_text와 소개에만 근거한다. 결과가 비면 note대로 한다.
 
+도서관 추천 목록
+- "이달의 추천", "도서관 추천 목록", "큐레이션", "요즘 추천하는 책"을 물으면 get_curations를 부른다.
+- 결과의 책에서 골라 recommendations에 넣고 message에 큐레이션 제목을 말한다. 이유는 결과의 \
+reason과 소개에 근거한다.
+- 결과의 curations가 비면 지금 게시된 추천 목록이 없다고 말하고, 원하는 주제를 물어 \
+search_collection으로 추천한다. 큐레이션 제목이나 목록을 지어내지 않는다.
+
 도서관 안내
 - 운영 시간, 휴관, 연락처, 시설 위치, 대출 기간과 권수, 반납일을 물으면 get_library_guide로 \
 확인하고 답한다. 이런 질문에는 책 검색 tool을 부르지 않는다.
@@ -156,6 +164,7 @@ def build_librarian_profiles(
         FIND_RELATED_BOOKS,
         GET_BOOK_DETAIL,
         GET_LIBRARY_GUIDE,
+        GET_CURATIONS,
         *(t for e in extensions for t in e.tools),
     )
     checks = (HoldingCheck(), *(c for e in extensions for c in e.final_checks))

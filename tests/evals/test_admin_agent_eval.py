@@ -16,7 +16,12 @@ from app.library.analytics.scope import BookFilter
 from app.library.models.library import Library
 from app.library.services import analytics
 from evals.admin_agent.__main__ import METRIC_NAMES, run_all
-from evals.admin_agent.fixture import build_libraries, fixed_clock
+from evals.admin_agent.fixture import (
+    CURATION_BOOKS,
+    PENDING_CURATION,
+    build_libraries,
+    fixed_clock,
+)
 from evals.admin_agent.scenarios import SCENARIOS, Call, Scenario
 from evals.admin_agent.score import ToolCallRecord, TurnRecord, numbers_in, score
 from tests.agent.fakes import call, tool_turn
@@ -60,6 +65,21 @@ async def test_same_data(session: AsyncSession) -> None:
         )
 
 
+async def test_curation_topics(session: AsyncSession) -> None:
+    """[platform/admin-agent-evals] 평가 기관 / 큐레이션 주제"""
+    from app.library.recommendation.search import search_collection
+
+    with fixed_clock():
+        libraries = await build_libraries(session)
+    for library_id in (libraries.curation_internal_id, libraries.curation_external_id):
+        for topic in ("공룡", "우주"):
+            found = await search_collection(session, library_id, [topic])
+            assert len(found) >= 3, (library_id, topic)
+            assert all(c.recommendable for c in found)
+    # 분석 기관의 숫자는 그대로다(큐레이션 책은 다른 기관에만 있다)
+    assert not set(libraries.titles) & {b[0] for b in CURATION_BOOKS if b[0] != "공룡 대탐험"}
+
+
 def _turn(message: str, unsupported=None, calls=(), question="질문") -> TurnRecord:
     return TurnRecord(question, message, unsupported, "completed", list(calls))
 
@@ -83,13 +103,13 @@ def test_scenarios_trace_admin_eval_requirements() -> None:
     """[platform/admin-agent-evals] 시나리오 라벨 / 스펙 추적"""
     _, by_eval = _spec_scenarios(_spec_roots())
     admin = {t for t in by_eval if t.startswith("[agent/admin]")}
-    assert len(admin) == 7
+    assert len(admin) == 10
     covered = {trace for s in SCENARIOS for trace in s.traces}
     assert admin <= covered, admin - covered
     every, _ = _spec_scenarios(_spec_roots())
     assert covered <= every
-    assert len(SCENARIOS) == 23
-    assert len({s.id for s in SCENARIOS}) == 23
+    assert len(SCENARIOS) == 27
+    assert len({s.id for s in SCENARIOS}) == 27
 
 
 def test_invented_number() -> None:
@@ -170,7 +190,10 @@ async def test_rolled_back(tmp_path: Path, engine) -> None:
         sessions = await conn.scalar(
             text("SELECT count(*) FROM chat_sessions WHERE kind = 'admin'")
         )
-    assert (names, sessions) == (0, 0)
+        curations = await conn.scalar(
+            text("SELECT count(*) FROM curations WHERE title = :t"), {"t": PENDING_CURATION}
+        )
+    assert (names, sessions, curations) == (0, 0, 0)
 
 
 def test_must_say_alternatives() -> None:
@@ -181,3 +204,101 @@ def test_must_say_alternatives() -> None:
     assert score(scenario, _turn("분실된 어린이 도서는 1권이에요.", calls=calls)).numbers_ok
     missing = score(scenario, _turn("분실된 책이 없어요.", calls=calls))
     assert missing.missing_say == ["어린이 실험실 | 1권"]
+
+
+def _searched(*ids: int) -> ToolCallRecord:
+    return ToolCallRecord(
+        "search_collection", {}, False, {"books": [{"library_book_id": i} for i in ids]}
+    )
+
+
+def _drafted(*ids: int, status: str = "pending_approval") -> ToolCallRecord:
+    return ToolCallRecord(
+        "draft_curation", {"library_book_ids": list(ids)}, False, {"status": status}
+    )
+
+
+def test_draft_from_unsearched_book() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 검색하지 않은 책"""
+    scenario = Scenario("s", "공룡 큐레이션", draft=True)
+    ok = [_searched(1, 2, 3, 4), _drafted(1, 2, 3)]
+    assert score(scenario, _turn("승인 대기로 올렸어요", calls=ok)).draft_ok
+    outside = [_searched(1, 2, 3), _drafted(1, 2, 9)]
+    result = score(scenario, _turn("승인 대기로 올렸어요", calls=outside))
+    assert not result.draft_ok
+    assert not result.passed
+
+
+def test_unexpected_draft() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 기대하지 않은 초안"""
+    scenario = Scenario("s", "몇 권이야?")
+    assert score(scenario, _turn("51권", calls=[])).draft_ok
+    assert not score(
+        scenario, _turn("51권", calls=[_searched(1, 2, 3), _drafted(1, 2, 3)])
+    ).draft_ok
+
+
+def test_draft_count_status_and_notice() -> None:
+    """[platform/admin-agent-evals] 평가 지표: 초안은 하나, 승인 대기, 3~10권, 안내 낱말"""
+    scenario = Scenario("s", "q", draft=True)
+    searched = _searched(*range(1, 13))
+    assert not score(scenario, _turn("승인 대기", calls=[searched])).draft_ok
+    assert not score(scenario, _turn("승인 대기", calls=[searched, _drafted(1, 2)])).draft_ok
+    assert not score(
+        scenario, _turn("승인 대기", calls=[searched, _drafted(1, 2, 3, status="draft")])
+    ).draft_ok
+    assert not score(scenario, _turn("만들었어요", calls=[searched, _drafted(1, 2, 3)])).draft_ok
+    twice = [searched, _drafted(1, 2, 3), _drafted(4, 5, 6)]
+    assert not score(scenario, _turn("승인 대기", calls=twice)).draft_ok
+
+
+@dataclass
+class CurationLlm:
+    """공룡을 찾고, 결과의 앞 3권으로 초안을 만든 뒤 승인 대기 안내로 답한다."""
+
+    model: str = "fake-model"
+    requests: list[dict[str, Any]] = field(default_factory=list)
+
+    async def complete(
+        self, *, system: str, tools: list[ToolSpec], messages: list[Message]
+    ) -> LlmTurn:
+        import json
+
+        from app.agent.llm import ToolResult
+
+        self.requests.append({"tools": tools})
+        results = [m for m in messages if isinstance(m, ToolResult)]
+        if not results:
+            return tool_turn(call("search_collection", {"keywords": ["공룡"]}, "s1"))
+        if len(results) == 1:
+            ids = [b["library_book_id"] for b in json.loads(results[0].content)["books"]][:3]
+            args = {
+                "title": "공룡 특집",
+                "intro": None,
+                "library_book_ids": ids,
+                "reasons": ["공룡 책"] * len(ids),
+            }
+            return tool_turn(call("draft_curation", args, "d1"))
+        message = "공룡 특집 3권을 승인 대기로 올렸어요. 관리 화면에서 승인하면 게시돼요."
+        return tool_turn(call("submit_answer", {"message": message, "unsupported": None}))
+
+
+async def test_curation_scenario_end_to_end(tmp_path: Path, engine) -> None:
+    """[platform/admin-agent-evals] 평가 지표: 초안 충실도를 실제 경로의 tool 결과로 잰다"""
+    scenarios = [s for s in SCENARIOS if s.id in {"curation-dinosaur", "curation-external"}]
+    rows = await run_all(CurationLlm(), scenarios, tmp_path, get_settings().test_database_url)
+    for scenario, turn, result in rows:
+        assert result.passed, (scenario.id, result, turn)
+        assert [c.name for c in turn.calls] == ["search_collection", "draft_curation"]
+        assert turn.calls[0].result["books"]
+
+
+def test_science_word_accepts_both_readings() -> None:
+    """[platform/admin-agent-evals] 시나리오 라벨 / 부분 일치 (과학책의 두 읽기, 2026-11-21 넓힘)"""
+    [scenario] = [s for s in SCENARIOS if s.id == "science-word"]
+    for fields, copies in ((["자연과학"], 8), (["자연과학", "기술과학"], 14)):
+        calls = [
+            ToolCallRecord("get_collection_status", {"fields": fields}, False, {"copies": copies})
+        ]
+        result = score(scenario, _turn(f"과학책은 {copies}권이에요(KDC 기준).", calls=calls))
+        assert result.passed, (fields, result)

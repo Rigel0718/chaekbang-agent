@@ -1,6 +1,8 @@
 """운영 에이전트 프로필. 답 구조, 프롬프트, 운영 방식별 프로필.
 
-관리 담당자의 장서·대출 질문에 정해진 분석 tool(`analytics_tools.py`)의 결과로 답한다. 숫자는 tool이
+관리 담당자의 장서·대출 질문에 정해진 분석 tool(`analytics_tools.py`)의 결과로 답한다. 주제
+큐레이션을 요청하면 소장 도서 검색(AI 사서와 같은 tool)으로 찾은 책으로 초안을 만들어 승인 대기로
+올린다(`curation_tools.py`). 승인·게시 tool은 없다. 숫자는 tool이
 내고, LLM은 분석·기간·축을 고르고 결과를 옮겨 말한다. 정해진 분석으로 답할 수 없는 질문은 못
 한다고 말하고 종류(`unsupported`)를 고른다. 종류는 실행 행에 남고(최종 답의 기록 필드), 질문 문장은
 남지 않는다.
@@ -23,10 +25,12 @@ from app.agent.profile import Profile
 from app.agent.tools import AnswerTool, ToolInput
 from app.library.analytics.axes import AnalysisAxis
 from app.library.analytics_tools import analytics_tools
+from app.library.curation_tools import DRAFT_CURATION
 from app.library.models.library import LoanMode
+from app.library.tools import SEARCH_COLLECTION
 
 PROFILE_NAME = "admin"
-PROFILE_VERSION = "v1"
+PROFILE_VERSION = "v2"
 MESSAGE_LIMIT = 600
 
 FALLBACK_MESSAGE = "지금은 분석 결과를 드리기 어려워요. 잠시 뒤에 다시 물어봐 주세요."
@@ -72,7 +76,8 @@ class AdminExtension:
 
 BASE_PROMPT = """\
 너는 사서가 없는 작은도서관의 운영 도우미다. 관리 담당자(주민센터 직원, 자원봉사자)가 장서와 대출 \
-현황을 물으면 분석 tool로 확인하고 한국어로 짧고 정확하게 답한다.
+현황을 물으면 분석 tool로 확인하고 한국어로 짧고 정확하게 답한다. 주제 큐레이션을 부탁하면 소장 \
+도서를 찾아 초안을 만들어 승인 대기로 올린다.
 
 원칙
 - 숫자는 tool 결과의 값만 쓴다. 직접 세거나 더하거나 나누거나 어림하지 않는다. 결과에 없는 숫자를 \
@@ -109,6 +114,19 @@ last_90_days, 올해 → this_year, 작년 → last_year, 1년 동안·최근 1�
 - get_loan_stats: 기간 대출 수. 분야로 묶으면 분야별 권수와 권당 대출(많이 빌리는데 책이 적은 \
 분야를 볼 때)도 낸다. book으로 묶으면 많이 빌린 책 순위. current는 지금 대출 중·연체 중 건수다.
 - list_unborrowed_books: 기간에 한 번도 빌리지 않은 책.
+
+큐레이션 초안
+- "공룡 책으로 큐레이션 만들어 줘", "이달의 추천 묶어 줘" 같은 요청이면 먼저 search_collection을 \
+주제의 핵심 낱말로 부르고, 그 결과에 나온 책에서 서로 다른 3~10권을 골라 draft_curation을 부른다. \
+결과에 없는 책 id를 쓰지 않는다. 결과가 3권보다 적으면 다른 낱말로 한 번 더 찾고, 그래도 모자라면 \
+초안을 만들지 말고 책이 모자란다고 말한다.
+- 제목은 40자, 소개는 200자, 책마다 이유는 60자 이내다. 이유는 검색 결과의 서명, 분류, 소개에만 \
+근거해 한 줄로 쓴다. 결과에 없는 줄거리나 저자 정보를 쓰지 않는다.
+- draft_curation이 오류를 돌려주면 오류대로 고쳐 다시 부른다.
+- 초안을 올렸으면 답에 제목과 권수, "승인 대기로 올렸어요. 관리 화면에서 승인하면 이용자 화면에 \
+게시돼요"를 말한다. unsupported는 null이다.
+- 승인, 반려, 게시, 내리기는 너가 할 수 없다. 승인해 달라고 하면 하지 말고 관리 화면에서 \
+승인하라고 안내하며 unsupported=other로 답한다.
 
 못 하는 분석
 - 정해진 분석으로 답할 수 없으면 숫자를 말하지 않고 "그 분석은 아직 못 해요"라고 한 뒤 할 수 있는 \
@@ -152,7 +170,11 @@ def build_admin_profiles(extensions: Sequence[AdminExtension] = ()) -> dict[Loan
             name=PROFILE_NAME,
             version=PROFILE_VERSION,
             system_prompt=system_prompt(mode, notes),
-            tools=analytics_tools(axes, loans=mode == LoanMode.INTERNAL),
+            tools=(
+                *analytics_tools(axes, loans=mode == LoanMode.INTERNAL),
+                SEARCH_COLLECTION,
+                DRAFT_CURATION,
+            ),
             answer_tool=ANSWER_TOOL,
             fallback_answer=FALLBACK_ANSWER,
         )

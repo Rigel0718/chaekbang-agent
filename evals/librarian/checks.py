@@ -21,7 +21,7 @@ from typing import Any
 from app.core.text import compact
 from evals.librarian.catalog import SampleCatalog
 from evals.librarian.guide import guide_values
-from evals.librarian.scenarios import Expect, RelatedCall, Scenario
+from evals.librarian.scenarios import CURATION_TITLE, Expect, RelatedCall, Scenario
 
 FALLBACK_STATUSES = ("fallback", "failed", "refused", "cancelled")
 _ASKS_PERSONAL = re.compile(
@@ -47,7 +47,7 @@ _INVENTED_BASIS = re.compile(r"수상|상을 받|베스트셀러|판매|만\s*�
 _NO_DESCRIPTION = re.compile(
     r"(소개|줄거리|내용)[^.!?\n]{0,20}"
     r"(없|모르|확인할 수 없|찾을 수 없|알 수 없|등록되어 있지 않|등록되지 않"
-    r"|확인하기 어려|알기 어려)"
+    r"|확인하기 어려|알기 어려|제공되지 않)"
 )
 
 
@@ -77,6 +77,8 @@ class ScenarioResult:
     expectation_met: bool = True
     guide_basis: dict[str, Any] | None = None  # 판정 기준값(evals/librarian/guide.py)
     topic_met: bool | None = None  # 주제 낱말이 있는 시나리오에서 추천 하나 이상이 그 낱말을 담음
+    curation_title: str | None = None  # 큐레이션 시나리오의 게시본 제목(없으면 None)
+    curation_books: tuple[int, ...] = ()  # 게시본의 책
 
     @property
     def last(self) -> TurnResult:
@@ -205,6 +207,18 @@ def expectation_met(result: ScenarioResult, catalog: SampleCatalog) -> bool:
             if not ids:
                 return bool(turn.answer["suggest_book_request"])
             return all(topic in catalog.texts.get(i, "") for i in ids)
+        case Expect.CURATION:
+            if "get_curations" not in turn.tools or not ids:
+                return False
+            if not set(ids) <= set(result.curation_books):
+                return False
+            if (result.curation_title or "") not in turn.answer["message"]:
+                return False
+        case Expect.CURATION_NONE:
+            if "get_curations" not in turn.tools or "없" not in turn.answer["message"]:
+                return False
+            if CURATION_TITLE in turn.answer["message"]:
+                return False
         case Expect.ANY:
             pass
     topic = result.scenario.topic

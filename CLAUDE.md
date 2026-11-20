@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 <!-- 이 절은 세 줄까지만. 결정·수치·미룬 일은 docs/roadmap.md에 쓴다. -->
-진행 중: 없음(`add-librarian-web-ui` archive 끝) · 다음: `add-approval-flow`
+진행 중: 없음(`add-approval-flow` archive 끝) · 다음: `add-overdue-notice`
 change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾기, 비슷한 책, 최근 기록), 미룬 일은 `docs/roadmap.md`에 있다.
 
 ## OpenSpec 작업 규칙
@@ -106,7 +106,7 @@ uv run python -m evals.admin_agent            # 운영 에이전트 분석 질�
 
 1. **라우터는 얇게, 로직은 service에.** REST API와 에이전트 tool이 같은 service 함수를 호출한다. 라우터에 비즈니스 로직을 넣지 않는다. 패키지마다 같다.
 2. **기관 데이터는 항상 분리한다.** 모든 기관 데이터는 `library_id`로 나눈다. 조회·쓰기·에이전트 tool·자연어 SQL 모두 현재 로그인한 기관 범위를 코드에서 강제한다. 요청 값으로 받은 library_id를 그대로 믿지 않는다. 공식 서지(`books`)는 기관이 쓸 수 없고, 기관의 판단과 입력 값은 기관 도서(`library_books`)에 둔다. 의존 방향은 `features → library → central → core`이고 테스트가 강제한다. 운영자 층(`app/central/`)은 기관 모델과 어린이 구분을 모른다. 어린이 구분은 MVP 작은도서관에 필요한 기관 개별 기능(`app/features/children/`)이고, 공통 코드는 훅으로 사건만 알린다.
-3. **확정 작업은 승인 흐름을 거친다.** 큐레이션 게시, 연체 안내, 구매 요청서 확정은 `draft → pending_approval → approved → (published | confirmed)` 상태를 따른다. 승인 대기 상태는 DB에 저장한다. 이용자 쪽 쓰기는 대출·반납과 희망도서 신청만 허용한다.
+3. **확정 작업은 승인 흐름을 거친다.** 큐레이션 게시, 연체 안내, 구매 요청서 확정은 `draft → pending_approval → approved → (published | confirmed)` 상태를 따르고, 게시본을 내리면 `archived`다. 승인 대기 상태는 DB에 저장하고, 승인 뒤 실행은 에이전트가 아니라 코드가 한다. 이용자 쪽 쓰기는 대출·반납과 희망도서 신청만 허용한다.
 4. **소장 도서만 추천한다.** 추천 결과는 항상 해당 기관의 holdings에 있는 책이다. 대출 중이면 표시하고, 없으면 희망도서 신청으로 연결한다. 어린이 요청에는 그 기관에서 어린이 도서로 분류된 책(`library_book_audiences`의 `children`)만 추천하고, 분류가 확실하지 않은 책은 일반 도서로 둔다. 이 규칙은 LLM이 아니라 코드(필터)로 강제한다.
 5. **기존 시스템 위에 얹는다.** 장서는 기존 대출 프로그램에서 가져오는 것을 기본으로 하고, 담당자가 같은 정보를 두 번 입력하게 만들지 않는다. 외부 대출 기관(`loan_mode = external`)에서는 대출 쓰기 tool을 끄고, 대출 상태에는 마지막 갱신 시각을 함께 보여 준다.
 6. **책 정보는 데이터로만 답한다.** 줄거리·저자 정보는 DB나 외부 API 결과를 근거로 하고, LLM이 인용문이나 정보를 지어내지 않게 한다.

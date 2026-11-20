@@ -26,6 +26,7 @@ from app.library.api import (
     auth,
     book_enrichment,
     catalog,
+    curations,
     guide,
     holding_imports,
     holdings,
@@ -80,6 +81,8 @@ app.include_router(members.router)
 app.include_router(loans.router)
 app.include_router(librarian.router)
 app.include_router(admin_agent.router)
+app.include_router(curations.router)
+app.include_router(curations.published_router)
 # 화면은 정적 파일로 내준다. README·CLAUDE.md가 밖에 있도록 public/만 마운트한다.
 app.mount(
     "/ui", StaticFiles(directory=Path(__file__).parent / "web" / "public", html=True), name="ui"

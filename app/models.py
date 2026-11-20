@@ -4,7 +4,7 @@ from app.agent import models as agent
 from app.central import models as central
 from app.core.model_base import Base
 from app.features.children import models as children
-from app.library.models import catalog, chat, circulation, embedding, guide, library
+from app.library.models import catalog, chat, circulation, curation, embedding, guide, library
 
 # 기관 데이터 테이블 구분 (platform/database-schema 스펙).
 # 공통 테이블은 기관 구분 없이 함께 쓰고, 기관 데이터 테이블은 모두 NOT NULL library_id를 가진다.
@@ -28,6 +28,8 @@ TENANT_TABLES: set[str] = {
     "library_closures",
     "library_guide_entries",
     "book_embeddings",
+    "curations",
+    "curation_items",
 }
 
 __all__ = [
@@ -40,6 +42,7 @@ __all__ = [
     "chat",
     "children",
     "circulation",
+    "curation",
     "embedding",
     "guide",
     "library",

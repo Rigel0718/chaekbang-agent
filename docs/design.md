@@ -116,14 +116,14 @@ MVP는 작은도서관 하나에 집중하고, 독립서점은 같은 핵심 위
 | search_collection | 소장 도서 검색 (제목·저자·주제·어린이 도서 여부), 대출 가능 여부, 서가 위치 | 조회 |
 | get_book_detail | 소개, 저자 정보, 같은 저자의 소장 도서 | 조회 |
 | get_library_guide | 운영 시간, 휴관, 대표 연락처, 시설 위치, 이용 규칙, 그날 빌리면 반납 예정일 (`add-library-guide`) | 조회 |
-| get_curations | 관리자가 승인한 이달의 추천과 주제별 큐레이션 | 조회 |
+| get_curations | 관리자가 승인해 게시된 큐레이션 최신 5개(읽을 때 추천 가능한 책만, `add-approval-flow`) | 조회 |
 | get_popular_loans | 이 도서관의 인기 대출 도서 | 조회 |
 | search_external_books | 소장하지 않은 책 검색 (희망도서 안내용) | 조회 |
 | create_loan | 회원번호 확인 후 대출 처리 (자체 대출 기관만) | 쓰기 |
 | return_loan | 등록번호로 반납 처리 (자체 대출 기관만) | 쓰기 |
 | request_book | 희망도서 신청 남기기 | 쓰기 |
 
-v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린이 기능의 `search_children_books`, 최종 답 `submit_answer`만 넣는다. `get_curations`는 승인 흐름 뒤에, `get_popular_loans`는 외부 대출 기관에 대출 기록이 없어 나중에, 쓰기 tool과 `search_external_books`는 `add-librarian-actions`에서 다룬다. 회원번호가 LLM과 대화 기록을 거치지 않게 입력 방식을 따로 설계해야 하기 때문이다.
+v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린이 기능의 `search_children_books`, 최종 답 `submit_answer`만 넣는다. `get_curations`는 `add-approval-flow`에서 넣고, `get_popular_loans`는 외부 대출 기관에 대출 기록이 없어 나중에, 쓰기 tool과 `search_external_books`는 `add-librarian-actions`에서 다룬다. 회원번호가 LLM과 대화 기록을 거치지 않게 입력 방식을 따로 설계해야 하기 때문이다.
 
 **원칙**
 
@@ -190,11 +190,12 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | list_overdue_loans | 연체 목록 (자체 대출 기관). 회원은 LLM에 보내지 않는다 | ✗ |
 | import_holdings | 기존 시스템의 엑셀·CSV로 장서 가져오기, 애매한 건 확인 요청. 공식 서지는 운영자가 따로 채운다 | 애매한 건만 |
 | register_books | ISBN 목록이나 바코드로 장서 등록 (자체 대출 기관, 가져오기로 빠진 책) | 애매한 건만 |
-| draft_curation | 이달의 추천·주제 큐레이션 초안 → 승인하면 이용자 화면에 게시 | ✓ |
+| search_collection | 소장 도서 검색(AI 사서와 같은 tool), 큐레이션 후보 찾기 | ✗ |
+| draft_curation | 주제 큐레이션 초안을 승인 대기로 올림 → 승인하면 게시(`add-approval-flow`) | ✓ |
 | draft_overdue_notice | 연체 안내문 초안 | ✓ |
 | draft_purchase_request | 부족 분야·희망도서·인기 대출을 근거로 보충 구매 요청서 초안 | ✓ |
 
-**승인 흐름**: 초안(draft) → 승인 대기(pending_approval) → 승인(approved) → 게시·확정(published / confirmed). 승인 대기 상태는 DB에 저장하고, 승인되면 에이전트 실행을 이어서 진행한다. 서버가 재시작돼도 실행이 유지된다.
+**승인 흐름**: 초안(draft) → 승인 대기(pending_approval) → 승인(approved) → 게시·확정(published / confirmed), 게시본을 내리면 archived. 상태는 초안 테이블마다의 `status` 칸에 저장하고 전이 규칙은 공통 코드 한 곳(`app/library/approval.py`)에 둔다. 에이전트 실행은 초안을 승인 대기로 올리면 끝나고, 승인과 그 뒤 실행(게시·확정)은 관리자의 요청에서 결정적인 코드가 한다. 상태가 DB에만 있어 서버가 재시작돼도 승인이 이어진다(`add-approval-flow`).
 
 **정해진 분석 tool** (`add-admin-agent`): LLM은 분석 종류·기간(프리셋이나 월 숫자)·축(enum)만 고르고, 숫자는 service가 결정적으로 계산한다. 분야는 공식 서지 KDC → 기관 도서 KDC → 청구기호 순서로 코드가 정한다. 어린이·일반 축은 어린이 기능이 등록한다. 결과에 회원·기증자가 없고, 정해진 분석으로 답할 수 없는 질문은 종류(`unsupported`)만 실행 기록에 남긴다. 외부 대출 기관에는 대출 행이 없어 대출 tool을 뺀다.
 
@@ -224,10 +225,10 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | holdings | 소장 사본: 기관 도서, 등록번호, 청구기호, 서가 위치, 상태 (대출 가능 / 대출 중 / 분실 / 훼손 / 제적), 입수 구분(매입 / 기증 / 모름)과 구입가·기증처, 출처(가져오기 / 직접 등록), 마지막 갱신 시각 | MVP |
 | holding_imports | 장서 가져오기 기록: 파일, 열 매핑, 결과 건수, 확인 요청 행 | MVP |
 | loans | 대출: 사본, 회원, 대출일, 반납 예정일, 반납일 (자체 대출 기관) | MVP |
-| curations, curation_items | 큐레이션과 포함 도서, 상태 draft → approved → published | MVP |
+| curations, curation_items | 큐레이션과 포함 도서(이유 한 줄), 승인 상태 칸 | MVP |
 | book_requests | 희망도서 신청 | MVP |
 | purchase_requests, purchase_request_items | 보충 구매 요청서와 항목, 상태 | MVP |
 | book_embeddings | 기관 도서 벡터 (pgvector, 1024차원). 공식 서지에 연결되지 않은 책(ISBN 없음, 못 찾음)만 둔다. 연결된 책은 공식 서지 벡터를 쓴다. 기관 도서·모델 이름·텍스트 버전·종류마다 벡터 하나와 임베딩 텍스트의 해시를 두고, 텍스트 원문은 저장하지 않는다(두 층 모두). 추천 가능한 책만 운영자가 `scripts/embed_books.py`로 적재한다. 조회는 두 층을 한 순위로 합친다 | MVP |
 | chat_sessions, chat_messages | 진행 중인 이용자 대화. 메시지에는 가린 문장, 최종 답, 코드가 쓰는 책 표시와 책 id(관련 책 tool의 최근 기록). 세션이 끝나면 메시지를 지운다 | MVP |
-| agent_runs, agent_steps, approvals | 에이전트 실행, tool 호출 기록, 승인 요청 | MVP |
+| agent_runs, agent_steps | 에이전트 실행, tool 호출 기록. 승인 상태는 초안 테이블마다 둔다(공통 승인 표 없음) | MVP |
 | recommendation_events | 추천 노출과 대출 전환 추적 | MVP |

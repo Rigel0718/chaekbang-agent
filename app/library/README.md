@@ -13,6 +13,7 @@
 - 도서관 안내: 대표 연락처, 운영 시간, 휴관일, 이용 규칙, 자유 항목, 개관 여부와 반납 예정일 계산
 - AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
 - 운영 에이전트: 장서·대출 분석(정해진 분석 tool), 프로필, 관리자 대화
+- 승인 흐름: 확정 작업의 공통 상태·전이, 큐레이션(초안 → 승인 → 게시)
 
 ## 구성
 
@@ -20,7 +21,7 @@
 | --- | --- |
 | `api/` | 라우터. 로직을 넣지 않는다 |
 | `services/` | 비즈니스 로직. REST API와 이후 에이전트 tool이 함께 쓴다 |
-| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `guide`(안내) |
+| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `guide`(안내), `curation`(큐레이션) |
 | `schemas/` | Pydantic 스키마 |
 | `importing/` | 파일 읽기, 머리글 인식, 정규화. DB와 HTTP를 모른다 |
 | `deps.py` | 현재 직원·기관, 역할 |
@@ -50,6 +51,8 @@
 | `analytics_tools.py` | 운영 에이전트의 분석 tool 넷. 등록된 축으로 입력 모델을 조립 때 만든다 |
 | `admin_agent.py` | 운영 에이전트: 답 구조(`message`, `unsupported`), 프롬프트, 운영 방식별 프로필(`build_admin_profiles`), `AdminExtension` |
 | `services/admin_chat.py`, `api/admin_agent.py` | 관리자 대화 `POST /admin-agent/messages`, `DELETE /admin-agent/sessions/{id}`(키오스크 403) |
+| `approval.py` | 공통 승인 틀: 상태 `ApprovalStatus`, 종류별 전이 표 `TransitionTable`(`PUBLISHING`·`CONFIRMING`), 조건부 갱신 `transition`, 실행 상태 `mark_executed`, 승인 칸 `ApprovalMixin` |
+| `services/curations.py`, `api/curations.py` | 큐레이션: 관리 `/curations`(관리자), 게시본 읽기 `GET /librarian/curations`(키오스크·관리자). REST와 두 에이전트 tool이 같은 service를 쓴다 |
 
 ## 규칙
 
@@ -176,3 +179,22 @@
 - **운영 방식**: 외부 대출 기관 프로필에는 대출 통계·안 빌린 책 tool이 없다(대출 행이 없다). 사본의 대출 중 상태는 장서 현황의 상태 묶기로 답한다.
 - 최종 검사는 없다. 답의 숫자가 tool 결과에 있는지는 평가(`evals/admin_agent`)로 잰다.
 - 세션은 AI 사서와 같은 테이블이고 종류(`kind`)로 나눈다. 다른 종류의 세션 id는 404다. 만료는 30분, 일일 상한은 200으로 AI 사서와 따로다.
+
+## 승인 흐름
+
+- **상태**는 초안 테이블마다의 `status` 칸이다(`approval_status`, VARCHAR + CHECK). 공통 승인 표는 없다. 값은 `draft`, `pending_approval`, `approved`, `published`, `confirmed`, `archived`다.
+- **전이**는 `approval.py`의 `transition` 하나로 한다. `UPDATE … WHERE id, library_id, status = 이전 상태`라서 겹친 요청은 하나만 반영되고, 바뀐 행이 없으면 없음(404)과 상태 충돌(409)을 나눠 올린다. 커밋은 service가 한다.
+  - 제출 `draft → pending_approval`, 승인 `pending_approval → approved`, 반려 `pending_approval → draft`(사유), 내리기 `published → archived`(게시하는 종류만).
+  - 내용 수정·삭제는 `draft`에서만이다(`require_status`).
+- **승인과 실행은 한 트랜잭션**이다. 승인한 요청이 그 자리에서 실행(게시·확정)하고 `mark_executed`로 실행 상태와 시각(`executed_at`)을 둔다. 에이전트 실행을 다시 이어 가지 않는다. 상태가 DB에만 있으므로 서버가 다시 시작돼도 승인이 이어진다.
+- 승인·반려·내리기는 관리자만 한다. 승인자(`approved_by`)와 시각을 남기고, 만든 사람이 승인해도 된다.
+- **새 종류 더하기**(연체 안내, 구매 요청서): 테이블에 `ApprovalMixin`을 섞고 `library_id`로 나눈다. 확정하는 종류는 `CONFIRMING` 표를 쓴다. service에서 `transition`과 `mark_executed`를 부르고, 승인 뒤 할 일(확정)을 같은 트랜잭션 안에서 결정적인 코드로 한다. `app/models.py`의 `TENANT_TABLES`에 테이블을 넣는다.
+
+## 큐레이션
+
+- 제목 40자, 소개 200자(없어도 됨), 책 3~10권(책마다 이유 60자). 같은 책은 처음 것만 남기고 남은 권수로 센다(`CurationWrite`).
+- 책은 **쓸 때** 그 기관의 추천 가능한 책이어야 한다(`get_candidates`). 없거나 다른 기관이면 404, 대출 가능·대출 중 사본이 없으면 409이고 걸린 id를 메시지에 담는다. 승인 때는 다시 보지 않는다.
+- **읽을 때** 지금 추천할 수 있는 책만 남긴다(`published_curations`, `recommendable_only`). 저장된 책은 바꾸지 않고, 남는 책이 없는 게시본은 뺀다. 최신 5개는 거른 뒤에 센다.
+- 승인하면 바로 게시한다(`approved` → `published`). 내리면 `archived`라 이용자 쪽에서 바로 빠진다.
+- 책 카드는 추천 카드와 같은 값(`summary_values`)에 저장한 이유를 더한다. 회원·기증자 값은 없다.
+- 운영 에이전트의 `draft_curation`은 만들기와 제출을 한 트랜잭션으로 하고(`submit=True`), AI 사서의 `get_curations`는 게시본 읽기와 같은 함수를 쓴다.

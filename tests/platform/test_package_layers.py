@@ -172,6 +172,7 @@ def test_librarian_profile_without_features() -> None:
             "find_related_books",
             "get_book_detail",
             "get_library_guide",
+            "get_curations",
         ]
         assert [c.name for c in prof.final_checks] == ["holdings"]
         assert "어린이" not in prof.system_prompt

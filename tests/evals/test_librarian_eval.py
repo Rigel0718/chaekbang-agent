@@ -89,6 +89,10 @@ def test_says_no_description() -> None:
         _turn("이 책은 소개와 목차 정보가 등록되어 있지 않아 구체적인 내용을 확인하기 어렵습니다.")
     )
     assert says_no_description(_turn("줄거리는 알 수 없어요."))
+    # 2026-11-21 평가에서 놓친 답 (add-approval-flow 6.4)
+    assert says_no_description(
+        _turn("이 책은 소개 정보와 목차가 제공되지 않아 내용을 확인해 드리기 어렵습니다.")
+    )
     assert not says_no_description(_turn("내용이 어렵지 않아 아이와 읽기 좋아요."))
 
 
@@ -266,3 +270,78 @@ def test_invented_basis() -> None:
     assert invented_basis(bad, catalog) == ["#2 베스트셀러"]
     no_tool = _related_turn([], [], ids=[2], reason="베스트셀러예요")
     assert invented_basis(no_tool, catalog) == []
+
+
+# --- 큐레이션 시나리오 (add-approval-flow) ---
+
+
+def _curation_result(expect: Expect, turn: TurnResult, books=(1, 2), title="가을 추천"):
+    from evals.librarian.checks import ScenarioResult
+
+    scenario = Scenario("c", ("이달의 추천 뭐 있어?",), expect, children=False, traces=())
+    result = ScenarioResult(scenario, [turn])
+    result.curation_title, result.curation_books = title, tuple(books)
+    return result
+
+
+def test_curation_expectation() -> None:
+    """[agent/librarian] 큐레이션 질문에 답함: 판정은 tool 호출, 카드가 게시본의 책, 제목 말하기"""
+    from evals.librarian.checks import expectation_met
+
+    good = _turn("가을 추천에서 골랐어요", ids=(1,))
+    good.tools = ("get_curations", "submit_answer")
+    assert expectation_met(_curation_result(Expect.CURATION, good), _catalog())
+    outside = _turn("가을 추천에서 골랐어요", ids=(3,))
+    outside.tools = ("get_curations",)
+    assert not expectation_met(_curation_result(Expect.CURATION, outside), _catalog())
+    no_title = _turn("이 책 어때요", ids=(1,))
+    no_title.tools = ("get_curations",)
+    assert not expectation_met(_curation_result(Expect.CURATION, no_title), _catalog())
+    no_tool = _turn("가을 추천에서 골랐어요", ids=(1,))
+    no_tool.tools = ("search_collection",)
+    assert not expectation_met(_curation_result(Expect.CURATION, no_tool), _catalog())
+
+
+def test_curation_none_expectation() -> None:
+    """[agent/librarian] 큐레이션 질문에 답함: 게시본이 없으면 없다고 말하고 제목을 지어내지 않음"""
+    from evals.librarian.checks import expectation_met
+    from evals.librarian.scenarios import CURATION_TITLE
+
+    none = _turn("지금 게시된 추천 목록이 없어요")
+    none.tools = ("get_curations",)
+    assert expectation_met(_curation_result(Expect.CURATION_NONE, none, (), None), _catalog())
+    invented = _turn(f"{CURATION_TITLE}은 없어요")
+    invented.tools = ("get_curations",)
+    assert not expectation_met(
+        _curation_result(Expect.CURATION_NONE, invented, (), None), _catalog()
+    )
+
+
+def test_curation_scenarios_selectable() -> None:
+    """[agent/librarian] 큐레이션 질문에 답함: 두 시나리오가 있고 게시본 준비를 정한다"""
+    from evals.librarian.scenarios import CurationSetup
+
+    by_id = {s.id: s for s in SCENARIOS}
+    assert by_id["curation-published"].curation is CurationSetup.PUBLISHED
+    assert by_id["curation-none"].curation is CurationSetup.NONE
+
+
+async def test_curation_setup(session, library_a) -> None:
+    """[agent/librarian] 큐레이션 질문에 답함: 평가 준비가 게시본을 넣고 다음 전에 내린다"""
+    from app.library.services.curations import published_curations
+    from evals.librarian.curation import setup_curation
+    from evals.librarian.scenarios import CurationSetup
+    from tests.helpers import add_held_book
+
+    catalog = SampleCatalog(library_id=library_a.id, loan_mode="internal")
+    for n in range(4):
+        book = await add_held_book(session, library_a.id, title=f"평가 책 {n}")
+        catalog.states[book["id"]] = BookState.AVAILABLE
+    basis = await setup_curation(session, catalog, CurationSetup.PUBLISHED)
+    [published] = await published_curations(session, library_a.id)
+    assert tuple(b.library_book_id for b in published.books) == basis.book_ids
+    assert len(basis.book_ids) == 3
+    empty = await setup_curation(session, catalog, CurationSetup.NONE)
+    assert empty.title is None
+    assert await published_curations(session, library_a.id) == []
+    assert await setup_curation(session, catalog, None) is None

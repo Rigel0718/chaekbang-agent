@@ -241,14 +241,27 @@ def test_profile_tools_by_loan_mode() -> None:
     """[agent/admin] 운영 방식별 tool / 자체 대출 기관"""
     profiles = build_admin_profiles([admin_extension()])
     internal = {t.name for t in profiles[LoanMode.INTERNAL].tools}
-    assert internal == ANALYSIS_TOOLS
+    assert internal == ANALYSIS_TOOLS | {"search_collection", "draft_curation"}
     assert profiles[LoanMode.INTERNAL].answer_tool is ANSWER_TOOL
 
 
 def test_profile_external_has_no_loan_tools() -> None:
     """[agent/admin] 운영 방식별 tool / 외부 대출 기관"""
     external = {t.name for t in build_admin_profiles([admin_extension()])[LoanMode.EXTERNAL].tools}
-    assert external == {GET_COLLECTION_STATUS, LIST_HOLDINGS_BY_STATUS}
+    assert external == {
+        GET_COLLECTION_STATUS,
+        LIST_HOLDINGS_BY_STATUS,
+        "search_collection",
+        "draft_curation",
+    }
+
+
+def test_profile_has_no_approval_tools() -> None:
+    """[agent/admin] 운영 방식별 tool / 승인 tool 없음"""
+    for profile in build_admin_profiles([admin_extension()]).values():
+        names = {t.name for t in profile.tools}
+        assert not {n for n in names if any(w in n for w in ("approve", "reject", "publish"))}
+        assert names - ANALYSIS_TOOLS - {"search_collection"} == {"draft_curation"}
 
 
 def test_answer_length_limit() -> None:

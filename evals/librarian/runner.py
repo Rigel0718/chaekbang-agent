@@ -24,6 +24,7 @@ from app.library.services import chat
 from app.library.services.related import related_for_session, similar_for_book
 from evals.librarian.catalog import BookState, SampleCatalog
 from evals.librarian.checks import RELATED_TOOLS, ScenarioResult, TurnResult, score
+from evals.librarian.curation import setup_curation
 from evals.librarian.guide import guide_basis, setup_guide
 from evals.librarian.scenarios import Picked, Scenario
 
@@ -115,6 +116,7 @@ async def run_scenario(
     """picks는 첫 턴 전에 차례로 고를 책이다(대화 추천 평가의 기준 책·최근 기록)."""
     await setup_guide(session, catalog.library_id, scenario.guide)
     basis = await guide_basis(session, catalog.library_id, scenario.guide)
+    curation = await setup_curation(session, catalog, scenario.curation)
     session_id = None
     texts: list[str] = []
     turns: list[TurnResult] = []
@@ -165,7 +167,10 @@ async def run_scenario(
         )
     if session_id is not None:
         await chat.end_session(session, catalog.library_id, session_id)
-    return score(ScenarioResult(scenario, turns, guide_basis=basis), catalog)
+    result = ScenarioResult(scenario, turns, guide_basis=basis)
+    if curation is not None:
+        result.curation_title, result.curation_books = curation.title, curation.book_ids
+    return score(result, catalog)
 
 
 async def run_scenarios(
