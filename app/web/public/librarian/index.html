@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI 사서</title>
+  <link rel="stylesheet" href="../shared/base.css">
+  <link rel="stylesheet" href="./librarian.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div id="due" class="due" hidden></div>
+      <div class="top-actions">
+        <button type="button" id="basket-toggle" class="btn basket-toggle" aria-controls="basket">
+          담은 책 <span id="basket-count">0</span>
+        </button>
+        <button type="button" id="new-chat" class="btn">새 대화</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="chat-col">
+        <div id="notice" class="notice" role="status" hidden></div>
+        <div id="empty" class="empty">
+          <h1>찾는 책 제목이나 궁금한 것을 물어보세요</h1>
+          <p>책 이름을 입력하면 후보가 나오고, 문장으로 물어보면 사서가 도서관 책에서 골라 드려요.</p>
+        </div>
+        <div id="thread" class="thread" aria-live="polite"></div>
+        <form id="composer" class="composer" autocomplete="off">
+          <ul id="suggest" class="suggest" role="listbox" hidden></ul>
+          <div class="field">
+            <input id="input" type="text" maxlength="500" placeholder="책 제목, 저자, 또는 궁금한 것" aria-label="질문 입력" autocomplete="off">
+            <button type="submit" id="send" class="send">보내기</button>
+          </div>
+          <p class="privacy">이름, 전화번호 같은 개인정보는 적지 마세요.</p>
+        </form>
+      </section>
+
+      <aside id="basket" class="basket" aria-label="담은 책">
+        <h2>담은 책</h2>
+        <p id="basket-empty" class="basket-empty">마음에 드는 책을 담아 두면 서가를 찾아갈 때 편해요.</p>
+        <ul id="basket-list"></ul>
+      </aside>
+    </main>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
