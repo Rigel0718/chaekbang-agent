@@ -57,6 +57,7 @@ async def test_profile_tools(session: AsyncSession) -> None:
             "find_related_books",
             "get_book_detail",
             "get_library_guide",
+            "get_curations",
         ]
         assert prof.answer_tool.name == "submit_answer"
 
@@ -431,6 +432,7 @@ async def test_no_writes(session: AsyncSession, library_a: Tenant) -> None:
         "find_related_books",
         "get_book_detail",
         "get_library_guide",
+        "get_curations",
     }  # 모두 조회
     count = await session.scalar(select(func.count()).select_from(text("loans")))
     assert count == 0

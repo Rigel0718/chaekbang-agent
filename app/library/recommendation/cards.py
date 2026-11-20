@@ -55,7 +55,7 @@ async def shelf_of(session: AsyncSession, library_id: int, ids: Sequence[int]) -
     return shelf
 
 
-def _summary(candidate: Candidate, shelf: Shelf) -> dict[str, Any]:
+def summary_values(candidate: Candidate, shelf: Shelf) -> dict[str, Any]:
     book = candidate.library_book
     official = book.book
     return {
@@ -80,7 +80,8 @@ async def build_summaries(
     """찾기 결과의 요약. 카드와 같은 서지·대출 상태이고 추천 이유는 없다."""
     shelf = await shelf_of(session, library_id, [c.library_book.id for c in candidates])
     return [
-        BookSummary(**_summary(c, shelf.get(c.library_book.id, (None, None)))) for c in candidates
+        BookSummary(**summary_values(c, shelf.get(c.library_book.id, (None, None))))
+        for c in candidates
     ]
 
 
@@ -92,7 +93,7 @@ async def build_cards(session: AsyncSession, library_id: int, answer: Any) -> li
     shelf = await shelf_of(session, library_id, ids)
     return [
         BookCard(
-            **_summary(
+            **summary_values(
                 candidates[item.library_book_id], shelf.get(item.library_book_id, (None, None))
             ),
             reason=item.reason,

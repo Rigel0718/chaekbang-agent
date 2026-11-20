@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.library.admin_agent import PROFILE_NAME
-from app.library.api.librarian import Llm, encode_events
+from app.library.api.librarian import Llm, QueryEncoder, encode_events
 from app.library.deps import AdminStaff, Session
 from app.library.models.chat import SessionKind
 from app.library.schemas.admin_agent import AdminMessageRequest
@@ -30,6 +30,7 @@ async def post_message(
     session: Session,
     request: Request,
     llm: Llm,
+    encoder: QueryEncoder,
 ) -> StreamingResponse:
     """SSE로 `session`, `status`, `answer`(`message`, `unsupported`), `done` 사건을 보낸다.
 
@@ -40,7 +41,7 @@ async def post_message(
     )
     profile = request.app.state.admin_profiles[prepared.loan_mode]
     return StreamingResponse(
-        encode_events(admin_chat.stream_admin_turn(session, llm, profile, prepared)),
+        encode_events(admin_chat.stream_admin_turn(session, llm, profile, prepared, encoder)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store"},
     )

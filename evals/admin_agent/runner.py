@@ -1,9 +1,13 @@
 """시나리오를 운영 에이전트 대화 service로 돌린다. 서비스와 같은 경로(`prepare_admin_turn` →
 `stream_admin_turn`)를 거쳐 가리기, 프로필, 기록이 실제와 같게 돈다. 시나리오마다 새 세션이다.
 
-tool 결과는 실행 기록에 없다. 그래서 단계 기록의 입력(분석 tool은 입력을 모두 남긴다)으로 같은
-tool을 다시 불러 결과를 구한다. 같은 데이터에서 같은 결과다.
+tool 결과는 실행 기록에 없다. 그래서 프로필의 tool을 결과를 받아 두는 tool로 감싸 돌리고, 단계
+기록(입력은 tool이 고른 값만)과 순서대로 짝짓는다. 소장 도서 검색처럼 입력을 남기지 않는 tool도
+결과가 남는다. 감싼 tool은 이름, 입력, 실행 함수의 결과가 서비스와 같다.
 """
+
+from dataclasses import replace
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.llm import LlmClient
 from app.agent.models import AgentRun, AgentStep, StepKind
 from app.agent.profile import Profile
-from app.agent.tools import ToolContext
+from app.agent.tools import Tool, ToolContext, ToolInput
 from app.library.admin_agent import PROFILE_NAME
 from app.library.models.library import LoanMode
 from app.library.services import admin_chat
@@ -20,8 +24,22 @@ from evals.admin_agent.scenarios import Scenario
 from evals.admin_agent.score import ToolCallRecord, TurnRecord
 
 
+def capturing(profile: Profile, sink: list[Any]) -> Profile:
+    """tool마다 성공한 결과를 sink에 순서대로 받아 두는 프로필."""
+
+    def wrap(tool: Tool) -> Tool:
+        async def handler(ctx: ToolContext, data: ToolInput) -> Any:
+            result = await tool.handler(ctx, data)
+            sink.append(result)
+            return result
+
+        return replace(tool, handler=handler)
+
+    return replace(profile, tools=tuple(wrap(t) for t in profile.tools))
+
+
 async def _calls(
-    session: AsyncSession, library_id: int, run_id: int, profile: Profile
+    session: AsyncSession, library_id: int, run_id: int, results: list[Any]
 ) -> tuple[list[ToolCallRecord], int, int]:
     steps = list(
         await session.scalars(
@@ -34,16 +52,16 @@ async def _calls(
             .order_by(AgentStep.seq)
         )
     )
-    tools = {t.name: t for t in profile.tools}
-    calls = []
-    for step in steps:
-        args = step.detail or {}
-        result = None
-        tool = tools.get(step.name or "")
-        if tool is not None and not step.is_error:
-            data = tool.input_model.model_validate(args)
-            result = await tool.handler(ToolContext(library_id, session), data)
-        calls.append(ToolCallRecord(step.name or "", args, step.is_error, result))
+    pending = iter(results)
+    calls = [
+        ToolCallRecord(
+            step.name or "",
+            step.detail or {},
+            step.is_error,
+            None if step.is_error else next(pending, None),
+        )
+        for step in steps
+    ]
     tokens = (
         await session.execute(
             select(AgentRun.input_tokens, AgentRun.output_tokens)
@@ -54,6 +72,13 @@ async def _calls(
     return calls, tokens[0], tokens[1]
 
 
+def library_of(libraries: EvalLibraries, scenario: Scenario) -> int:
+    internal = scenario.loan_mode == LoanMode.INTERNAL
+    if scenario.curation:
+        return libraries.curation_internal_id if internal else libraries.curation_external_id
+    return libraries.internal_id if internal else libraries.external_id
+
+
 async def run_scenario(
     session: AsyncSession,
     llm: LlmClient,
@@ -61,9 +86,9 @@ async def run_scenario(
     libraries: EvalLibraries,
     scenario: Scenario,
 ) -> TurnRecord:
-    internal = scenario.loan_mode == LoanMode.INTERNAL
-    library_id = libraries.internal_id if internal else libraries.external_id
-    profile = profiles[scenario.loan_mode]
+    library_id = library_of(libraries, scenario)
+    results: list[Any] = []
+    profile = capturing(profiles[scenario.loan_mode], results)
     prepared = await admin_chat.prepare_admin_turn(
         session, library_id, None, scenario.question, profile_name=PROFILE_NAME
     )
@@ -71,7 +96,7 @@ async def run_scenario(
         e.name: e.data async for e in admin_chat.stream_admin_turn(session, llm, profile, prepared)
     }
     answer, done = events["answer"], events["done"]
-    calls, input_tokens, output_tokens = await _calls(session, library_id, done["run_id"], profile)
+    calls, input_tokens, output_tokens = await _calls(session, library_id, done["run_id"], results)
     return TurnRecord(
         question=scenario.question,
         message=answer["message"],

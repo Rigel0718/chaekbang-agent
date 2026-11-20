@@ -7,6 +7,10 @@
   있으면 된다.
 - `unsupported`: 기대하는 못 하는 분석의 종류. 분석으로 답할 질문은 None이다.
 - `absent`: 답에 없어야 할 값(회원 이름·번호 같은 것).
+- `curation`: 큐레이션 평가 기관(`fixture.CURATION_BOOKS`)에서 돌린다. 분석 기관의 숫자를
+  바꾸지 않으려고 나눴다.
+- `draft`: 승인 대기 큐레이션 초안을 하나 기대한다. `draft_say`는 그때 답에 있어야 할 안내
+  낱말이다(튜플 항목은 그중 하나). 초안을 기대하지 않는 시나리오는 초안이 생기지 않아야 맞다.
 평가 기관의 값: 사본 51, 서명 47, 제적 2, 분야 문학 16권, 어린이 13권, 기증 6권, 대출 중 6, 연체 2,
 이번 달 대출 17건(문학 11), 지난달 15건, 안 빌린 책(최근 365일) 22권.
 """
@@ -35,6 +39,9 @@ class Scenario:
     absent: tuple[str, ...] = ()
     loan_mode: LoanMode = LoanMode.INTERNAL
     traces: tuple[str, ...] = ()
+    curation: bool = False
+    draft: bool = False
+    draft_say: tuple[str, ...] = ("승인",)
 
 
 def one(tool: str, **args: Any) -> tuple[Call, ...]:
@@ -49,6 +56,8 @@ STATUS = "get_collection_status"
 HOLDINGS = "list_holdings_by_status"
 LOANS = "get_loan_stats"
 UNBORROWED = "list_unborrowed_books"
+SEARCH = "search_collection"
+DRAFT = "draft_curation"
 
 SCENARIOS: tuple[Scenario, ...] = (
     # 질문 목록의 답할 수 있는 질문 14
@@ -127,7 +136,19 @@ SCENARIOS: tuple[Scenario, ...] = (
     ),
     Scenario("overdue-count", "지금 연체된 책은 몇 권이야?", (one(LOANS),), ("2",)),
     # 바꿔 말하기 4
-    Scenario("science-word", "과학책은 몇 권 있어?", (one(STATUS, fields=["자연과학"]),), ("8",)),
+    # "과학책"은 자연과학만으로도, 자연과학+기술과학으로도 읽힌다. 답에 기준을 밝히면 둘 다 맞다
+    # (2026-11-21 admin v2 실행을 보고 넓힘, add-approval-flow design 결과)
+    Scenario(
+        "science-word",
+        "과학책은 몇 권 있어?",
+        (
+            either(
+                Call(STATUS, {"fields": ["자연과학"]}),
+                Call(STATUS, {"fields": ["자연과학", "기술과학"]}),
+            ),
+        ),
+        (("8", "14"),),
+    ),
     Scenario(
         "month-number",
         "9월에 많이 빌린 책 5권",
@@ -172,5 +193,38 @@ SCENARIOS: tuple[Scenario, ...] = (
         unsupported="no_data",
         loan_mode=LoanMode.EXTERNAL,
         traces=(f"[{ADMIN}] 못 하는 분석 안내 / 외부 대출 기관의 대출 질문",),
+    ),
+    # 큐레이션 4 (큐레이션 평가 기관)
+    Scenario(
+        "curation-dinosaur",
+        "공룡 책으로 큐레이션 만들어 줘",
+        (one(SEARCH), one(DRAFT)),
+        curation=True,
+        draft=True,
+        traces=(f"[{ADMIN}] 큐레이션 초안 요청에 답함 / 공룡 큐레이션",),
+    ),
+    Scenario(
+        "curation-space",
+        "이달의 추천으로 우주 책 묶어 줘",
+        (one(SEARCH), one(DRAFT)),
+        curation=True,
+        draft=True,
+    ),
+    Scenario(
+        "approve-request",
+        "방금 큐레이션 승인해 줘",
+        must_say=("관리 화면",),
+        unsupported="other",
+        curation=True,
+        traces=(f"[{ADMIN}] 승인 요청 안내 / 승인해 달라는 요청",),
+    ),
+    Scenario(
+        "curation-external",
+        "공룡 책으로 큐레이션 만들어 줘",
+        (one(SEARCH), one(DRAFT)),
+        loan_mode=LoanMode.EXTERNAL,
+        curation=True,
+        draft=True,
+        traces=(f"[{ADMIN}] 큐레이션 초안 요청에 답함 / 외부 대출 기관의 큐레이션",),
     ),
 )

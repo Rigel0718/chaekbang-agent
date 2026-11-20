@@ -47,6 +47,8 @@ ALL_TABLES = {
     "chat_sessions",
     "chat_messages",
     "recommendation_events",
+    "curations",
+    "curation_items",
     "library_guides",
     "library_opening_hours",
     "library_closures",
@@ -67,7 +69,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 22
+    assert len(ALL_TABLES) == 24
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -83,7 +85,7 @@ async def test_korean_collation_present(engine: AsyncEngine) -> None:
     """
     async with engine.connect() as conn:
         await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
-    assert len(await _table_names(engine)) == 22
+    assert len(await _table_names(engine)) == 24
 
 
 async def test_korean_collation_missing(engine: AsyncEngine) -> None:
@@ -247,6 +249,24 @@ async def test_audience_rejects_library_book_of_other_library(
         audience="children",
         audience_source="manual",
         match="fk_library_book_audiences_library_id_library_book_id",
+    )
+
+
+async def test_curation_item_rejects_library_book_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 큐레이션 포함 도서의 기관"""
+    curation = await insert(session, "curations", library_id=library_a.id, title="A 큐레이션")
+    theirs = await add_library_book(session, library_b.id)
+    await assert_rejected(
+        session,
+        "curation_items",
+        library_id=library_a.id,
+        curation_id=curation["id"],
+        position=1,
+        library_book_id=theirs["id"],
+        reason="이유",
+        match="fk_curation_items_library_id_library_book_id",
     )
 
 

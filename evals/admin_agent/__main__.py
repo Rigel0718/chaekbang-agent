@@ -34,11 +34,12 @@ from evals.admin_agent.score import Score, TurnRecord, score
 
 DATA_DIR = Path(__file__).parent / "data"
 RUNS_DIR = DATA_DIR / "runs"
-METRICS = ("tool_ok", "numbers_ok", "unsupported_ok")
+METRICS = ("tool_ok", "numbers_ok", "unsupported_ok", "draft_ok")
 METRIC_NAMES = {
     "tool_ok": "tool 선택",
     "numbers_ok": "숫자 충실도",
     "unsupported_ok": "못 하는 분석 분류",
+    "draft_ok": "초안 충실도",
 }
 
 
@@ -71,6 +72,7 @@ def _record(index: int, scenario: Scenario, turn: TurnRecord, result: Score) -> 
             "calls": [[asdict(c) for c in options] for options in scenario.calls],
             "must_say": list(scenario.must_say),
             "unsupported": scenario.unsupported,
+            "draft": scenario.draft,
         },
         "score": asdict(result),
         "turn": asdict(turn),
@@ -91,9 +93,11 @@ def _line(scenario: Scenario, turn: TurnRecord, result: Score) -> str:
         notes.append(f"결과에 없는 숫자 {result.invented}")
     if result.present_absent:
         notes.append(f"없어야 할 값 {result.present_absent}")
+    if result.draft_notes:
+        notes.append(f"초안 {result.draft_notes}")
     return (
         f"| {scenario.id} | {turn.status} | {_mark(result.tool_ok)} | {_mark(result.numbers_ok)} "
-        f"| {_mark(result.unsupported_ok)} | {'; '.join(notes)} |"
+        f"| {_mark(result.unsupported_ok)} | {_mark(result.draft_ok)} | {'; '.join(notes)} |"
     )
 
 
@@ -107,8 +111,8 @@ def summary_lines(model: str, rows: Sequence[tuple[Scenario, TurnRecord, Score]]
         *(f"- {METRIC_NAMES[m]}: {counts[m]}/{total}" for m in METRICS),
         f"- 모두 맞음: {sum(1 for _, _, s in rows if s.passed)}/{total}",
         "",
-        "| 시나리오 | 상태 | tool 선택 | 숫자 충실도 | 못 하는 분석 | 메모 |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| 시나리오 | 상태 | tool 선택 | 숫자 충실도 | 못 하는 분석 | 초안 | 메모 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
         *(_line(sc, turn, result) for sc, turn, result in rows),
         "",
         f"입력 토큰 {sum(t.input_tokens for _, t, _ in rows)}, "

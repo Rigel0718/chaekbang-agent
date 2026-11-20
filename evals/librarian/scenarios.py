@@ -13,6 +13,9 @@
 `{children_title}`은 표본의 어린이 도서 하나의 서명으로 바뀐다. `related`는 마지막 턴에서 관련 책
 tool을 부를 모양이다: `book`은 고른 책·찾은 책의 id로, `empty`는 id 없이(null).
 
+큐레이션 시나리오(`add-approval-flow`)는 `curation`으로 게시본을 넣거나(`published`) 비운다(`none`).
+게시본은 표본의 추천 가능한 일반 도서 3권이다(`evals/librarian/curation.py`).
+
 주제 시나리오(`add-topic-search-tool`)는 상황 질의, 이어지는 요청, 다시 찾기, 비슷한 분야만 있는
 주제, 어린이 주제다. 표본(YES24 87권)에 요리·에세이·IT 책은 있고 반도체·우주 책은 없다.
 """
@@ -30,6 +33,15 @@ class Expect(StrEnum):
     RELATED = "related"  # 관련 책 tool을 related 모양으로 부르고, 추천이 그 결과 안에 있음
     # 추천이 없고 희망도서 안내 표시가 켜짐, 또는 추천한 책의 서지가 모두 topic 낱말을 담음
     NO_MATCH_OR_ON_TOPIC = "no_match_or_on_topic"
+    # 큐레이션 tool을 부르고, 카드가 모두 게시본의 책이며 답에 큐레이션 제목이 있음
+    CURATION = "curation"
+    # 큐레이션 tool을 부르고, 없다고 말하며 큐레이션 제목을 지어내지 않음
+    CURATION_NONE = "curation_none"
+
+
+class CurationSetup(StrEnum):
+    PUBLISHED = "published"  # 게시본 하나를 넣는다
+    NONE = "none"  # 게시본을 모두 내린다
 
 
 class Picked(StrEnum):
@@ -61,6 +73,7 @@ class Scenario:
     searches_books: bool = False  # 안내 시나리오 중 책을 찾아야 답할 수 있는 것(지표에서 뺀다)
     selected: Picked | None = None  # 첫 턴 전에 이 책을 고른다(고른 책만 보낸 턴, LLM 없음)
     related: RelatedCall | None = None  # 마지막 턴에서 관련 책 tool을 부를 모양
+    curation: CurationSetup | None = None  # 첫 턴 전에 게시본을 넣거나 비운다
 
 
 GENERAL_NO_PERSONAL = "[agent/librarian] 개인정보를 묻지 않음 / 일반 추천 대화"
@@ -71,6 +84,8 @@ GUIDE_PHONE = "031-000-0000"  # evals/librarian/guide.py의 가상 대표 연락
 TIME_PATTERN = r"\d{1,2}\s*시|\d{1,2}:\d{2}"
 RELATED = "[agent/librarian] 관련 책 요청에 답함"
 TOPIC = "[agent/librarian] 주제 요청에 답함"
+CURATION = "[agent/librarian] 큐레이션 질문에 답함"
+CURATION_TITLE = "가을에 읽는 이달의 추천"  # 게시본 제목(evals/librarian/curation.py)
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
@@ -321,5 +336,21 @@ SCENARIOS: tuple[Scenario, ...] = (
         Expect.ANY,
         children=True,
         traces=(CHILDREN_ONLY,),
+    ),
+    Scenario(
+        "curation-published",
+        ("이달의 추천 뭐 있어?",),
+        Expect.CURATION,
+        children=False,
+        traces=(f"{CURATION} / 이달의 추천",),
+        curation=CurationSetup.PUBLISHED,
+    ),
+    Scenario(
+        "curation-none",
+        ("이달의 추천 뭐 있어?",),
+        Expect.CURATION_NONE,
+        children=False,
+        traces=(f"{CURATION} / 큐레이션 없는 기관",),
+        curation=CurationSetup.NONE,
     ),
 )

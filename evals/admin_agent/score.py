@@ -5,6 +5,9 @@
   결과, 질문, 허용 숫자 안에 있다. 허용 숫자는 KDC 주류 번호(000~900, "400번대")다. 목록 번호
   (줄 앞의 `1.`, `2)`)는 숫자로 보지 않는다. `absent`의 값이 답에 있으면 틀린다.
 - 못 하는 분석 분류: 답의 `unsupported`가 라벨과 같다.
+- 초안 충실도: 초안을 기대하면 성공한 `draft_curation`이 하나이고 결과가 승인 대기이며, 그 책
+  (`library_book_ids`)이 모두 같은 턴의 `search_collection` 결과에 있고, 서로 다른 3~10권이고, 답에
+  `draft_say`가 있다. 기대하지 않으면 성공한 `draft_curation`이 없어야 맞다.
 """
 
 import json
@@ -44,6 +47,8 @@ class Score:
     tool_ok: bool
     numbers_ok: bool
     unsupported_ok: bool
+    draft_ok: bool = True
+    draft_notes: list[str] = field(default_factory=list)
     missing_calls: list[str] = field(default_factory=list)
     missing_say: list[str] = field(default_factory=list)
     invented: list[str] = field(default_factory=list)
@@ -51,7 +56,7 @@ class Score:
 
     @property
     def passed(self) -> bool:
-        return self.tool_ok and self.numbers_ok and self.unsupported_ok
+        return self.tool_ok and self.numbers_ok and self.unsupported_ok and self.draft_ok
 
 
 def _normalize(number: str) -> str:
@@ -104,6 +109,37 @@ def _label(options: Sequence[Call]) -> str:
     return " | ".join(f"{c.tool}{json.dumps(c.args, ensure_ascii=False)}" for c in options)
 
 
+DRAFT_MIN, DRAFT_MAX = 3, 10
+
+
+def draft_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
+    """초안 충실도의 틀린 까닭. 비면 맞다."""
+    drafts = [c for c in turn.calls if c.name == "draft_curation" and not c.is_error]
+    if not scenario.draft:
+        return [f"기대하지 않은 초안 {len(drafts)}개"] if drafts else []
+    if len(drafts) != 1:
+        return [f"초안 {len(drafts)}개"]
+    [draft] = drafts
+    notes = []
+    if (draft.result or {}).get("status") != "pending_approval":
+        notes.append("승인 대기가 아님")
+    ids = list(draft.args.get("library_book_ids") or [])
+    searched = {
+        book["library_book_id"]
+        for c in turn.calls
+        if c.name == "search_collection" and isinstance(c.result, dict)
+        for book in c.result.get("books", [])
+    }
+    outside = [i for i in ids if i not in searched]
+    if outside:
+        notes.append(f"검색 결과에 없는 책 {outside}")
+    if not DRAFT_MIN <= len(set(ids)) <= DRAFT_MAX:
+        notes.append(f"권수 {len(set(ids))}")
+    if scenario.draft_say and not any(w in turn.message for w in scenario.draft_say):
+        notes.append(f"안내 낱말 없음 {list(scenario.draft_say)}")
+    return notes
+
+
 def score(scenario: Scenario, turn: TurnRecord) -> Score:
     missing_calls = [
         _label(options)
@@ -124,6 +160,8 @@ def score(scenario: Scenario, turn: TurnRecord) -> Score:
         tool_ok=not missing_calls,
         numbers_ok=not invented and not missing_say and not present_absent,
         unsupported_ok=turn.unsupported == scenario.unsupported,
+        draft_ok=not (notes := draft_notes(scenario, turn)),
+        draft_notes=notes,
         missing_calls=missing_calls,
         missing_say=missing_say,
         invented=invented,
