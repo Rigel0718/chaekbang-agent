@@ -79,3 +79,23 @@
   .basket.open { display: block; }
   .due { font-size: 1.4em; }
 }
+
+/* 대출·반납·희망도서 입력칸 */
+.desk-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; max-width: 760px; }
+.desk-panel[hidden] { display: none; }
+.desk-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.desk-tabs { display: flex; gap: 8px; }
+.desk-tabs[hidden] { display: none; }
+.desk-tab { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 16px; }
+.desk-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.desk-close { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 1.4em; }
+.desk-form { display: grid; gap: 8px; }
+.desk-form label { display: grid; gap: 4px; font-weight: 600; }
+.desk-form label[hidden] { display: none; }
+.desk-form label small { font-weight: 400; color: var(--muted); }
+.desk-form input { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 1em; }
+.desk-form input:focus { border-color: var(--accent); outline: none; }
+.desk-form .send { padding: 10px 22px; justify-self: start; }
+.desk-form .send:disabled { opacity: 0.6; }
+.desk-result { margin: 8px 0 0; min-height: 1.4em; }
+.desk-result.failed { color: var(--warn); }

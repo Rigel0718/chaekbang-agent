@@ -9,7 +9,7 @@
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import LlmClient
@@ -20,6 +20,7 @@ from app.features.children.checks import CHILDREN_TOOL_NAMES
 from app.features.children.rules import is_children_request
 from app.features.children.service import children_book_ids
 from app.library.librarian import PROFILE_NAME
+from app.library.models.library import Library, LoanMode
 from app.library.services import chat
 from app.library.services.related import related_for_session, similar_for_book
 from evals.librarian.catalog import BookState, SampleCatalog
@@ -74,6 +75,16 @@ async def _run_facts(
     return tuple(t for t in tools if t), tokens[0], tokens[1], steps
 
 
+async def setup_loan_mode(session: AsyncSession, library_id: int, mode: LoanMode) -> None:
+    """시나리오 동안 평가 기관의 운영 방식. 안내 tool, 답 사건, 카드가 이 값을 읽는다.
+
+    평가는 되돌리는 세션 안에서 돌므로 바꾼 값은 남지 않는다(`setup_guide`와 같다). 프로필은
+    부르는 쪽이 같은 방식으로 고른다.
+    """
+    await session.execute(update(Library).where(Library.id == library_id).values(loan_mode=mode))
+    await session.commit()
+
+
 def _picked(scenario: Scenario, catalog: SampleCatalog) -> int | None:
     if scenario.selected is Picked.SHELVED:
         assert catalog.shelved is not None, "shelve_one()을 먼저 부른다"
@@ -114,6 +125,7 @@ async def run_scenario(
     picks: Sequence[int] = (),
 ) -> ScenarioResult:
     """picks는 첫 턴 전에 차례로 고를 책이다(대화 추천 평가의 기준 책·최근 기록)."""
+    await setup_loan_mode(session, catalog.library_id, scenario.loan_mode)
     await setup_guide(session, catalog.library_id, scenario.guide)
     basis = await guide_basis(session, catalog.library_id, scenario.guide)
     curation = await setup_curation(session, catalog, scenario.curation)

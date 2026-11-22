@@ -1,5 +1,6 @@
 // 이용자 화면 조립. 로그인 화면은 없다. 개발용 토큰은 주소의 #token=으로 한 번 넣는다(README).
 import { api, clearToken, getToken, setToken } from "../shared/api.js";
+import { createActions } from "./actions.js";
 import { createBasket } from "./basket.js";
 import { createChat } from "./chat.js";
 import { IDLE_MS, createIdleTimer } from "./idle.js";
@@ -65,9 +66,13 @@ function renderDue(guide) {
 
 async function loadGuide() {
   try {
-    renderDue(await api.guide());
+    const guide = await api.guide();
+    renderDue(guide);
+    // 자체 대출 기관만 [대출·반납]을 보인다. 안내를 못 읽으면 숨긴다.
+    actions.setLoanAvailable(guide.loan_mode === "internal");
   } catch (error) {
     due.hidden = true;
+    actions.setLoanAvailable(false);
     if (error.kind === "unauthorized") onUnauthorized();
   }
 }
@@ -86,6 +91,37 @@ const idle = createIdleTimer({
   onIdle: () => resetAll(),
 });
 
+const actions = createActions({
+  panel: $("desk"),
+  loanButton: $("open-loan"),
+  requestButton: $("open-request"),
+  tabs: $("desk-tabs"),
+  tabButtons: document.querySelectorAll(".desk-tab"),
+  closeButton: $("desk-close"),
+  form: $("desk-form"),
+  inputs: {
+    accession: $("in-accession"),
+    member: $("in-member"),
+    title: $("in-title"),
+    author: $("in-author"),
+    isbn: $("in-isbn"),
+  },
+  labels: {
+    accession: $("label-accession"),
+    member: $("label-member"),
+    title: $("label-title"),
+    author: $("label-author"),
+    isbn: $("label-isbn"),
+  },
+  submit: $("desk-submit"),
+  result: $("desk-result"),
+  setBusy(busy) {
+    if (busy) idle.pause();
+    else idle.resume();
+  },
+  onUnauthorized,
+});
+
 const chat = createChat({
   thread: $("thread"),
   emptyState: $("empty"),
@@ -96,6 +132,7 @@ const chat = createChat({
     else idle.resume();
   },
   onUnauthorized,
+  onRequestBook: () => actions.openRequest(),
   onSessionLost() {
     resetAll();
     showNotice(SESSION_ENDED_NOTICE);
@@ -123,6 +160,7 @@ function submit() {
 function resetAll() {
   chat.reset();
   basket.clear();
+  actions.reset();
   suggest.close();
   input.value = "";
   hideNotice();

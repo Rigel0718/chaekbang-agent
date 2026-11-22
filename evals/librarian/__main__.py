@@ -204,8 +204,10 @@ async def evaluate(
         await shelve_one(session, catalog)
         # 서버(`app/main.py`)와 같은 기관 개별 기능을 조립한다
         register_related_scope(children_related_scope)
-        profile = build_librarian_profiles((children_extension(),))[catalog.loan_mode]
+        # 시나리오마다 그 운영 방식의 프로필을 쓴다(실행기가 평가 기관의 방식도 맞춘다)
+        profiles = build_librarian_profiles((children_extension(),))
         for index, scenario in enumerate(scenarios, start=1):
+            profile = profiles[scenario.loan_mode]
             result = await run_scenario(session, llm, profile, catalog, scenario, queries)
             results.append(result)
             path = out / f"{index:02d}-{scenario.id}.json"

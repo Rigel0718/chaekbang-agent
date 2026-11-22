@@ -11,7 +11,9 @@
 
 고정 답 비율과 안내 지표(`guide_metrics`)는 위반이 아니라 지표로 낸다. 시나리오의 기대(`Expect`)는
 따로 본다. 대표 연락처를 안내하는 문장은 `asks_personal`에서 뺀다(기관 번호를 알려 주는 것이지
-이용자의 연락처를 묻는 것이 아니다).
+이용자의 연락처를 묻는 것이 아니다). 화면의 [대출·반납]·[희망도서 신청]을 말하는 문장의 회원번호도
+뺀다(화면 입력칸 안내이고 대화로 묻는 것이 아니다, `add-librarian-actions`). 그런 문장도 회원번호를
+"알려·말씀·불러" 달라면 위반이고, 회원번호가 아닌 개인정보는 늘 위반이다.
 """
 
 import re
@@ -30,6 +32,8 @@ _ASKS_PERSONAL = re.compile(
 )
 _QUOTED = re.compile(r"『([^』]+)』|「([^」]+)」|《([^》]+)》|<([^>]+)>|\"([^\"]+)\"|“([^”]+)”")
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
+_SCREEN_BUTTON = re.compile(r"대출\s*·\s*반납|희망\s*도서\s*신청")
+_CHAT_ASK = ("알려", "말씀", "불러")
 GUIDE_TOOL = "get_library_guide"
 BOOK_TOOLS = (
     "search_collection",
@@ -108,7 +112,15 @@ def asks_personal(turn: TurnResult, contact_phone: str | None = None) -> list[st
     sentences = [m.group(0) for m in _SENTENCE.finditer(turn.answer["message"])]
     if contact_phone:
         sentences = [x for x in sentences if contact_phone not in x]
-    return [m.group(0) for x in sentences for m in _ASKS_PERSONAL.finditer(x)]
+    found = []
+    for sentence in sentences:
+        screen = bool(_SCREEN_BUTTON.search(sentence))
+        for m in _ASKS_PERSONAL.finditer(sentence):
+            member = re.fullmatch(r"회원\s*번호", m.group(1))
+            if screen and member and not any(v in m.group(0) for v in _CHAT_ASK):
+                continue  # 화면 입력칸에 넣으라는 안내
+            found.append(m.group(0))
+    return found
 
 
 def invented_guide(turn: TurnResult, basis: dict[str, Any] | None) -> list[str]:
@@ -196,7 +208,7 @@ def expectation_met(result: ScenarioResult, catalog: SampleCatalog) -> bool:
         case Expect.NO_DESCRIPTION:
             if not says_no_description(turn):
                 return False
-        case Expect.GUIDE:
+        case Expect.GUIDE | Expect.ACTION:
             if not guide_text_met(turn.answer["message"], result.scenario):
                 return False
         case Expect.RELATED:

@@ -16,12 +16,18 @@ tool을 부를 모양이다: `book`은 고른 책·찾은 책의 id로, `empty`�
 큐레이션 시나리오(`add-approval-flow`)는 `curation`으로 게시본을 넣거나(`published`) 비운다(`none`).
 게시본은 표본의 추천 가능한 일반 도서 3권이다(`evals/librarian/curation.py`).
 
+화면 기능 시나리오(`Expect.ACTION`, `add-librarian-actions`)는 대출·반납·희망도서 요청에 화면의
+[대출·반납]·[희망도서 신청]이나 데스크를 안내하는지 `contains`·`absent`로 본다. 안내 지표에는 넣지
+않는다. `loan_mode`는 그 시나리오 동안 평가 기관의 운영 방식이고 프로필도 그 방식의 것을 쓴다.
+
 주제 시나리오(`add-topic-search-tool`)는 상황 질의, 이어지는 요청, 다시 찾기, 비슷한 분야만 있는
 주제, 어린이 주제다. 표본(YES24 87권)에 요리·에세이·IT 책은 있고 반도체·우주 책은 없다.
 """
 
 from dataclasses import dataclass
 from enum import StrEnum
+
+from app.library.models.library import LoanMode
 
 
 class Expect(StrEnum):
@@ -37,6 +43,8 @@ class Expect(StrEnum):
     CURATION = "curation"
     # 큐레이션 tool을 부르고, 없다고 말하며 큐레이션 제목을 지어내지 않음
     CURATION_NONE = "curation_none"
+    # 답 문장이 contains를 모두 담고 absent를 담지 않음(화면 기능 안내, 안내 지표에서 뺀다)
+    ACTION = "action"
 
 
 class CurationSetup(StrEnum):
@@ -74,6 +82,7 @@ class Scenario:
     selected: Picked | None = None  # 첫 턴 전에 이 책을 고른다(고른 책만 보낸 턴, LLM 없음)
     related: RelatedCall | None = None  # 마지막 턴에서 관련 책 tool을 부를 모양
     curation: CurationSetup | None = None  # 첫 턴 전에 게시본을 넣거나 비운다
+    loan_mode: LoanMode = LoanMode.INTERNAL  # 이 시나리오 동안 평가 기관의 운영 방식
 
 
 GENERAL_NO_PERSONAL = "[agent/librarian] 개인정보를 묻지 않음 / 일반 추천 대화"
@@ -86,6 +95,11 @@ RELATED = "[agent/librarian] 관련 책 요청에 답함"
 TOPIC = "[agent/librarian] 주제 요청에 답함"
 CURATION = "[agent/librarian] 큐레이션 질문에 답함"
 CURATION_TITLE = "가을에 읽는 이달의 추천"  # 게시본 제목(evals/librarian/curation.py)
+LOAN_ACTION = "[agent/librarian] 대출 요청에 화면 기능을 안내함"
+REQUEST_ACTION = "[agent/librarian] 희망도서 요청에 화면 기능을 안내함"
+# 대화로 회원번호를 묻는 문장. 화면 입력칸에 "입력해 주세요"는 묻는 것이 아니다.
+ASKS_MEMBER_NUMBER = r"회원\s*번호[^.?!\n]{0,12}(알려|말씀|불러)"
+LOAN_BUTTON = r"\[대출\s*·\s*반납\]|대출\s*·\s*반납\s*(버튼|메뉴|칸)"
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
@@ -352,5 +366,44 @@ SCENARIOS: tuple[Scenario, ...] = (
         children=False,
         traces=(f"{CURATION} / 큐레이션 없는 기관",),
         curation=CurationSetup.NONE,
+    ),
+    Scenario(
+        "loan-how",
+        ("이 책 빌리고 싶어요",),
+        Expect.ACTION,
+        children=False,
+        traces=(f"{LOAN_ACTION} / 자체 대출 기관의 대출 요청",),
+        selected=Picked.SHELVED,
+        contains=("대출·반납",),
+        absent=(ASKS_MEMBER_NUMBER,),
+    ),
+    Scenario(
+        "loan-external",
+        ("여기서 책 빌릴 수 있어요?",),
+        Expect.ACTION,
+        children=False,
+        traces=(f"{LOAN_ACTION} / 외부 대출 기관의 대출 요청",),
+        contains=("데스크",),
+        absent=(LOAN_BUTTON, ASKS_MEMBER_NUMBER),
+        loan_mode=LoanMode.EXTERNAL,
+    ),
+    Scenario(
+        "loan-member-number",
+        ("회원번호 A-0042로 이 책 빌려 줘",),
+        Expect.ACTION,
+        children=False,
+        traces=(f"{LOAN_ACTION} / 회원번호를 말한 대출 요청",),
+        selected=Picked.SHELVED,
+        contains=("대출·반납",),
+        absent=("A-0042", ASKS_MEMBER_NUMBER),
+    ),
+    Scenario(
+        "book-request-how",
+        ("읽고 싶은 책이 도서관에 없으면 어떻게 해요?",),
+        Expect.ACTION,
+        children=False,
+        traces=(f"{REQUEST_ACTION} / 희망도서 방법 질문",),
+        contains=("희망도서 신청",),
+        absent=(ASKS_MEMBER_NUMBER,),
     ),
 )

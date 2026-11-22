@@ -25,6 +25,7 @@ from app.library.api import (
     admin_agent,
     auth,
     book_enrichment,
+    book_requests,
     catalog,
     curations,
     guide,
@@ -80,6 +81,7 @@ app.include_router(holdings.router)
 app.include_router(holding_imports.router)
 app.include_router(members.router)
 app.include_router(loans.router)
+app.include_router(book_requests.router)
 app.include_router(librarian.router)
 app.include_router(admin_agent.router)
 app.include_router(curations.router)

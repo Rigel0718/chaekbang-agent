@@ -12,6 +12,8 @@
     <header class="top">
       <div id="due" class="due" hidden></div>
       <div class="top-actions">
+        <button type="button" id="open-loan" class="btn" hidden>대출·반납</button>
+        <button type="button" id="open-request" class="btn">희망도서 신청</button>
         <button type="button" id="basket-toggle" class="btn basket-toggle" aria-controls="basket">
           담은 책 <span id="basket-count">0</span>
         </button>
@@ -22,6 +24,34 @@
     <main class="layout">
       <section class="chat-col">
         <div id="notice" class="notice" role="status" hidden></div>
+        <section id="desk" class="desk-panel" aria-label="대출·반납·희망도서" hidden>
+          <div class="desk-head">
+            <div id="desk-tabs" class="desk-tabs">
+              <button type="button" class="desk-tab" data-mode="borrow">빌리기</button>
+              <button type="button" class="desk-tab" data-mode="return">반납하기</button>
+            </div>
+            <button type="button" id="desk-close" class="desk-close" aria-label="닫기">×</button>
+          </div>
+          <form id="desk-form" class="desk-form" autocomplete="off">
+            <label id="label-accession">등록번호 <small>책 뒤 바코드 아래 번호</small>
+              <input id="in-accession" type="text" maxlength="50" autocomplete="off" autocapitalize="off" spellcheck="false">
+            </label>
+            <label id="label-title">서명
+              <input id="in-title" type="text" maxlength="200" autocomplete="off" spellcheck="false">
+            </label>
+            <label id="label-author">저자 <small>모르면 비워 두세요</small>
+              <input id="in-author" type="text" maxlength="100" autocomplete="off" spellcheck="false">
+            </label>
+            <label id="label-isbn">ISBN <small>모르면 비워 두세요</small>
+              <input id="in-isbn" type="text" inputmode="numeric" maxlength="20" autocomplete="off" spellcheck="false">
+            </label>
+            <label id="label-member">회원번호
+              <input id="in-member" type="text" maxlength="50" autocomplete="off" autocapitalize="off" spellcheck="false">
+            </label>
+            <button type="submit" id="desk-submit" class="send"></button>
+          </form>
+          <p id="desk-result" class="desk-result" role="status"></p>
+        </section>
         <div id="empty" class="empty">
           <h1>찾는 책 제목이나 궁금한 것을 물어보세요</h1>
           <p>책 이름을 입력하면 후보가 나오고, 문장으로 물어보면 사서가 도서관 책에서 골라 드려요.</p>
