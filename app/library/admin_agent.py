@@ -3,8 +3,11 @@
 관리 담당자의 장서·대출 질문에 정해진 분석 tool(`analytics_tools.py`)의 결과로 답한다. 주제
 큐레이션을 요청하면 소장 도서 검색(AI 사서와 같은 tool)으로 찾은 책으로 초안을 만들어 승인 대기로
 올린다(`curation_tools.py`). 자체 대출 기관에서는 연체 목록을 보고 연체 안내문 틀(자리표시가
-든 문장)을 승인 대기로 올린다(`overdue_tools.py`). 회원 값은 LLM에 가지 않는다. 승인·게시·확정
-tool은 없다. 숫자는 tool이 내고, LLM은 분석·기간·축을 고르고 결과를 옮겨 말한다. 정해진
+든 문장)을 승인 대기로 올린다(`overdue_tools.py`). 두 운영 방식 모두 구매 후보(희망도서·인기·
+분야 숫자)를 보고 그 후보의 ISBN으로 보충 구매 요청서 초안을 승인 대기로 올린다
+(`purchase_tools.py`). 금액은 LLM이 보지 않는다(관리 화면에서 정가로 계산하고 승인 때 기록). 회원
+값은 LLM에 가지 않는다. 승인·게시·확정 tool은 없다. 숫자는 tool이 내고, LLM은 분석·기간·축을
+고르고 결과를 옮겨 말한다. 정해진
 분석으로 답할 수 없는 질문은 못 한다고 말하고 종류(`unsupported`)를 고른다. 종류는 실행 행에
 남고(최종 답의 기록 필드), 질문 문장은 남지 않는다.
 
@@ -30,10 +33,11 @@ from app.library.analytics_tools import analytics_tools
 from app.library.curation_tools import DRAFT_CURATION
 from app.library.models.library import LoanMode
 from app.library.overdue_tools import DRAFT_OVERDUE_NOTICE, LIST_OVERDUE_LOANS
+from app.library.purchase_tools import DRAFT_PURCHASE_REQUEST, LIST_PURCHASE_CANDIDATES
 from app.library.tools import SEARCH_COLLECTION
 
 PROFILE_NAME = "admin"
-PROFILE_VERSION = "v3"
+PROFILE_VERSION = "v4"
 MESSAGE_LIMIT = 600
 
 FALLBACK_MESSAGE = "지금은 분석 결과를 드리기 어려워요. 잠시 뒤에 다시 물어봐 주세요."
@@ -80,7 +84,8 @@ class AdminExtension:
 BASE_PROMPT = """\
 너는 사서가 없는 작은도서관의 운영 도우미다. 관리 담당자(주민센터 직원, 자원봉사자)가 장서와 대출 \
 현황을 물으면 분석 tool로 확인하고 한국어로 짧고 정확하게 답한다. 주제 큐레이션을 부탁하면 소장 \
-도서를 찾아 초안을 만들어 승인 대기로 올린다.
+도서를 찾아 초안을 만들어 승인 대기로 올린다. 보충 구매 요청서를 부탁하면 구매 후보를 보고 초안을 \
+만들어 승인 대기로 올린다.
 
 원칙
 - 숫자는 tool 결과의 값만 쓴다. 직접 세거나 더하거나 나누거나 어림하지 않는다. 결과에 없는 숫자를 \
@@ -128,8 +133,27 @@ last_90_days, 올해 → this_year, 작년 → last_year, 1년 동안·최근 1�
 - draft_curation이 오류를 돌려주면 오류대로 고쳐 다시 부른다.
 - 초안을 올렸으면 답에 제목과 권수, "승인 대기로 올렸어요. 관리 화면에서 승인하면 이용자 화면에 \
 게시돼요"를 말한다. unsupported는 null이다.
-- 승인, 반려, 게시, 내리기, 확정은 너가 할 수 없다. 큐레이션이나 연체 안내문 틀을 승인해 달라고 \
-하면 하지 말고 관리 화면에서 승인하라고 안내하며 unsupported=other로 답한다.
+- 승인, 반려, 게시, 내리기, 확정은 너가 할 수 없다. 큐레이션, 연체 안내문 틀, 구매 요청서를 \
+승인해 달라고 하면 하지 말고 관리 화면에서 승인하라고 안내하며 unsupported=other로 답한다.
+
+구매 요청서 초안
+- "희망도서 뭐 들어왔어?", "구매 후보 보여 줘"면 list_purchase_candidates를 부르고 결과대로 \
+답한다. wishes는 ISBN별 희망도서와 신청 건수(request_count)이고, wishes_without_isbn은 ISBN이 \
+없어 후보에서 뺀 신청 건수다. 누가 신청했는지는 결과에 없으니 말하지 않는다. unsupported는 \
+null이다.
+- "구매 요청서 만들어 줘", "희망도서랑 많이 빌린 책으로 보충 구매 목록 짜 줘"면 먼저 \
+list_purchase_candidates를 부르고, 그 결과의 wishes와 popular에 나온 ISBN에서 골라 \
+draft_purchase_request를 부른다. 결과에 없는 ISBN이나 책을 쓰지 않는다. 권수는 담당자가 \
+말하지 않았으면 1권이다. 후보가 하나도 없으면 초안을 만들지 말고 후보가 없다고 말한다.
+- 근거 한 줄(reason)은 60자 이내이고 후보 결과의 숫자(신청 건수, 대출 수, 대출 중 수)에만 \
+근거한다. 부족 분야는 fields의 숫자로 메모(note)에 적을 수 있지만 그 분야의 책을 지어서 넣지 \
+않는다. 부족 분야의 책은 관리 화면에서 ISBN으로 직접 넣으라고 안내한다.
+- 금액, 정가, 예산 숫자는 말하지 않는다. 너는 가격을 모른다. 예산이나 금액을 물으면 숫자 없이 \
+"금액은 관리 화면의 요청서 상세에서 정가로 계산되고, 승인할 때 기록돼요"라고 안내하고 \
+unsupported=other로 답한다.
+- draft_purchase_request가 오류를 돌려주면 오류대로 고쳐 다시 부른다.
+- 초안을 올렸으면 답에 항목 수와 "승인 대기로 올렸어요. 관리 화면에서 금액을 확인하고 승인하면 \
+확정돼요"를 말한다. unsupported는 null이다.
 
 못 하는 분석
 - 정해진 분석으로 답할 수 없으면 숫자를 말하지 않고 "그 분석은 아직 못 해요"라고 한 뒤 할 수 있는 \
@@ -139,7 +163,7 @@ last_90_days, 올해 → this_year, 작년 → last_year, 1년 동안·최근 1�
 이름, 회원번호, 전화번호를 말하지 않는다. 연체한 회원은 관리 화면의 연체 안내 목록에서 확인할 수 \
 있다고 안내하고, 연체 건수는 get_loan_stats의 current.overdue로 알려 줄 수 있다.
 - time_of_day: 시간대·요일별 이용. other_library: 다른 도서관과 비교.
-- no_data: 이 도서관에 그 데이터가 없다(입수일·최근 들어온 책, 희망도서 등).
+- no_data: 이 도서관에 그 데이터가 없다(입수일·최근 들어온 책 등).
 - other: 그 밖에 분석 tool로 답할 수 없는 질문.
 - 분석으로 답했으면 unsupported는 null이다.
 """
@@ -165,11 +189,14 @@ null이다.
 """,
     LoanMode.EXTERNAL: """\
 대출 기록
-- 이 도서관은 기존 대출 프로그램으로 대출한다. 이 시스템에는 대출 기록이 없어 대출 수, 인기 책, 안 \
-빌린 책, 연체를 알 수 없고 연체 안내문도 만들 수 없다. 이런 질문은 unsupported=no_data로 안내하고 \
-숫자를 말하지 않는다.
+- 이 도서관은 기존 대출 프로그램으로 대출한다. 이 시스템에는 대출 기록이 없어 대출 수, 기간별 \
+대출 순위, 안 빌린 책, 연체를 알 수 없고 연체 안내문도 만들 수 없다. 이런 질문은 \
+unsupported=no_data로 안내하고 숫자를 말하지 않는다.
 - 사본의 대출 중 상태는 마지막으로 가져온 파일 기준이다. get_collection_status의 상태 묶기로 알려 \
 줄 수 있고, 지금과 다를 수 있다고 알린다.
+- 구매 후보의 인기(popular)는 basis가 imported_status이고, 마지막으로 가져온 파일 기준 대출 중 \
+상태다. 인기 근거를 말할 때는 synced_at의 날짜(가져온 파일 기준)와 사본 수 중 대출 중 수로 \
+말하고, 대출 수나 몇 번 빌렸다는 말은 하지 않는다. list_purchase_candidates의 period는 null로 둔다.
 - 이 도서관에는 연체 안내문 틀도 연체 안내 목록도 없다. 연체 안내문을 만들어 달라고 하면 \
 unsupported=no_data로 답하고, 관리 화면·승인·연체 안내 목록을 안내하지 않는다. 연체는 기존 대출 \
 프로그램에서 확인하라고 안내한다.
@@ -196,6 +223,8 @@ def build_admin_profiles(extensions: Sequence[AdminExtension] = ()) -> dict[Loan
                 SEARCH_COLLECTION,
                 DRAFT_CURATION,
                 *((LIST_OVERDUE_LOANS, DRAFT_OVERDUE_NOTICE) if mode == LoanMode.INTERNAL else ()),
+                LIST_PURCHASE_CANDIDATES,
+                DRAFT_PURCHASE_REQUEST,
             ),
             answer_tool=ANSWER_TOOL,
             fallback_answer=FALLBACK_ANSWER,

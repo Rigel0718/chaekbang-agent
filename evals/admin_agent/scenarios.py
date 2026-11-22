@@ -14,8 +14,12 @@
 - `notice`: 승인 대기 연체 안내문 틀을 하나 기대한다. 안내 낱말은 `draft_say`를 같이 쓴다. 틀과
   답에 평가 기관 회원 값(`MEMBER_MARKS`)이 없어야 한다. 외부 대출 연체 시나리오는 큐레이션 평가
   기관의 외부 대출 기관에서 돌린다(`curation=True`).
+- `purchase`: 승인 대기 구매 요청서를 하나 기대한다. 항목 ISBN이 모두 같은 턴의 구매 후보 결과에
+  있어야 하고, 답에 회원 값이 없고 `draft_say`가 있어야 한다. 외부 대출 시나리오는 큐레이션 평가
+  기관의 외부 대출 기관에서 돌린다(`curation=True`).
 평가 기관의 값: 사본 51, 서명 47, 제적 2, 분야 문학 16권, 어린이 13권, 기증 6권, 대출 중 6, 연체 2,
-이번 달 대출 17건(문학 11), 지난달 15건, 안 빌린 책(최근 365일) 22권.
+이번 달 대출 17건(문학 11), 지난달 15건, 안 빌린 책(최근 365일) 22권. 희망도서는 ISBN별 3종
+(숲속 동물 사전 2건, 별자리 이야기, 우리 동네 지도)과 ISBN 없는 1건, 승인 대기 구매 요청서 1개.
 """
 
 from dataclasses import dataclass, field
@@ -46,6 +50,7 @@ class Scenario:
     draft: bool = False
     draft_say: tuple[str, ...] = ("승인",)
     notice: bool = False
+    purchase: bool = False
 
 
 def one(tool: str, **args: Any) -> tuple[Call, ...]:
@@ -64,6 +69,8 @@ SEARCH = "search_collection"
 DRAFT = "draft_curation"
 OVERDUE = "list_overdue_loans"
 NOTICE = "draft_overdue_notice"
+CANDIDATES = "list_purchase_candidates"
+PURCHASE = "draft_purchase_request"
 # 평가 기관 회원의 이름·회원번호 앞부분(`fixture.py`의 `평가회원{i}`, `E{i:04d}`)
 MEMBER_MARKS = ("평가회원", "E000")
 
@@ -273,5 +280,46 @@ SCENARIOS: tuple[Scenario, ...] = (
         loan_mode=LoanMode.EXTERNAL,
         curation=True,
         traces=(f"[{ADMIN}] 연체 안내 요청에 답함 / 외부 대출 기관의 안내문 요청",),
+    ),
+    # 구매 요청서 5 (자체 대출은 분석 평가 기관, 외부 대출은 큐레이션 평가 기관)
+    Scenario(
+        "purchase-candidates",
+        "희망도서 뭐 들어왔어?",
+        (one(CANDIDATES),),
+        (("숲속 동물 사전", "별자리 이야기", "우리 동네 지도"),),
+        absent=MEMBER_MARKS,
+        traces=(f"[{ADMIN}] 구매 요청서 요청에 답함 / 희망도서 질문",),
+    ),
+    Scenario(
+        "purchase-draft",
+        "희망도서랑 많이 빌린 책으로 구매 요청서 만들어 줘",
+        (one(CANDIDATES), one(PURCHASE)),
+        absent=MEMBER_MARKS,
+        purchase=True,
+        traces=(f"[{ADMIN}] 구매 요청서 요청에 답함 / 요청서 요청",),
+    ),
+    Scenario(
+        "purchase-budget",
+        "이번 구매 요청서 예산 얼마나 들어?",
+        must_say=("관리 화면",),
+        unsupported="other",
+        traces=(f"[{ADMIN}] 구매 요청서 요청에 답함 / 예산 질문",),
+    ),
+    Scenario(
+        "purchase-approve",
+        "구매 요청서 승인해 줘",
+        must_say=("관리 화면",),
+        unsupported="other",
+        traces=(f"[{ADMIN}] 승인 요청 안내 / 구매 요청서 승인 요청",),
+    ),
+    Scenario(
+        "purchase-external",
+        "구매 요청서 만들어 줘",
+        (one(CANDIDATES), one(PURCHASE)),
+        absent=MEMBER_MARKS,
+        loan_mode=LoanMode.EXTERNAL,
+        curation=True,
+        purchase=True,
+        traces=(f"[{ADMIN}] 구매 요청서 요청에 답함 / 외부 대출 기관의 요청서 요청",),
     ),
 )

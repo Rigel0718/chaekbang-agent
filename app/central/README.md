@@ -30,6 +30,7 @@
 | `external/yes24/client.py` | 인증, 호출 속도 제한, 오류 구분 |
 | `external/yes24/parsing.py` | 응답 상품을 `Yes24Item`으로 변환 |
 | `external/yes24/goods.py` | GOODS API 역할 함수 |
+| `list_prices.py` | 구매 요청서의 정가 조회 접점 `ListPriceLookup`, YES24 구현 `Yes24ListPrices`(같은 ISBN13 상품의 정가만), 키가 없을 때의 `UnconfiguredListPrices`, 사유만 담은 `PriceLookupUnavailable` |
 | `external/yes24/category.py` | CATEGORY API 역할 함수 `steady_sellers`(실험 장서 받기 전용) |
 | `external/yes24/contributors.py` | YES24 저자 원문 해석 `parse_yes24_author` |
 | `embedding.py` | 인코더 접점 `Embedder`(`encode_documents`, `encode_queries`, `check`, `name`, `dim`), `EmbeddingError`, 두 층의 배치 흐름 `run_layer`·`EmbeddingLayer`·`EmbeddingRun`, 서비스 중 질의 인코더 `GuardedEmbedder` |
@@ -165,7 +166,8 @@
 YES24는 세 출처 중 하나로 채움에 쓴다(소개, 목차, 시리즈, 분류 원문, 표지).
 
 - 소장 도서의 ISBN만 조회한다. 베스트셀러나 카테고리를 돌며 도서 정보를 쌓지 않는다.
-- 예외는 둘이고 둘 다 한 번만 받아 저장소 밖 파일(`.gitignore`)에 둔다. 서비스 경로에서 부르지 않는다.
+- 예외: 구매 요청서 항목의 ISBN은 소장하지 않은 책이어도 상품 상세로 조회한다(`list_prices.py`). 정가(`shopPrice`)만 읽고, 요청서 상세 응답에만 쓰며, 승인할 때 확정본 항목의 단가·금액·총액으로만 기록한다. 공식 서지에 쓰지 않는다. 판매가·판매 상태·응답 원본은 읽지도 내보내지도 않는다.
+- 도서 정보를 받아 두는 예외는 둘이고 둘 다 한 번만 받아 저장소 밖 파일(`.gitignore`)에 둔다. 서비스 경로에서 부르지 않는다.
   - 상품 검색 `search_items`: 평가 표본 약 100권(`evals/librarian/fetch_sample.py`). 테스트 DB 트랜잭션에서만 쓴다.
   - 카테고리 스테디셀러 `category.steady_sellers`: 실험 장서 약 500권(`evals/collection/fetch.py`). 개발 DB의 가상 기관에만 넣는다(`scripts/seed_experiment.py`). 파일이 있으면 받기가 멈춘다. `add-bibliographic-sources`에서도 지우지 않고, 정보나루·카카오 값은 따로 받은 파일(`evals/collection/sources.py`)에 둔다.
 - 판매가, 판매 상태, 포인트, 판매지수, 평점은 저장하지 않는다. 받은 원본 파일에도 넣지 않는다(키 목록은 `definitions.py`의 `VOLATILE_ITEM_KEYS`).

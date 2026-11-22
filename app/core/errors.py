@@ -32,3 +32,7 @@ class InvalidRequestError(DomainError):
 
 class LimitExceededError(DomainError):
     """사용 상한을 넘었다 (REST: 429)."""
+
+
+class UnavailableError(DomainError):
+    """바깥 서비스를 지금 쓸 수 없다. 다시 시도하면 된다 (REST: 503)."""

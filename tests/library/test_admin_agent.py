@@ -246,6 +246,8 @@ def test_profile_tools_by_loan_mode() -> None:
         "draft_curation",
         "list_overdue_loans",
         "draft_overdue_notice",
+        "list_purchase_candidates",
+        "draft_purchase_request",
     }
     assert profiles[LoanMode.INTERNAL].answer_tool is ANSWER_TOOL
 
@@ -258,6 +260,8 @@ def test_profile_external_has_no_loan_tools() -> None:
         LIST_HOLDINGS_BY_STATUS,
         "search_collection",
         "draft_curation",
+        "list_purchase_candidates",
+        "draft_purchase_request",
     }
 
 
@@ -267,8 +271,9 @@ def test_profile_has_no_approval_tools() -> None:
         names = {t.name for t in profile.tools}
         words = ("approve", "reject", "publish", "confirm")
         assert not {n for n in names if any(w in n for w in words)}
-        writes = names - ANALYSIS_TOOLS - {"search_collection", "list_overdue_loans"}
-        assert writes <= {"draft_curation", "draft_overdue_notice"}
+        reads = {"search_collection", "list_overdue_loans", "list_purchase_candidates"}
+        writes = names - ANALYSIS_TOOLS - reads
+        assert writes <= {"draft_curation", "draft_overdue_notice", "draft_purchase_request"}
 
 
 def test_answer_length_limit() -> None:

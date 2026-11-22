@@ -11,6 +11,10 @@
   연체 안내문 틀을 기대하면(`notice`) 성공한 `draft_overdue_notice`가 하나이고 결과가 승인 대기이며,
   그 틀 문장(러너가 저장된 행에서 읽은 `templates`)과 답에 평가 기관 회원 값(`MEMBER_MARKS`)이
   없고, 답에 `draft_say`가 있다. 기대하지 않으면 성공한 `draft_overdue_notice`가 없어야 맞다.
+  구매 요청서를 기대하면(`purchase`) 성공한 `draft_purchase_request`가 하나이고 결과가 승인
+  대기이며, 항목 ISBN(실행 기록의 `items`)이 모두 같은 턴의 `list_purchase_candidates` 결과
+  (wishes·popular)에 있고, 답에 회원 값이 없고 `draft_say`가 있다. 기대하지 않으면 성공한 요청서
+  초안이 없어야 맞다.
 """
 
 import json
@@ -136,9 +140,48 @@ def notice_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
     return notes
 
 
+def _isbn(value: Any) -> str:
+    return re.sub(r"[\s-]", "", str(value))
+
+
+def purchase_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
+    """구매 요청서 초안의 틀린 까닭. 비면 맞다."""
+    drafts = [c for c in turn.calls if c.name == "draft_purchase_request" and not c.is_error]
+    if not scenario.purchase:
+        return [f"기대하지 않은 요청서 {len(drafts)}개"] if drafts else []
+    if len(drafts) != 1:
+        return [f"요청서 {len(drafts)}개"]
+    [draft] = drafts
+    notes = []
+    if (draft.result or {}).get("status") != "pending_approval":
+        notes.append("승인 대기가 아님")
+    isbns = [_isbn(item.get("isbn")) for item in draft.args.get("items") or []]
+    if not isbns:
+        notes.append("항목 없음")
+    offered = {
+        row["isbn"]
+        for c in turn.calls
+        if c.name == "list_purchase_candidates" and isinstance(c.result, dict)
+        for key in ("wishes", "popular")
+        for row in c.result.get(key, [])
+    }
+    outside = [i for i in isbns if i not in offered]
+    if outside:
+        notes.append(f"후보에 없는 ISBN {outside}")
+    if any(m in turn.message for m in MEMBER_MARKS):
+        notes.append("답에 회원 값")
+    if scenario.draft_say and not any(w in turn.message for w in scenario.draft_say):
+        notes.append(f"안내 낱말 없음 {list(scenario.draft_say)}")
+    return notes
+
+
 def draft_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:
-    """초안 충실도의 틀린 까닭(큐레이션과 연체 안내문 틀). 비면 맞다."""
-    return curation_notes(scenario, turn) + notice_notes(scenario, turn)
+    """초안 충실도의 틀린 까닭(큐레이션, 연체 안내문 틀, 구매 요청서). 비면 맞다."""
+    return (
+        curation_notes(scenario, turn)
+        + notice_notes(scenario, turn)
+        + purchase_notes(scenario, turn)
+    )
 
 
 def curation_notes(scenario: Scenario, turn: TurnRecord) -> list[str]:

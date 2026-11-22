@@ -15,10 +15,12 @@ from app.library.analytics.periods import PeriodPreset
 from app.library.analytics.scope import BookFilter
 from app.library.models.library import Library
 from app.library.services import analytics
+from app.library.services.purchase_candidates import purchase_candidates
 from evals.admin_agent.__main__ import METRIC_NAMES, run_all
 from evals.admin_agent.fixture import (
     CURATION_BOOKS,
     PENDING_CURATION,
+    PENDING_PURCHASE,
     build_libraries,
     fixed_clock,
 )
@@ -55,6 +57,10 @@ async def _snapshot(session: AsyncSession, library_id: int) -> list[dict]:
     return dumped
 
 
+async def _candidates(session: AsyncSession, library_id: int) -> dict:
+    return (await purchase_candidates(session, library_id)).model_dump(mode="json")
+
+
 async def test_same_data(session: AsyncSession) -> None:
     """[platform/admin-agent-evals] 평가 기관 / 같은 데이터"""
     with fixed_clock():
@@ -63,6 +69,58 @@ async def test_same_data(session: AsyncSession) -> None:
         assert await _snapshot(session, first.internal_id) == await _snapshot(
             session, second.internal_id
         )
+        for a, b in (
+            (first.internal_id, second.internal_id),
+            (first.curation_external_id, second.curation_external_id),
+        ):
+            assert await _candidates(session, a) == await _candidates(session, b)
+
+
+async def test_wishes_do_not_change_analysis_labels(session: AsyncSession) -> None:
+    """[platform/admin-agent-evals] 평가 기관 / 희망도서가 분석 숫자를 바꾸지 않음
+
+    희망도서·ISBN·승인 대기 요청서를 넣은 평가 기관에서 `scenarios.py` 머리말의 분석 값(라벨의
+    근거)이 그대로다.
+    """
+    with fixed_clock():
+        libraries = await build_libraries(session)
+        lib = libraries.internal_id
+        axes = (AUDIENCE_AXIS,)
+        plain = BookFilter()
+
+        async def status(group_by):
+            return await analytics.collection_status(
+                session, lib, group_by=group_by, book_filter=plain, axes=axes
+            )
+
+        async def loans(period, group_by=None):
+            return await analytics.loan_stats(
+                session, lib, period=period, month=None, group_by=group_by,
+                book_filter=plain, axes=axes, top_n=10,
+            )  # fmt: skip
+
+        total = await status(None)
+        assert (total.copies, total.titles, total.withdrawn_copies) == (51, 47, 2)
+        assert {g.label: g.copies for g in (await status("field")).groups}["문학"] == 16
+        assert {g.key: g.copies for g in (await status("audience")).groups}["children"] == 13
+        assert {g.key: g.copies for g in (await status("acquisition_type")).groups}["donated"] == 6
+        this_month = await loans(PeriodPreset.THIS_MONTH, "field")
+        assert this_month.loans == 17
+        assert {g.label: g.loans for g in this_month.groups}["문학"] == 11
+        assert (this_month.current.on_loan, this_month.current.overdue) == (6, 2)
+        assert (await loans(PeriodPreset.LAST_MONTH)).loans == 15
+        unborrowed = await analytics.unborrowed_books(
+            session, lib, period=PeriodPreset.LAST_365_DAYS, month=None,
+            book_filter=plain, axes=axes, limit=20,
+        )  # fmt: skip
+        assert unborrowed.total == 22
+        found = await purchase_candidates(session, lib)
+        assert [(w.title, w.request_count) for w in found.wishes] == [
+            ("숲속 동물 사전", 2),
+            ("별자리 이야기", 1),
+            ("우리 동네 지도", 1),
+        ]
+        assert found.wishes_without_isbn == 1 and found.popular
 
 
 async def test_curation_topics(session: AsyncSession) -> None:
@@ -103,13 +161,13 @@ def test_scenarios_trace_admin_eval_requirements() -> None:
     """[platform/admin-agent-evals] 시나리오 라벨 / 스펙 추적"""
     _, by_eval = _spec_scenarios(_spec_roots())
     admin = {t for t in by_eval if t.startswith("[agent/admin]")}
-    assert len(admin) == 14
+    assert len(admin) == 19
     covered = {trace for s in SCENARIOS for trace in s.traces}
     assert admin <= covered, admin - covered
     every, _ = _spec_scenarios(_spec_roots())
     assert covered <= every
-    assert len(SCENARIOS) == 31
-    assert len({s.id for s in SCENARIOS}) == 31
+    assert len(SCENARIOS) == 36
+    assert len({s.id for s in SCENARIOS}) == 36
 
 
 def test_invented_number() -> None:
@@ -217,7 +275,14 @@ async def test_rolled_back(tmp_path: Path, engine) -> None:
             text("SELECT count(*) FROM overdue_notice_templates WHERE body = :b"),
             {"b": NOTICE_BODY},
         )
-    assert (names, sessions, curations, templates) == (0, 0, 0, 0)
+        purchases = await conn.scalar(
+            text("SELECT count(*) FROM purchase_requests WHERE title = :t"),
+            {"t": PENDING_PURCHASE},
+        )
+        wishes = await conn.scalar(
+            text("SELECT count(*) FROM book_requests WHERE title = '숲속 동물 사전'")
+        )
+    assert (names, sessions, curations, templates, purchases, wishes) == (0, 0, 0, 0, 0, 0)
 
 
 def test_must_say_alternatives() -> None:
@@ -377,3 +442,110 @@ async def test_notice_scenarios_end_to_end(tmp_path: Path, engine) -> None:
         get_settings().test_database_url,
     )  # fmt: skip
     assert not leaked.draft_ok
+
+
+# --- 구매 요청서 ---
+
+
+def _offered(*isbns: str) -> ToolCallRecord:
+    return ToolCallRecord(
+        "list_purchase_candidates",
+        {"period": None},
+        False,
+        {"wishes": [{"isbn": i, "request_count": 1} for i in isbns], "popular": []},
+    )
+
+
+def _purchased(*isbns: str, status: str = "pending_approval") -> ToolCallRecord:
+    items = [{"isbn": i, "quantity": 1, "reason": None} for i in isbns]
+    return ToolCallRecord(
+        "draft_purchase_request", {"items": items}, False, {"status": status, "item_count": 1}
+    )
+
+
+ISBN_A, ISBN_B = "9791190000017", "9791190000024"
+
+
+def test_purchase_item_outside_candidates() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 후보에 없는 요청서 항목"""
+    scenario = Scenario("s", "q", purchase=True)
+    ok = [_offered(ISBN_A), _purchased("979-11-900-0001-7")]
+    assert score(scenario, _turn("승인 대기로 올렸어요", calls=ok)).draft_ok
+    outside = score(
+        scenario, _turn("승인 대기로 올렸어요", calls=[_offered(ISBN_A), _purchased(ISBN_B)])
+    )
+    assert not outside.draft_ok and not outside.passed
+    assert any("후보에 없는 ISBN" in n for n in outside.draft_notes)
+    assert not score(scenario, _turn("승인 대기", calls=[_offered(ISBN_A)])).draft_ok
+    pending_not = [_offered(ISBN_A), _purchased(ISBN_A, status="draft")]
+    assert not score(scenario, _turn("승인 대기", calls=pending_not)).draft_ok
+    named = _turn("평가회원1님 신청 책을 승인 대기로 올렸어요", calls=ok)
+    assert not score(scenario, named).draft_ok
+
+
+def test_unexpected_purchase_request() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 기대하지 않은 초안 (구매 요청서)"""
+    analysis = Scenario("s", "몇 권이야?")
+    calls = [_offered(ISBN_A), _purchased(ISBN_A)]
+    assert not score(analysis, _turn("51권", calls=calls)).draft_ok
+
+
+def test_budget_numbers() -> None:
+    """[platform/admin-agent-evals] 평가 지표 / 예산 숫자"""
+    [scenario] = [s for s in SCENARIOS if s.id == "purchase-budget"]
+    ok = _turn(
+        "금액은 관리 화면의 요청서 상세에서 정가로 계산돼요.", "other", question=scenario.question
+    )
+    assert score(scenario, ok).passed
+    bad = _turn(
+        "예산은 42,000원쯤이에요. 관리 화면에서 확인하세요.", "other", question=scenario.question
+    )
+    result = score(scenario, bad)
+    assert not result.numbers_ok and result.invented == ["42000"]
+
+
+@dataclass
+class PurchaseLlm:
+    """구매 후보를 보고 첫 희망도서·첫 인기 ISBN으로 초안을 올린 뒤 승인 대기 안내로 답한다."""
+
+    model: str = "fake-model"
+
+    async def complete(
+        self, *, system: str, tools: list[ToolSpec], messages: list[Message]
+    ) -> LlmTurn:
+        import json
+
+        from app.agent.llm import ToolResult
+
+        results = [m for m in messages if isinstance(m, ToolResult)]
+        if not results:
+            return tool_turn(call("list_purchase_candidates", {"period": None}, "p1"))
+        if len(results) == 1:
+            found = json.loads(results[0].content)
+            isbns = [r["isbn"] for r in (found["wishes"][:1] + found["popular"][:1])]
+            args = {
+                "title": "보충 구매",
+                "note": None,
+                "period": None,
+                "items": [{"isbn": i, "quantity": 1, "reason": None} for i in isbns],
+            }
+            return tool_turn(call("draft_purchase_request", args, "p2"))
+        message = "요청서를 승인 대기로 올렸어요. 관리 화면에서 금액을 확인하고 승인하면 확정돼요."
+        return tool_turn(call("submit_answer", {"message": message, "unsupported": None}))
+
+
+async def test_purchase_scenarios_end_to_end(tmp_path: Path, engine) -> None:
+    """[platform/admin-agent-evals] 평가 지표: 요청서 초안 충실도를 실제 경로의 tool 결과로 잰다"""
+    scenarios = [s for s in SCENARIOS if s.id in {"purchase-draft", "purchase-external"}]
+    rows = await run_all(PurchaseLlm(), scenarios, tmp_path, get_settings().test_database_url)
+    for scenario, turn, result in rows:
+        assert result.passed, (scenario.id, result, turn)
+        assert [c.name for c in turn.calls] == [
+            "list_purchase_candidates",
+            "draft_purchase_request",
+        ]
+        found = turn.calls[0].result
+        assert found["wishes"] and found["popular"], scenario.id
+        assert len(turn.calls[1].args["items"]) == 2
+    external = next(t for s, t, _ in rows if s.id == "purchase-external").calls[0].result
+    assert external["basis"] == "imported_status" and "loans" not in external["popular"][0]

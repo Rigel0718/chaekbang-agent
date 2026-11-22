@@ -192,7 +192,8 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | search_collection | 소장 도서 검색(AI 사서와 같은 tool), 큐레이션 후보 찾기 | ✗ |
 | draft_curation | 주제 큐레이션 초안을 승인 대기로 올림 → 승인하면 게시(`add-approval-flow`) | ✓ |
 | draft_overdue_notice | 연체 안내문 **틀**(자리표시 `{이름}` `{서명}` `{반납예정일}` `{연체일수}` `{도서관}`가 든 문장 하나)을 승인 대기로 올림. 회원별 문안은 승인한 틀로 코드가 채운다(자체 대출 기관, `add-overdue-notice`) | ✓ |
-| draft_purchase_request | 부족 분야·희망도서·인기 대출을 근거로 보충 구매 요청서 초안 | ✓ |
+| list_purchase_candidates | 구매 후보: 희망도서(ISBN별 신청 건수, 회원 값 없음), 인기(자체 대출은 기간 대출 수, 외부 대출은 가져온 파일의 대출 중 상태), 분야별 권수·권당 대출. 가격 없음 (`add-purchase-request`) | ✗ |
+| draft_purchase_request | 구매 후보에 있는 ISBN으로 보충 구매 요청서 초안을 승인 대기로 올림. 서명·근거 종류는 코드가 채우고 금액은 LLM이 보지 않는다 (`add-purchase-request`) | ✓ |
 
 **승인 흐름**: 초안(draft) → 승인 대기(pending_approval) → 승인(approved) → 게시·확정(published / confirmed), 게시본을 내리면 archived. 상태는 초안 테이블마다의 `status` 칸에 저장하고 전이 규칙은 공통 코드 한 곳(`app/library/approval.py`)에 둔다. 에이전트 실행은 초안을 승인 대기로 올리면 끝나고, 승인과 그 뒤 실행(게시·확정)은 관리자의 요청에서 결정적인 코드가 한다. 상태가 DB에만 있어 서버가 재시작돼도 승인이 이어진다(`add-approval-flow`).
 
@@ -206,7 +207,7 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 - sqlglot으로 SELECT만 통과시키고, statement_timeout과 LIMIT을 강제한다.
 - library_id 조건을 코드에서 강제해 다른 기관 데이터에 접근할 수 없게 한다.
 
-**구매 요청서의 의미**: 요청서를 받는 쪽은 납품하는 동네 책방이다. 금액은 코드로 계산한다.
+**구매 요청서의 의미**(`add-purchase-request`): 요청서를 받는 쪽은 납품하는 동네 책방이다. 정가는 이용자에게 보여 주는 정보가 아니라 **예산 추정과 공적 보고를 위한 기록**이다. 단가는 YES24 상품 상세의 정가 하나이고, 초안·승인 대기 동안에는 상세를 열 때마다 실시간으로 조회만 하고 저장하지 않는다(가격이 바뀔 수 있어서). 승인하는 순간 코드가 모든 항목을 다시 조회해 금액(정가 × 권수, 합계)을 int(원)로 계산하고, 항목 단가·금액·총액·조회 시각·출처를 확정본에 기록한다. 가격 없는 항목이 있으면 승인이 409, 조회 장애면 503이고 아무것도 바뀌지 않는다. 확정하면 같은 ISBN의 처리 전 희망도서가 닫힌다. 확정본은 고치거나 지울 수 없다. 인쇄·내보내기·발송은 하지 않는다. 항목은 ISBN으로 식별하고, 근거 종류는 희망도서·인기·부족 분야·직접 입력이다. 부족 분야와 직접 입력 항목은 관리자가 REST로만 넣는다.
 
 ## 데이터 모델
 
@@ -229,7 +230,7 @@ v1(`add-librarian-agent`)에는 `search_collection`, `get_book_detail`과 어린
 | curations, curation_items | 큐레이션과 포함 도서(이유 한 줄), 승인 상태 칸 | MVP |
 | overdue_notice_templates | 연체 안내문 틀(문장 하나), 승인 상태 칸. 쓰는 틀은 가장 늦게 확정된 것. 회원 값·채운 문안은 저장하지 않는다 | MVP |
 | book_requests | 희망도서 신청: 서명, 저자·ISBN(선택), 회원(삭제하면 연결만 끊음), 상태 `requested`/`closed`. 신청은 키오스크, 목록·닫기는 관리자 | MVP |
-| purchase_requests, purchase_request_items | 보충 구매 요청서와 항목, 상태 | MVP |
+| purchase_requests, purchase_request_items | 보충 구매 요청서(제목, 납품처 이름, 메모, 승인 상태 칸, 확정 때 기록하는 총액·조회 시각·가격 출처)와 항목(ISBN, 서명, 저자, 권수, 근거 종류·한 줄, 확정 때 기록하는 단가·금액). 희망도서는 `book_requests.purchase_request_id`로 확정한 요청서를 가리킨다 | MVP |
 | book_embeddings | 기관 도서 벡터 (pgvector, 1024차원). 공식 서지에 연결되지 않은 책(ISBN 없음, 못 찾음)만 둔다. 연결된 책은 공식 서지 벡터를 쓴다. 기관 도서·모델 이름·텍스트 버전·종류마다 벡터 하나와 임베딩 텍스트의 해시를 두고, 텍스트 원문은 저장하지 않는다(두 층 모두). 추천 가능한 책만 운영자가 `scripts/embed_books.py`로 적재한다. 조회는 두 층을 한 순위로 합친다 | MVP |
 | chat_sessions, chat_messages | 진행 중인 이용자 대화. 메시지에는 가린 문장, 최종 답, 코드가 쓰는 책 표시와 책 id(관련 책 tool의 최근 기록). 세션이 끝나면 메시지를 지운다 | MVP |
 | agent_runs, agent_steps | 에이전트 실행, tool 호출 기록. 승인 상태는 초안 테이블마다 둔다(공통 승인 표 없음) | MVP |
