@@ -6,6 +6,10 @@
 
 책 표: (서명, KDC, 어린이, 사본 상태들, 입수, 등록, 대출 날짜들). 대출 날짜 뒤의 `!`는 반납하지 않은
 대출이고, `?`는 반납하지 않았고 반납 예정일이 지난 대출(연체)이다.
+
+구매 요청서 평가(`add-purchase-request`)를 위해 책마다 가상 ISBN(`eval_isbn`)을 주고, 희망도서
+신청과 승인 대기 구매 요청서를 둔다. 분석 결과에는 ISBN과 희망도서가 들어가지 않아 분석 라벨의
+숫자는 그대로다(`tests/evals/test_admin_agent_eval.py`가 확인한다).
 """
 
 from collections.abc import Iterator
@@ -18,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
 from app.core.contributors import author_keys
+from app.core.isbn import isbn13_check_digit
+from app.core.text import match_key
 
 TODAY = date(2026, 11, 19)
 NOW = datetime(2026, 11, 19, 5, 0, tzinfo=UTC)  # 기관 시간대 14:00
@@ -174,6 +180,29 @@ CURATION_BOOKS: tuple[tuple, ...] = (
 )
 PENDING_CURATION = "가을 그림책 모음"  # 큐레이션 자체 대출 기관에 미리 있는 승인 대기 큐레이션
 
+# ISBN 앞자리: 분석 기관 책 100, 외부 대출 기관 책 200, 큐레이션 책 300, 희망도서(소장 안 함) 900
+BOOK_ISBN, EXTERNAL_ISBN, CURATION_ISBN, WISH_ISBN = 100, 200, 300, 900
+
+# 희망도서: (서명, ISBN 번호(None이면 ISBN 없음), 신청 회원 번호들). 같은 ISBN을 두 회원이 신청한
+# 책 하나, ISBN 없는 신청 하나. 분석 기관(자체 대출)의 회원 `평가회원1~5`가 신청한다.
+WISHES: tuple[tuple, ...] = (
+    ("숲속 동물 사전", 1, (1, 2)),
+    ("별자리 이야기", 2, (3,)),
+    ("우리 동네 지도", 3, (4,)),
+    ("제목만 아는 책", None, (5,)),
+)
+# 큐레이션 외부 대출 기관의 희망도서(신청 회원 `평가회원9`)
+EXTERNAL_WISHES: tuple[tuple, ...] = (("바다 생물 도감", 4), ("곤충 관찰 일기", 5))
+PENDING_PURCHASE = (
+    "11월 보충 구매"  # 분석 기관에 미리 있는 승인 대기 구매 요청서(별자리 이야기 1권)
+)
+
+
+def eval_isbn(group: int, n: int) -> str:
+    """평가용 가상 ISBN-13(체크 숫자가 맞다). `group`은 위의 앞자리, `n`은 0~9999."""
+    first12 = f"97911{group:03d}{n:04d}"
+    return first12 + isbn13_check_digit(first12)
+
 
 @dataclass(frozen=True)
 class EvalLibraries:
@@ -228,17 +257,33 @@ def _classification(value: str | None) -> tuple[str | None, str | None]:
     return value, f"{value}-평가"
 
 
-async def _book(session: AsyncSession, library_id: int, title: str, kdc, created_at) -> int:
+async def _book(
+    session: AsyncSession, library_id: int, title: str, kdc, created_at, isbn: str
+) -> int:
     author = "평가 저자"
     return await _insert(
         session,
         "library_books",
         library_id=library_id,
+        isbn=isbn,
         title=title,
         author=author,
         author_keys=author_keys(author),
         kdc=kdc,
         created_at=created_at,
+    )
+
+
+async def _wish(session: AsyncSession, library_id: int, member_id: int, title: str, isbn) -> None:
+    await _insert(
+        session,
+        "book_requests",
+        returning=False,
+        library_id=library_id,
+        member_id=member_id,
+        title=title,
+        title_key=match_key(title),
+        isbn=isbn,
     )
 
 
@@ -256,7 +301,7 @@ async def build_libraries(session: AsyncSession, suffix: str = "") -> EvalLibrar
     accession = 0
     for index, (title, cls, children, statuses, acquisition, created, loans) in enumerate(BOOKS):
         kdc, call_number = _classification(cls)
-        book_id = await _book(session, internal, title, kdc, created)
+        book_id = await _book(session, internal, title, kdc, created, eval_isbn(BOOK_ISBN, index))
         titles[title] = book_id
         if children:
             await _insert(
@@ -304,8 +349,10 @@ async def build_libraries(session: AsyncSession, suffix: str = "") -> EvalLibrar
                 await session.execute(
                     text("UPDATE holdings SET status = 'on_loan' WHERE id = :id"), {"id": holding}
                 )
-    for title, kdc, statuses in EXTERNAL_BOOKS:
-        book_id = await _book(session, external, title, kdc, REGISTERED)
+    for n, (title, kdc, statuses) in enumerate(EXTERNAL_BOOKS):
+        book_id = await _book(
+            session, external, title, kdc, REGISTERED, eval_isbn(EXTERNAL_ISBN, n)
+        )
         for status in statuses:
             accession += 1
             await _insert(
@@ -321,12 +368,42 @@ async def build_libraries(session: AsyncSession, suffix: str = "") -> EvalLibrar
                 source="imported",
                 last_synced_at=datetime(2026, 11, 18, 0, 0, tzinfo=UTC),
             )
+    for title, number, requesters in WISHES:
+        isbn = eval_isbn(WISH_ISBN, number) if number is not None else None
+        for who in requesters:
+            await _wish(session, internal, members[who - 1], title, isbn)
+    purchase = await _insert(
+        session,
+        "purchase_requests",
+        library_id=internal,
+        title=PENDING_PURCHASE,
+        status="pending_approval",
+    )
+    await _insert(
+        session,
+        "purchase_request_items",
+        returning=False,
+        library_id=internal,
+        purchase_request_id=purchase,
+        position=1,
+        isbn=eval_isbn(WISH_ISBN, 2),
+        title="별자리 이야기",
+        quantity=1,
+        reason_kind="book_request",
+    )
     curation_internal, curation_titles = await _curation_library(
         session, f"평가용 큐레이션 자체 대출 작은도서관{suffix}", "internal", "CI"
     )
     curation_external, _ = await _curation_library(
         session, f"평가용 큐레이션 외부 대출 작은도서관{suffix}", "external", "CE"
     )
+    external_member = await _insert(
+        session, "members", library_id=curation_external, member_number="E0009", name="평가회원9"
+    )
+    for title, number in EXTERNAL_WISHES:
+        await _wish(
+            session, curation_external, external_member, title, eval_isbn(WISH_ISBN, number)
+        )
     pending = await _insert(
         session,
         "curations",
@@ -367,6 +444,7 @@ async def _curation_library(
             session,
             "library_books",
             library_id=library,
+            isbn=eval_isbn(CURATION_ISBN, n),
             title=title,
             author=author,
             author_keys=author_keys(author),

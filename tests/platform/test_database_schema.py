@@ -51,6 +51,8 @@ ALL_TABLES = {
     "curation_items",
     "overdue_notice_templates",
     "book_requests",
+    "purchase_requests",
+    "purchase_request_items",
     "library_guides",
     "library_opening_hours",
     "library_closures",
@@ -71,7 +73,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 26
+    assert len(ALL_TABLES) == 28
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -87,7 +89,7 @@ async def test_korean_collation_present(engine: AsyncEngine) -> None:
     """
     async with engine.connect() as conn:
         await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
-    assert len(await _table_names(engine)) == 26
+    assert len(await _table_names(engine)) == 28
 
 
 async def test_korean_collation_missing(engine: AsyncEngine) -> None:
@@ -282,6 +284,113 @@ async def test_book_request_open_duplicate_rejected(
     await insert(session, "book_requests", **values)
     await assert_rejected(
         session, "book_requests", match="uq_book_requests_open_member_title", **values
+    )
+
+
+async def test_book_requests_purchase_request_column(engine: AsyncEngine, migrated_db: str) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 희망도서의 구매 요청서 칸"""
+    config = alembic_config(migrated_db)
+    await asyncio.to_thread(command.downgrade, config, "-1")
+    try:
+        async with engine.begin() as conn:
+            library_id = await conn.scalar(
+                text(
+                    "INSERT INTO libraries (name, type, loan_mode, default_loan_days) "
+                    "VALUES ('요청서 칸 도서관', 'small_library', 'internal', 14) RETURNING id"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO book_requests (library_id, title, title_key) "
+                    "VALUES (:library, '옛 신청', '옛신청')"
+                ),
+                {"library": library_id},
+            )
+    finally:
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+    def columns(sync_conn):
+        return {c["name"]: c for c in inspect(sync_conn).get_columns("book_requests")}
+
+    async with engine.begin() as conn:
+        found = await conn.run_sync(columns)
+        old = await conn.scalar(
+            text("SELECT purchase_request_id FROM book_requests WHERE library_id = :id"),
+            {"id": library_id},
+        )
+        await conn.execute(
+            text("DELETE FROM book_requests WHERE library_id = :id"), {"id": library_id}
+        )
+        await conn.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
+    assert found["purchase_request_id"]["nullable"] is True
+    assert old is None
+
+
+async def test_purchase_request_rules(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 스키마 생성 / 구매 요청서 테이블의 저장 계층 규칙"""
+    await assert_rejected(
+        session,
+        "purchase_requests",
+        library_id=library_a.id,
+        title="12월 보충 구매",
+        status="rejected",
+        match="approval_status",
+    )
+    request = await insert(session, "purchase_requests", library_id=library_a.id, title="요청서")
+    item = {
+        "library_id": library_a.id,
+        "purchase_request_id": request["id"],
+        "title": "작별하지 않는다",
+        "quantity": 1,
+        "reason_kind": "manual",
+    }
+    await insert(session, "purchase_request_items", position=1, isbn="9788936434120", **item)
+    await assert_rejected(
+        session,
+        "purchase_request_items",
+        match="uq_purchase_request_items_request_id_isbn",
+        position=2,
+        isbn="9788936434120",
+        **item,
+    )
+    await assert_rejected(
+        session,
+        "purchase_request_items",
+        match="quantity_in_range",
+        position=3,
+        isbn="9788936434137",
+        **{**item, "quantity": 0},
+    )
+
+
+async def test_purchase_request_items_reject_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 요청서로 항목·희망도서 직접 저장
+
+    구매 요청서 항목과 희망도서의 요청서 연결은 같은 기관의 요청서만 가리킨다.
+    """
+    request = await insert(session, "purchase_requests", library_id=library_a.id, title="요청서")
+    await assert_rejected(
+        session,
+        "purchase_request_items",
+        library_id=library_b.id,
+        purchase_request_id=request["id"],
+        position=1,
+        isbn="9788936434120",
+        title="작별하지 않는다",
+        quantity=1,
+        reason_kind="manual",
+        match="fk_purchase_request_items_library_id_request_id_requests",
+    )
+    await assert_rejected(
+        session,
+        "book_requests",
+        library_id=library_b.id,
+        purchase_request_id=request["id"],
+        title="작별하지 않는다",
+        title_key="작별하지않는다",
+        match="fk_book_requests_library_id_purchase_request_id_requests",
     )
 
 

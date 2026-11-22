@@ -283,6 +283,7 @@ async def test_close(admin_client: AsyncClient, kiosk_client: AsyncClient, membe
     res = await admin_client.patch(f"/book-requests/{created['id']}", json={"status": "closed"})
     assert res.status_code == 200
     assert res.json()["status"] == "closed" and res.json()["closed_at"] is not None
+    assert res.json()["purchase_request_id"] is None  # 관리자가 닫은 신청은 요청서가 없다
     again = await admin_client.patch(f"/book-requests/{created['id']}", json={"status": "closed"})
     assert again.status_code == 200
     assert again.json()["closed_at"] == res.json()["closed_at"]

@@ -42,6 +42,8 @@ class BookRequestRead(ReadModel):
 class BookRequestAdminRead(BookRequestRead):
     member_number: str | None  # 회원이 지워졌으면 None
     closed_at: datetime | None
+    # 구매 요청서를 확정해서 닫힌 신청만 값이 있다(관리자가 닫았거나 처리 전이면 None)
+    purchase_request_id: int | None
 
 
 class BookRequestUpdate(BaseModel):

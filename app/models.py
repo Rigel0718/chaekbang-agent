@@ -14,6 +14,7 @@ from app.library.models import (
     guide,
     library,
     overdue_notice,
+    purchase_request,
 )
 
 # 기관 데이터 테이블 구분 (platform/database-schema 스펙).
@@ -42,6 +43,8 @@ TENANT_TABLES: set[str] = {
     "curation_items",
     "overdue_notice_templates",
     "book_requests",
+    "purchase_requests",
+    "purchase_request_items",
 }
 
 __all__ = [
@@ -60,4 +63,5 @@ __all__ = [
     "guide",
     "library",
     "overdue_notice",
+    "purchase_request",
 ]

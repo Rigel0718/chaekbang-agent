@@ -13,7 +13,7 @@
 - 도서관 안내: 대표 연락처, 운영 시간, 휴관일, 이용 규칙, 자유 항목, 개관 여부와 반납 예정일 계산
 - AI 사서: 후보 검색, 조회 tool, 프로필, 대화 세션, 개인정보 가리기, 추천 카드와 노출 기록
 - 운영 에이전트: 장서·대출 분석(정해진 분석 tool), 프로필, 관리자 대화
-- 승인 흐름: 확정 작업의 공통 상태·전이, 큐레이션(초안 → 승인 → 게시), 연체 안내(틀 승인 → 확정, 목록은 계산)
+- 승인 흐름: 확정 작업의 공통 상태·전이, 큐레이션(초안 → 승인 → 게시), 연체 안내(틀 승인 → 확정, 목록은 계산), 구매 요청서(초안 → 승인 → 확정, 정가는 승인 때 기록)
 
 ## 구성
 
@@ -21,7 +21,7 @@
 | --- | --- |
 | `api/` | 라우터. 로직을 넣지 않는다 |
 | `services/` | 비즈니스 로직. REST API와 이후 에이전트 tool이 함께 쓴다 |
-| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `book_request`(희망도서 신청), `guide`(안내), `curation`(큐레이션), `overdue_notice`(연체 안내문 틀) |
+| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `book_request`(희망도서 신청), `guide`(안내), `curation`(큐레이션), `overdue_notice`(연체 안내문 틀), `purchase_request`(구매 요청서와 항목) |
 | `schemas/` | Pydantic 스키마 |
 | `importing/` | 파일 읽기, 머리글 인식, 정규화. DB와 HTTP를 모른다 |
 | `deps.py` | 현재 직원·기관, 역할 |
@@ -55,6 +55,8 @@
 | `overdue_tools.py` | 운영 에이전트의 연체 tool: `list_overdue_loans`(회원 값 없는 결과 `OverdueLoanList`), `draft_overdue_notice`(틀을 승인 대기로, 입력 기록 없음). 자체 대출 기관 프로필에만 |
 | `services/overdue_notices.py`, `api/overdue_notices.py`, `overdue_template.py` | 연체 안내: 틀 관리 `/overdue-notice-templates`, 오늘의 목록 `GET /overdue-notices/today`(모두 관리자), 자리표시 검사·채우기(순수 함수) |
 | `services/book_requests.py`, `api/book_requests.py`, `schemas/book_request.py` | 희망도서: 신청 `POST /book-requests`(키오스크·관리자), 목록·닫기 `GET`·`PATCH /book-requests`(관리자). 이용자 화면이 REST로 바로 부른다(AI 사서 tool 아님) |
+| `services/purchase_requests.py`, `api/purchase_requests.py`, `schemas/purchase_request.py` | 구매 요청서: 관리 `/purchase-requests`(모두 관리자). 금액 계산 `price_items`, 상세의 추정 금액 `request_detail`, 승인·확정 `approve_request`. 정가 조회기는 `get_list_prices`(`app/central/list_prices.py`) |
+| `services/purchase_candidates.py`, `schemas/purchase_candidates.py` | 구매 후보 `GET /purchase-requests/candidates`: 희망도서(ISBN별), 인기, 분야 숫자. 필드는 허용 목록 |
 | `services/curations.py`, `api/curations.py` | 큐레이션: 관리 `/curations`(관리자), 게시본 읽기 `GET /librarian/curations`(키오스크·관리자). REST와 두 에이전트 tool이 같은 service를 쓴다 |
 
 ## 규칙
@@ -211,6 +213,16 @@
 - **회원 전화번호**(`members.phone`)는 선택이고 숫자만 저장한다. 관리자 회원 API와 연체 안내 목록에서만 돌려주고 검색(`q`)에 쓰지 않는다. 다른 곳에 복사하거나 목록을 저장하지 않으므로 회원을 지우면 함께 사라진다.
 - **외부 대출 기관**은 이 시스템에 대출 기록이 없어 틀 API와 목록이 모두 409다(`services/overdue_notices.py`의 `_library`).
 - **운영 에이전트**: 자체 대출 기관 프로필에만 `list_overdue_loans`·`draft_overdue_notice`가 있고 연체 안내 규칙도 그 프로필의 문구(`LOAN_NOTES[INTERNAL]`)에만 있다. 연체 목록 결과는 서명·등록번호·반납 예정일·연체 일수와 수(20건까지)뿐이고, 틀 초안 결과에는 채운 문안이 없다. 카나리아 테스트(`tests/library/test_overdue_tools.py`)가 LLM 요청과 기록에 회원 값이 없음을 확인한다.
+
+## 구매 요청서
+
+- **승인은 요청서 전체에** 받는다(`CONFIRMING`, 내리기 없음). 초안만 고치고 지울 수 있고(내용을 통째로 바꿈), 반려하면 사유와 함께 초안으로 돌아간다. 확정본은 고치기·지우기·제출·반려·승인이 모두 409다. 두 운영 방식 모두 쓴다. 키오스크는 이 기능 전체가 403이다.
+- **정가는 예산 추정과 공적 보고용 기록**이다. 단가는 YES24 상품 상세의 정가(`shopPrice`) 하나이고(`app/central/list_prices.py`), 공식 서지·기관 도서의 정가나 판매가는 쓰지 않는다. 금액(정가 × 권수, 합계)은 `price_items` 한 곳에서 int(원)로 계산하고 LLM은 보지 않는다.
+  - 확정 전 상세(`GET /purchase-requests/{id}`)는 정가를 그때 조회해 추정 금액을 응답에만 담고 저장하지 않는다. 조회를 쓸 수 없으면 200으로 금액 없이 `estimate.unavailable`을 켠다. 목록은 조회하지 않는다.
+  - **승인**은 상태를 읽고 읽기 트랜잭션을 끝낸 뒤 트랜잭션 밖에서 모든 항목의 정가를 조회한다(항목마다 외부 호출이라 DB 행을 잡지 않는다). 가격 없는 항목이 있으면 409(ISBN 표시), 조회 장애면 503이고 아무것도 바뀌지 않는다. 조회가 끝나면 조건부 갱신으로 승인하고, 조회하는 동안 항목이 바뀌었으면(반려 → 수정 → 재제출) 409로 되돌린 뒤, 금액·총액·조회 시각·출처를 기록하고 희망도서를 닫고 `mark_executed`로 확정한다.
+- **항목은 ISBN으로 식별**한다(한 요청서에 같은 ISBN은 하나, 최대 30개, 권수 1~10). 희망도서나 기관 도서 id를 갖지 않는다. 어떤 신청에서 왔는지는 `book_requests.purchase_request_id`가 답한다. 확정하면 같은 기관에서 항목 ISBN과 같은 `requested` 신청이 모두 `closed`가 되고 그 요청서를 가리킨다(근거 종류와 상관없음). ISBN 없는 신청, 이미 닫힌 신청, 다른 기관 신청은 그대로다.
+- **구매 후보**(`services/purchase_candidates.py`)는 코드가 "살 책"으로 내놓을 수 있는 것만 준다: 희망도서(ISBN별 신청 건수, 이미 소장한 ISBN 제외, ISBN 없는 신청은 건수만), 인기(자체 대출은 기간 대출 수 순위, 외부 대출은 가져온 파일의 대출 중 상태와 마지막 가져오기 시각이고 대출 수는 말하지 않음), 분야별 권수·권당 대출 숫자. 부족 분야의 책은 관리자가 ISBN으로 직접 넣는다. 결과에는 회원 값과 가격이 없다.
+- 정가 조회기는 서버가 처음 쓸 때 만든다(`get_list_prices`). 키가 없어도 서버는 시작하고 조회는 쓸 수 없다고 답한다. 테스트는 `get_list_prices`를 가짜 조회기로 바꾸고(`tests/purchase_helpers.py`) YES24를 부르지 않는다.
 
 ## 큐레이션
 

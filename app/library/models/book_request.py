@@ -41,6 +41,13 @@ class BookRequest(TimestampMixin, Base):
             name="fk_book_requests_library_id_member_id_members",
             ondelete="RESTRICT",
         ),
+        # 확정한 구매 요청서로 닫힌 신청만 요청서를 가리킨다. 같은 기관의 요청서만 가리킨다.
+        ForeignKeyConstraint(
+            ["library_id", "purchase_request_id"],
+            ["purchase_requests.library_id", "purchase_requests.id"],
+            name="fk_book_requests_library_id_purchase_request_id_requests",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint("length(title) > 0", name="title_not_empty"),
         CheckConstraint("length(title_key) > 0", name="title_key_not_empty"),
         # 같은 회원이 같은 서명으로 처리 전 신청을 하나만 둔다(동시 요청도 막는다)
@@ -68,6 +75,8 @@ class BookRequest(TimestampMixin, Base):
         server_default=BookRequestStatus.REQUESTED.value,
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 구매 요청서를 확정해서 닫힌 신청만 값이 있다(관리자가 닫은 신청은 비어 있다)
+    purchase_request_id: Mapped[int | None] = mapped_column(Integer)
 
     member: Mapped[Member | None] = relationship(
         lazy="joined",

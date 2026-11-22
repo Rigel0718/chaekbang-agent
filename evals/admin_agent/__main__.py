@@ -74,6 +74,7 @@ def _record(index: int, scenario: Scenario, turn: TurnRecord, result: Score) -> 
             "unsupported": scenario.unsupported,
             "draft": scenario.draft,
             "notice": scenario.notice,
+            "purchase": scenario.purchase,
         },
         "score": asdict(result),
         "turn": asdict(turn),

@@ -14,6 +14,7 @@ from app.core.errors import (
     InvalidRequestError,
     LimitExceededError,
     NotFoundError,
+    UnavailableError,
 )
 from app.features.children.analytics import admin_extension
 from app.features.children.api import router as children_router
@@ -37,9 +38,11 @@ from app.library.api import (
     loans,
     members,
     overdue_notices,
+    purchase_requests,
     staff,
 )
 from app.library.api.librarian import close_query_encoder
+from app.library.api.purchase_requests import close_list_prices
 from app.library.hooks import register_hook, register_related_scope
 from app.library.librarian import build_librarian_profiles
 from app.library.services.chat import purge_forever
@@ -61,6 +64,7 @@ async def lifespan(app: FastAPI):
     with contextlib.suppress(asyncio.CancelledError):
         await purge
     await close_query_encoder(app)
+    await close_list_prices(app)
     await get_engine().dispose()
 
 
@@ -88,6 +92,7 @@ app.include_router(curations.router)
 app.include_router(curations.published_router)
 app.include_router(overdue_notices.templates_router)
 app.include_router(overdue_notices.notices_router)
+app.include_router(purchase_requests.router)
 # 화면은 정적 파일로 내준다. README·CLAUDE.md가 밖에 있도록 public/만 마운트한다.
 app.mount(
     "/ui", StaticFiles(directory=Path(__file__).parent / "web" / "public", html=True), name="ui"
@@ -119,3 +124,8 @@ async def invalid_request_handler(request: Request, exc: InvalidRequestError) ->
 @app.exception_handler(LimitExceededError)
 async def limit_exceeded_handler(request: Request, exc: LimitExceededError) -> JSONResponse:
     return JSONResponse(status_code=429, content={"detail": exc.message})
+
+
+@app.exception_handler(UnavailableError)
+async def unavailable_handler(request: Request, exc: UnavailableError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": exc.message})
