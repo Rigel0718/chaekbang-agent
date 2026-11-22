@@ -12,6 +12,7 @@ from tests.helpers import (
     add_member,
     assert_rejected,
     fetch,
+    insert,
 )
 
 
@@ -103,6 +104,40 @@ async def test_delete_member_without_loans(
     """[circulation/members] 회원 조회·수정·삭제 / 대출 기록 없는 회원 삭제"""
     member = await add_member(session, library_a.id, "M0001")
     assert (await admin_client.delete(f"/members/{member['id']}")).status_code == 204
+
+
+async def test_delete_member_with_book_requests(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[circulation/members] 회원 조회·수정·삭제 / 희망도서 신청이 있는 회원 삭제"""
+    member = await add_member(session, library_a.id, "M0001")
+    other = await add_member(session, library_a.id, "M0002")
+    values = {"library_id": library_a.id, "title_key": "작별하지않는다"}
+    open_request = await insert(
+        session, "book_requests", member_id=member["id"], title="작별하지 않는다", **values
+    )
+    closed = await insert(
+        session,
+        "book_requests",
+        member_id=member["id"],
+        title="소년이 온다",
+        title_key="소년이온다",
+        status="closed",
+        library_id=library_a.id,
+    )
+    others = await insert(
+        session, "book_requests", member_id=other["id"], title="작별하지 않는다", **values
+    )
+    assert (await admin_client.delete(f"/members/{member['id']}")).status_code == 204
+    assert await fetch(session, "members", member["id"]) is None
+    for row in (open_request, closed):
+        kept = await fetch(session, "book_requests", row["id"])
+        assert kept is not None and kept["member_id"] is None
+        assert kept["title"] == row["title"] and kept["created_at"] == row["created_at"]
+    assert (await fetch(session, "book_requests", others["id"]))["member_id"] == other["id"]
+    listed = (await admin_client.get("/book-requests")).json()["items"]
+    by_id = {r["id"]: r["member_number"] for r in listed}
+    assert by_id == {open_request["id"]: None, closed["id"]: None, others["id"]: "M0002"}
 
 
 async def test_active_loan_needs_member_in_db(session: AsyncSession, library_a: Tenant) -> None:

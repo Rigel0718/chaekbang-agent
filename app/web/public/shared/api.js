@@ -35,7 +35,8 @@ export class ApiError extends Error {
     super(detail || `요청에 실패했어요 (${status})`);
     this.status = status;
     this.kind = KINDS[status] || "other";
-    // 409·429의 서버 문구는 그대로 이용자에게 보인다. 422는 형식 오류라 보이지 않는다.
+    // 409·429의 서버 문구는 대화에서 그대로 보인다. 입력칸(actions.js)은 404 문구도 보인다.
+    // 422는 형식 오류라 보이지 않는다.
     this.detail = typeof detail === "string" ? detail : null;
   }
 }
@@ -76,4 +77,19 @@ export const api = {
   // SSE 응답 그대로 돌려준다. 읽는 쪽은 sse.js다.
   openMessages: (body, signal) => request("/librarian/messages", { method: "POST", body, signal }),
   endSession: (id) => request(`/librarian/sessions/${id}`, { method: "DELETE" }),
+  // 대출·반납·희망도서 입력칸(actions.js). 회원번호는 이 둘의 본문에만 들어간다(대화 요청에는 넣지 않는다).
+  borrow: (accessionNumber, memberNumber) =>
+    request("/loans", {
+      method: "POST",
+      body: { accession_number: accessionNumber, member_number: memberNumber },
+    }).then((r) => r.json()),
+  returnBook: (accessionNumber) =>
+    request("/loans/return", { method: "POST", body: { accession_number: accessionNumber } }).then(
+      (r) => r.json(),
+    ),
+  requestBook: ({ memberNumber, title, author, isbn }) =>
+    request("/book-requests", {
+      method: "POST",
+      body: { member_number: memberNumber, title, author, isbn },
+    }).then((r) => r.json()),
 };

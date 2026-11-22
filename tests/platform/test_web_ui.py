@@ -112,6 +112,9 @@ ALLOWED_PATHS = {
     "/librarian/messages",
     "/librarian/sessions/{id}",
     "/library/guide",
+    "/loans",
+    "/loans/return",
+    "/book-requests",
 }
 
 
@@ -132,6 +135,77 @@ def test_screen_requests_only_allowed_paths():
             used.add(re.sub(r"\$\{[^}]*\}", "{id}", raw).split("?")[0])
     assert used <= ALLOWED_PATHS, f"허용 목록에 없는 경로: {used - ALLOWED_PATHS}"
     assert used == ALLOWED_PATHS, f"쓰지 않는 허용 경로: {ALLOWED_PATHS - used}"
+
+
+# 회원번호의 행선지
+
+API_JS = PUBLIC / "shared" / "api.js"
+
+
+def _api_entries() -> dict[str, str]:
+    """api.js의 `export const api = { ... }` 안의 항목 이름 → 소스."""
+    text = API_JS.read_text(encoding="utf-8")
+    body = text[text.index("export const api = {") :]
+    parts = re.split(r"^  (\w+):", body, flags=re.MULTILINE)
+    return dict(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def test_member_number_only_in_loan_and_request_bodies():
+    """[web-ui] 회원번호를 보내는 곳: `member_number`는 대출·희망도서 본문에만 있다."""
+    for path in _js_files():
+        text = path.read_text(encoding="utf-8")
+        if path != API_JS:
+            assert "member_number" not in text, path
+    entries = _api_entries()
+    assert {name for name, src in entries.items() if "member_number" in src} == {
+        "borrow",
+        "requestBook",
+    }
+    assert "member_number" not in API_JS.read_text(encoding="utf-8").split("export const api")[0]
+
+
+def test_chat_request_body_keys():
+    """[web-ui] 대화 요청의 본문: 키는 session_id, message, selected_library_book_id뿐이다."""
+    text = (PUBLIC / "librarian" / "chat.js").read_text(encoding="utf-8")
+    keys = set(re.findall(r"runTurn\(\{\s*(\w+):", text)) | set(
+        re.findall(r"\.\.\.body,\s*(\w+):", text)
+    )
+    assert keys == {"message", "selected_library_book_id", "session_id"}
+    assert "openMessages" in _api_entries()
+
+
+# 운영 방식에 따른 대출 버튼
+
+
+def test_loan_button_starts_hidden_and_request_button_is_shown():
+    """[web-ui] 처음 그린 화면: [대출·반납]은 숨김으로 시작하고 [희망도서 신청]은 숨김이 아니다."""
+    html = INDEX.read_text(encoding="utf-8")
+    loan = re.search(r"<button\b[^>]*\bid=\"open-loan\"[^>]*>", html)
+    request = re.search(r"<button\b[^>]*\bid=\"open-request\"[^>]*>", html)
+    assert loan and re.search(r"\bhidden\b", loan.group(0))
+    assert request and not re.search(r"\bhidden\b", request.group(0))
+
+
+def test_loan_button_shown_only_for_internal_library():
+    """[web-ui] 버튼을 보이는 조건: [대출·반납]은 `loan_mode`가 internal인 한 곳에서만 보인다."""
+    uses: list[str] = []
+    assignments: list[str] = []
+    for path in _js_files():
+        text = path.read_text(encoding="utf-8")
+        uses += re.findall(r"[^\n]*\bloan_mode\b[^\n]*", text)
+        assignments += re.findall(r"loanButton\.hidden\s*=[^;]*;", text)
+    assert len(uses) == 1 and re.search(r'loan_mode === "internal"', uses[0])
+    assert assignments == ["loanButton.hidden = !available;"]
+
+
+def test_desk_inputs_disable_autocomplete():
+    """[web-ui] 입력칸 자동 완성: 대출·희망도서 입력칸과 그 폼은 모두 autocomplete="off"다."""
+    html = INDEX.read_text(encoding="utf-8")
+    section = html[html.index('id="desk"') : html.index("</section>", html.index('id="desk"'))]
+    inputs = re.findall(r"<input\b[^>]*>", section)
+    assert len(inputs) == 5
+    for tag in [*inputs, re.search(r"<form\b[^>]*>", section).group(0)]:
+        assert 'autocomplete="off"' in tag, tag
 
 
 # 브라우저 저장

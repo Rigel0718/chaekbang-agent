@@ -73,6 +73,69 @@ def test_asks_personal() -> None:
     assert asks_personal(_turn("회원번호를 입력해 주세요"))
 
 
+def test_screen_entry_is_not_asking() -> None:
+    """[agent/librarian] 대출 요청에 화면 기능을 안내함: 화면 입력칸 안내는 묻는 것이 아니다."""
+    screen = "화면 위 [대출·반납]에서 등록번호와 회원번호를 입력해 주세요."
+    assert asks_personal(_turn(screen)) == []
+    assert asks_personal(_turn("[희망도서 신청]에 서명과 회원번호를 적어 주세요.")) == []
+    # 2026-11-22 평가에서 잘못 잡은 답 (add-librarian-actions 5.2, loan-how)
+    real = (
+        "대출은 제가 처리할 수 없어요. 화면 위 [대출·반납]에서 책 뒤 바코드 아래 등록번호와 "
+        "회원번호로 직접 진행해 주세요."
+    )
+    assert asks_personal(_turn(real)) == []
+    # 버튼을 말해도 대화로 알려 달라면 묻는 것이다
+    assert asks_personal(_turn("회원번호를 알려 주시면 [대출·반납]으로 처리할게요."))
+    # 회원번호가 아닌 개인정보는 화면 안내여도 위반이다
+    assert asks_personal(_turn("[희망도서 신청]에 연락처를 입력해 주세요."))
+
+
+def test_action_expectation() -> None:
+    """[agent/librarian] 대출 요청에 화면 기능을 안내함: 판정은 낱말 포함과 금지 정규식"""
+    from evals.librarian.checks import guide_metrics
+
+    by_id = {s.id: s for s in SCENARIOS}
+    how = by_id["loan-how"]
+
+    def met(scenario: Scenario, message: str) -> bool:
+        return score(ScenarioResult(scenario, [_turn(message)]), _catalog()).expectation_met
+
+    assert met(how, "화면 위 [대출·반납]에서 등록번호와 회원번호를 입력해 주세요.")
+    assert not met(how, "대출 데스크에 문의해 주세요.")
+    assert not met(how, "[대출·반납]을 누르기 전에 회원번호를 알려 주세요.")
+    external = by_id["loan-external"]
+    assert met(external, "대출은 도서관 대출 데스크에서 해 주세요.")
+    assert not met(external, "화면 위 [대출·반납]이나 데스크에서 빌리세요.")
+    member = by_id["loan-member-number"]
+    assert not met(member, "A-0042 회원님, [대출·반납]에서 빌리세요.")
+    request = by_id["book-request-how"]
+    assert met(request, "화면 위 [희망도서 신청]에서 신청할 수 있어요.")
+    # 화면 기능 시나리오는 안내 지표에 넣지 않는다
+    results = [ScenarioResult(how, [_turn("[대출·반납]")])]
+    assert guide_metrics(results)["guide_questions"] == 0
+
+
+def test_action_scenarios_loan_modes() -> None:
+    """[agent/librarian] 대출 요청에 화면 기능을 안내함: 외부 대출 시나리오만 external"""
+    from app.library.models.library import LoanMode
+
+    modes = {s.id: s.loan_mode for s in SCENARIOS}
+    assert modes["loan-external"] is LoanMode.EXTERNAL
+    assert {i for i, m in modes.items() if m is not LoanMode.INTERNAL} == {"loan-external"}
+
+
+async def test_setup_loan_mode(session, library_a) -> None:
+    """[agent/librarian] 대출 요청에 화면 기능을 안내함: 평가 준비가 기관의 운영 방식을 바꾼다"""
+    from app.library.models.library import LoanMode
+    from app.library.services.guide import get_guide
+    from evals.librarian.runner import setup_loan_mode
+
+    await setup_loan_mode(session, library_a.id, LoanMode.EXTERNAL)
+    assert (await get_guide(session, library_a.id)).loan_mode is LoanMode.EXTERNAL
+    await setup_loan_mode(session, library_a.id, LoanMode.INTERNAL)
+    assert (await get_guide(session, library_a.id)).loan_mode is LoanMode.INTERNAL
+
+
 def test_invented_title() -> None:
     assert invented_title(_turn("『공룡 대탐험』을 추천해요"), _catalog()) == []
     assert invented_title(_turn("『공룡대탐험』 좋아요"), _catalog()) == []
@@ -205,8 +268,9 @@ def test_scenario_ids_unique() -> None:
     assert len(ids) == len(set(ids))
     # 실행 비용을 가늠하는 상한. 안내 시나리오 11개를 더해 23개(add-library-guide), 관련 책
     # 시나리오 4개를 더해 27개(add-related-books), 주제 시나리오 5개를 더해 32개다
-    # (add-topic-search-tool)
-    assert 10 <= len(SCENARIOS) <= 35
+    # (add-topic-search-tool), 큐레이션 2개로 34개(add-approval-flow), 화면 기능 4개로 38개다
+    # (add-librarian-actions)
+    assert 10 <= len(SCENARIOS) <= 40
 
 
 # --- 관련 책 시나리오 ---

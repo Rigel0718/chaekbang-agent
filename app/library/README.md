@@ -6,7 +6,7 @@
 
 - 기관, 직원, 인증
 - 기관 도서(`library_books`): 이 도서관의 그 책. 파일·입력 값과 ISBN 없는 책이 여기 있다.
-- 사본(`holdings`), 회원, 대출
+- 사본(`holdings`), 회원, 대출, 희망도서 신청
 - 엑셀·CSV 장서 가져오기
 - 서지 채움 처리 현황
 - 서명·저자 찾기와 자동완성(LLM 없음)
@@ -21,7 +21,7 @@
 | --- | --- |
 | `api/` | 라우터. 로직을 넣지 않는다 |
 | `services/` | 비즈니스 로직. REST API와 이후 에이전트 tool이 함께 쓴다 |
-| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `guide`(안내), `curation`(큐레이션), `overdue_notice`(연체 안내문 틀) |
+| `models/` | `library`(기관·직원·세션), `catalog`(기관 도서·사본·가져오기), `circulation`(회원·대출), `book_request`(희망도서 신청), `guide`(안내), `curation`(큐레이션), `overdue_notice`(연체 안내문 틀) |
 | `schemas/` | Pydantic 스키마 |
 | `importing/` | 파일 읽기, 머리글 인식, 정규화. DB와 HTTP를 모른다 |
 | `deps.py` | 현재 직원·기관, 역할 |
@@ -54,6 +54,7 @@
 | `approval.py` | 공통 승인 틀: 상태 `ApprovalStatus`, 종류별 전이 표 `TransitionTable`(`PUBLISHING`·`CONFIRMING`), 조건부 갱신 `transition`, 실행 상태 `mark_executed`, 승인 칸 `ApprovalMixin` |
 | `overdue_tools.py` | 운영 에이전트의 연체 tool: `list_overdue_loans`(회원 값 없는 결과 `OverdueLoanList`), `draft_overdue_notice`(틀을 승인 대기로, 입력 기록 없음). 자체 대출 기관 프로필에만 |
 | `services/overdue_notices.py`, `api/overdue_notices.py`, `overdue_template.py` | 연체 안내: 틀 관리 `/overdue-notice-templates`, 오늘의 목록 `GET /overdue-notices/today`(모두 관리자), 자리표시 검사·채우기(순수 함수) |
+| `services/book_requests.py`, `api/book_requests.py`, `schemas/book_request.py` | 희망도서: 신청 `POST /book-requests`(키오스크·관리자), 목록·닫기 `GET`·`PATCH /book-requests`(관리자). 이용자 화면이 REST로 바로 부른다(AI 사서 tool 아님) |
 | `services/curations.py`, `api/curations.py` | 큐레이션: 관리 `/curations`(관리자), 게시본 읽기 `GET /librarian/curations`(키오스크·관리자). REST와 두 에이전트 tool이 같은 service를 쓴다 |
 
 ## 규칙
@@ -95,7 +96,7 @@
 - 추천 가능한 책은 대출 가능이나 대출 중 사본이 있는 그 기관의 책이다(`recommendation/search.py`의 `recommendable_ids`). 검색과 소장 검사가 이 한 곳을 쓴다.
 - 키워드 검색은 표시 값의 서명(4), 부제·시리즈·저자(3), 소개(1)를 공백을 지운 부분 문자열로 찾고 가중치를 더한다. 최대 10권이다. AI 사서의 소장 도서 검색 tool은 이 순위와 벡터 순위를 합친 주제로 찾기(`services/topic.py`)를 쓰고, 결과는 `{books, note}`다.
 - 기관 개별 기능은 `LibrarianExtension`(tool, 최종 검사, 프롬프트 문구)으로 끼운다. 이 패키지는 기능을 이름으로 부르지 않는다. 조립은 `app/main.py`가 하고, 평가도 같은 `build_librarian_profiles`를 부른다.
-- 쓰기 tool은 없다. 대출·반납·희망도서는 `add-librarian-actions`에서 한다.
+- 쓰기 tool은 없다(두 운영 방식 모두). 대출·반납·희망도서 신청은 이용자 화면의 입력칸이 REST(`POST /loans`, `/loans/return`, `/book-requests`)로 바로 처리하고, 프롬프트는 화면의 [대출·반납]·[희망도서 신청]을 안내만 한다. 회원번호가 LLM·대화 기록·실행 기록에 들어갈 길을 만들지 않기 위해서다.
 - `chat_messages`에는 가린 이용자 문장과 최종 답만 둔다. 최종 답에는 코드가 `[추천한 책: #id 서명]`을 덧붙인다. 끝난 세션은 `lifespan`의 작업이 1분마다 지운다.
 - tool 입력은 실행 기록에 남기지 않는다. 키워드에 이용자 문장 일부가 들어 있을 수 있어서다.
 - **관련 책 tool** `find_related_books(library_book_id | None)`: id가 있으면 비슷한 책, 비우면 대화 세션의 책으로 최근 기록(세션에 책이 없으면 우리 도서관 인기)이다. 비슷한 책 API와 같은 service(`services/related.py`)를 쓴다. 결과는 검색 결과와 같은 값에 `basis_text`를 더하고, 비면 `note`가 다음 할 일을 알린다. 입력의 책 id는 실행 기록에 남긴다(개인정보가 아니다).
@@ -191,6 +192,15 @@
 - **승인과 실행은 한 트랜잭션**이다. 승인한 요청이 그 자리에서 실행(게시·확정)하고 `mark_executed`로 실행 상태와 시각(`executed_at`)을 둔다. 에이전트 실행을 다시 이어 가지 않는다. 상태가 DB에만 있으므로 서버가 다시 시작돼도 승인이 이어진다.
 - 승인·반려·내리기는 관리자만 한다. 승인자(`approved_by`)와 시각을 남기고, 만든 사람이 승인해도 된다.
 - **새 종류 더하기**(구매 요청서. 연체 안내가 `CONFIRMING`을 처음 쓴 예다): 테이블에 `ApprovalMixin`을 섞고 `library_id`로 나눈다. 확정하는 종류는 `CONFIRMING` 표를 쓴다. service에서 `transition`과 `mark_executed`를 부르고, 승인 뒤 할 일(확정)을 같은 트랜잭션 안에서 결정적인 코드로 한다. `app/models.py`의 `TENANT_TABLES`에 테이블을 넣는다.
+
+## 희망도서
+
+- **신청**(`POST /book-requests`)은 키오스크·관리자 모두 한다. 본문은 회원번호(필수), 서명(필수, 200자), 저자(선택, 100자), ISBN(선택, 13자리로 정규화·체크 숫자 검사)이다. 두 운영 방식 모두 된다. 자유 글 칸은 없다(공용 PC라 개인정보가 섞일 수 있다).
+- **회원 확인**: 그 기관의 회원이 아니면 404 "회원번호를 확인해 주세요"이고 받은 번호를 메시지에 넣지 않는다. 응답(`BookRequestRead`)에는 회원 값이 없고, 관리자 목록(`BookRequestAdminRead`)에만 회원번호가 있다.
+- **중복**: 같은 회원이 같은 서명(`match_key` 맞춤 키)으로 `requested` 신청이 있으면 409. 다른 회원의 같은 서명, 닫힌 신청과 같은 서명은 따로 저장한다. 동시 요청은 부분 UNIQUE 인덱스(`uq_book_requests_open_member_title`)가 막고 409로 바꾼다.
+- **소장 검사**: ISBN이 있고 그 기관의 추천 가능한 책(공식 서지 ISBN 또는 기관 도서 ISBN, `recommendable_ids`)이면 409. 서명만으로는 검사하지 않는다(오타 허용 찾기라 애매하다).
+- **상태**는 `requested` / `closed` 두 값이고 승인 흐름 대상이 아니다. 관리자가 `PATCH /book-requests/{id}`로 닫는다(`requested`로 되돌리지 않고, 이미 닫힌 신청은 그대로 돌려준다).
+- **회원 삭제**는 신청을 막지 않는다. 그 회원의 신청은 상태와 상관없이 남기고 `member_id`만 비운다(구매 근거). 대출과 같은 복합 외래 키라 `ON DELETE SET NULL`은 쓰지 않고 `delete_member`가 먼저 비운다.
 
 ## 연체 안내
 

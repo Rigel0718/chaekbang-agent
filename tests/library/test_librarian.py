@@ -1,5 +1,7 @@
 """[agent/librarian] AI 사서 프로필, 조회 tool, 최종 답, 소장 검사, 카드. 가짜 LLM만 쓴다."""
 
+import re
+
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -411,7 +413,7 @@ async def test_prompt_by_loan_mode(
 
 async def _snapshot(session: AsyncSession) -> list:
     rows = []
-    for table in ("holdings", "loans", "members"):
+    for table in ("holdings", "loans", "members", "book_requests"):
         result = await session.execute(text(f"SELECT * FROM {table} ORDER BY id"))
         rows.append([tuple(r) for r in result])
     return rows
@@ -436,6 +438,37 @@ async def test_no_writes(session: AsyncSession, library_a: Tenant) -> None:
     }  # 모두 조회
     count = await session.scalar(select(func.count()).select_from(text("loans")))
     assert count == 0
+    requests = await session.scalar(select(func.count()).select_from(text("book_requests")))
+    assert requests == 0
+
+
+def test_tools_same_for_both_loan_modes() -> None:
+    """[agent/librarian] 쓰기 tool 없음 / 운영 방식별 tool 목록"""
+    profiles = build_librarian_profiles()
+    names = {mode: [t.name for t in p.tools] for mode, p in profiles.items()}
+    assert names[LoanMode.INTERNAL] == names[LoanMode.EXTERNAL]
+    for name in names[LoanMode.INTERNAL]:
+        assert not re.search(r"loan|return|request|borrow|대출|반납|신청", name), name
+
+
+# --- 화면 기능 안내 문구 ---
+
+
+def test_internal_prompt_points_to_screen() -> None:
+    """[agent/librarian] 화면 기능 안내 문구 / 자체 대출 기관의 안내 문구"""
+    profile = build_librarian_profiles()[LoanMode.INTERNAL]
+    assert profile.version == "v8"
+    assert "[대출·반납]" in profile.system_prompt
+    assert "[희망도서 신청]" in profile.system_prompt
+
+
+def test_external_prompt_points_to_desk() -> None:
+    """[agent/librarian] 화면 기능 안내 문구 / 외부 대출 기관의 안내 문구"""
+    profile = build_librarian_profiles()[LoanMode.EXTERNAL]
+    assert profile.version == "v8"
+    assert "[대출·반납]" not in profile.system_prompt
+    assert "데스크" in profile.system_prompt
+    assert "[희망도서 신청]" in profile.system_prompt
 
 
 async def test_search_tool_official_without_subtitle(

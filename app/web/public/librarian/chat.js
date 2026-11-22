@@ -6,7 +6,8 @@ import { readEvents } from "../shared/sse.js";
 
 const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const WAITING = "사서가 살펴보는 중…";
-const BOOK_REQUEST_NOTE = "찾는 책이 없다면 희망도서 신청이 필요해요. 신청 기능은 곧 열려요.";
+const BOOK_REQUEST_NOTE = "찾는 책이 없다면 희망도서를 신청해 주세요.";
+const BOOK_REQUEST_BUTTON = "희망도서 신청";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -15,7 +16,7 @@ function element(tag, className, text) {
   return node;
 }
 
-// ui: { thread, emptyState, basket, setBusy(bool), onUnauthorized(), onSessionLost() }
+// ui: { thread, emptyState, basket, setBusy(bool), onUnauthorized(), onRequestBook(), onSessionLost() }
 export function createChat(ui) {
   let sessionId = null;
   let busy = false;
@@ -55,7 +56,13 @@ export function createChat(ui) {
     if (answer.recommendations.length > 0) {
       reply.append(cards(answer.recommendations, "recommend").strip);
     }
-    if (answer.suggest_book_request) reply.append(element("p", "reply-note", BOOK_REQUEST_NOTE));
+    if (answer.suggest_book_request) {
+      reply.append(element("p", "reply-note", BOOK_REQUEST_NOTE));
+      const button = element("button", "btn", BOOK_REQUEST_BUTTON);
+      button.type = "button";
+      button.addEventListener("click", () => ui.onRequestBook());
+      reply.append(button);
+    }
     reply.scrollIntoView({ block: "nearest" });
   }
 

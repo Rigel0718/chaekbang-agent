@@ -104,6 +104,20 @@ async def test_library_id_in_body(
     assert fake_llm.calls == 0
 
 
+async def test_member_number_field_rejected(
+    kiosk_client: AsyncClient, fake_llm: LlmSlot, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[agent/librarian] 쓰기 tool 없음 / 대화 요청의 회원번호 칸"""
+    await add_member(session, library_a.id, "M0001")
+    res = await kiosk_client.post(
+        "/librarian/messages", json={"message": "이 책 빌려 줘", "member_number": "M0001"}
+    )
+    assert res.status_code == 422
+    assert fake_llm.calls == 0
+    count = await session.scalar(text("SELECT count(*) FROM chat_messages"))
+    assert count == 0
+
+
 async def test_kiosk_can_talk(kiosk_client: AsyncClient, fake_llm: LlmSlot) -> None:
     """[library/staff-auth] 역할별 접근 제한 / 키오스크의 AI 사서 대화"""
     fake_llm.script(submit("없어요", suggest=True))

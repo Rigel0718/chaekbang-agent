@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.tenancy import get_owned
+from app.library.models.book_request import BookRequest
 from app.library.models.circulation import Loan, Member
 from app.library.schemas.circulation import MemberCreate, MemberUpdate
 
@@ -67,6 +68,7 @@ async def delete_member(session: AsyncSession, library_id: int, member_id: int) 
     """반납 안 된 대출이 있으면 거부한다. 반납된 기록만 있으면 그 기록의 회원 연결을 끊고 지운다.
 
     사본과 날짜는 대출 통계를 위해 남기고, 탈퇴한 이용자는 대출 기록에서 알아볼 수 없게 한다.
+    희망도서 신청은 상태와 상관없이 남기고 회원 연결만 끊는다(구매 근거).
     """
     member = await get_member(session, library_id, member_id)
     has_active = await session.scalar(
@@ -83,6 +85,11 @@ async def delete_member(session: AsyncSession, library_id: int, member_id: int) 
     await session.execute(
         update(Loan)
         .where(Loan.library_id == library_id, Loan.member_id == member_id)
+        .values(member_id=None)
+    )
+    await session.execute(
+        update(BookRequest)
+        .where(BookRequest.library_id == library_id, BookRequest.member_id == member_id)
         .values(member_id=None)
     )
     await session.delete(member)

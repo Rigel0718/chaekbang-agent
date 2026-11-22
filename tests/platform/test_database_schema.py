@@ -50,6 +50,7 @@ ALL_TABLES = {
     "curations",
     "curation_items",
     "overdue_notice_templates",
+    "book_requests",
     "library_guides",
     "library_opening_hours",
     "library_closures",
@@ -70,7 +71,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 25
+    assert len(ALL_TABLES) == 26
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -86,7 +87,7 @@ async def test_korean_collation_present(engine: AsyncEngine) -> None:
     """
     async with engine.connect() as conn:
         await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
-    assert len(await _table_names(engine)) == 25
+    assert len(await _table_names(engine)) == 26
 
 
 async def test_korean_collation_missing(engine: AsyncEngine) -> None:
@@ -222,6 +223,65 @@ async def test_overdue_notice_template_rules(session: AsyncSession, library_a: T
         body="{서명} {반납예정일}",
         status="rejected",
         match="approval_status",
+    )
+
+
+async def test_book_request_rules(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 희망도서 테이블의 저장 계층 규칙"""
+    await assert_rejected(
+        session,
+        "book_requests",
+        library_id=library_a.id,
+        title="",
+        title_key="x",
+        match="title_not_empty",
+    )
+    await assert_rejected(
+        session,
+        "book_requests",
+        library_id=library_a.id,
+        title="작별하지 않는다",
+        title_key="작별하지않는다",
+        status="ordered",
+        match="book_request_status",
+    )
+
+
+async def test_book_request_rejects_member_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 회원으로 희망도서 직접 저장"""
+    member_b = await add_member(session, library_b.id, "M0001")
+    await assert_rejected(
+        session,
+        "book_requests",
+        library_id=library_a.id,
+        member_id=member_b["id"],
+        title="작별하지 않는다",
+        title_key="작별하지않는다",
+        match="fk_book_requests_library_id_member_id_members",
+    )
+
+
+async def test_book_request_open_duplicate_rejected(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 희망도서 테이블의 저장 계층 규칙
+
+    같은 회원의 같은 서명 처리 전 신청은 DB도 하나만 허용한다(동시 요청 방어).
+    닫힌 신청은 겹쳐도 된다.
+    """
+    member = await add_member(session, library_a.id, "M0001")
+    values = {
+        "library_id": library_a.id,
+        "member_id": member["id"],
+        "title": "작별하지 않는다",
+        "title_key": "작별하지않는다",
+    }
+    await insert(session, "book_requests", status="closed", **values)
+    await insert(session, "book_requests", **values)
+    await assert_rejected(
+        session, "book_requests", match="uq_book_requests_open_member_title", **values
     )
 
 

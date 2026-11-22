@@ -5,6 +5,7 @@ from app.central import models as central
 from app.core.model_base import Base
 from app.features.children import models as children
 from app.library.models import (
+    book_request,
     catalog,
     chat,
     circulation,
@@ -40,6 +41,7 @@ TENANT_TABLES: set[str] = {
     "curations",
     "curation_items",
     "overdue_notice_templates",
+    "book_requests",
 }
 
 __all__ = [
@@ -47,6 +49,7 @@ __all__ = [
     "TENANT_TABLES",
     "Base",
     "agent",
+    "book_request",
     "catalog",
     "central",
     "chat",
