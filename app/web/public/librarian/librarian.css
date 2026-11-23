@@ -99,3 +99,22 @@
 .desk-form .send:disabled { opacity: 0.6; }
 .desk-result { margin: 8px 0 0; min-height: 1.4em; }
 .desk-result.failed { color: var(--warn); }
+
+/* 비우기 알림 띠: 화면 아래에 고정하고 화면을 막지 않는다 */
+.clear-warning {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; justify-content: center; align-items: center; gap: 14px;
+  padding: 12px 16px; background: var(--warn); color: #fff; font-weight: 600;
+}
+.clear-warning[hidden] { display: none; }
+.clear-warning .btn { background: #fff; border-color: #fff; color: var(--warn); }
+
+/* 시작 화면: 처음 열 때와 시간이 다 돼 비운 뒤에 화면 전체를 덮는다. 누르면 사라진다 */
+.start-screen {
+  position: fixed; inset: 0; z-index: 30; border: 0; width: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  background: var(--bg); color: var(--text); cursor: pointer;
+}
+.start-screen[hidden] { display: none; }
+.start-title { font-size: 2.2em; font-weight: 700; color: var(--accent); }
+.start-hint { font-size: 1.3em; color: var(--muted); }

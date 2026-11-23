@@ -1,28 +1,21 @@
-// 이용자 화면 조립. 로그인 화면은 없다. 개발용 토큰은 주소의 #token=으로 한 번 넣는다(README).
-import { api, clearToken, getToken, setToken } from "../shared/api.js";
+// 이용자 화면 조립. 열 때 키오스크 토큰으로 역할을 확인하고, 아니면 로그인 화면으로 간다(README).
+import { api, goLogin, requireRole } from "../shared/api.js";
 import { createActions } from "./actions.js";
 import { createBasket } from "./basket.js";
 import { createChat } from "./chat.js";
-import { IDLE_MS, createIdleTimer } from "./idle.js";
+import { CAP_MS, CAP_WARN_MS, IDLE_MS, IDLE_WARN_MS, createIdleTimer } from "./idle.js";
 import { createSuggest } from "./suggest.js";
 
-const TOKEN_NOTICE =
-  "토큰이 없거나 만료됐어요. 개발 중이라면 Swagger에서 키오스크 계정으로 로그인한 뒤, 주소 끝에 #token=토큰 을 붙여 열어 주세요.";
 const SESSION_ENDED_NOTICE = "대화가 끝나서 새로 시작해요.";
+
+// 키오스크 계정이 아니면 로그인 화면으로 가고, 이 아래는 실행되지 않는다
+await requireRole("kiosk");
 
 const $ = (id) => document.getElementById(id);
 const input = $("input");
 const send = $("send");
 const notice = $("notice");
 const due = $("due");
-
-function takeTokenFromHash() {
-  const match = location.hash.match(/^#token=(.+)$/);
-  if (!match) return;
-  setToken(decodeURIComponent(match[1]));
-  // 토큰이 주소창과 기록에 남지 않게 지운다
-  history.replaceState(null, "", location.pathname + location.search);
-}
 
 function showNotice(text) {
   notice.textContent = text;
@@ -33,9 +26,9 @@ function hideNotice() {
   notice.hidden = true;
 }
 
+// 쓰는 중에 401이면 토큰을 지우고 로그인 화면으로 간다
 function onUnauthorized() {
-  clearToken();
-  showNotice(TOKEN_NOTICE);
+  goLogin();
 }
 
 function renderDue(guide) {
@@ -85,10 +78,45 @@ const basket = createBasket({
   toggle: $("basket-toggle"),
 });
 
-const idleSeconds = Number(new URLSearchParams(location.search).get("idle_seconds"));
+// 개발·확인용: ?idle_seconds=N, ?cap_seconds=N으로 두 시계를 짧게 줄인다(알림은 15초·30초 앞, 최소 1초).
+function seconds(name) {
+  const value = Number(new URLSearchParams(location.search).get(name));
+  return value > 0 ? value : null;
+}
+const idleSeconds = seconds("idle_seconds");
+const capSeconds = seconds("cap_seconds");
+
+const warning = $("clear-warning");
+const warningText = $("clear-warning-text");
+const warningKeep = $("clear-warning-keep");
+let warningTick = null;
+
+// 알림 띠: 남은 초를 1초마다 글자로 바꾼다. 무입력 알림에만 [계속 쓰기]가 있다.
+function showWarning(info) {
+  clearInterval(warningTick);
+  if (!info) {
+    warning.hidden = true;
+    return;
+  }
+  warningKeep.hidden = info.kind !== "idle";
+  const render = () => {
+    const left = Math.max(0, Math.ceil((info.deadline - Date.now()) / 1000));
+    warningText.textContent =
+      info.kind === "idle" ? `${left}초 뒤 화면을 비워요` : `${left}초 뒤 이용 시간이 끝나 화면을 비워요`;
+  };
+  render();
+  warning.hidden = false;
+  warningTick = setInterval(render, 1000);
+}
+
 const idle = createIdleTimer({
-  ms: idleSeconds > 0 ? idleSeconds * 1000 : IDLE_MS,
-  onIdle: () => resetAll(),
+  idleMs: idleSeconds ? idleSeconds * 1000 : IDLE_MS,
+  idleWarnMs: idleSeconds ? Math.max(1000, (idleSeconds - 15) * 1000) : IDLE_WARN_MS,
+  capMs: capSeconds ? capSeconds * 1000 : CAP_MS,
+  capWarnMs: capSeconds ? Math.max(1000, (capSeconds - 30) * 1000) : CAP_WARN_MS,
+  onWarn: showWarning,
+  // 답을 받는 중이면 resetAll의 chat.reset()이 진행 중인 요청을 끊는다. 로그아웃은 하지 않고 시작 화면을 보인다.
+  onClear: () => resetAll({ toStart: true }),
 });
 
 const actions = createActions({
@@ -156,8 +184,22 @@ function submit() {
   chat.sendText(text);
 }
 
-// 새 대화, 무입력 4분 30초, 세션 404가 모두 이 함수로 화면을 비운다
-function resetAll() {
+const start = $("start-screen");
+
+function showStart() {
+  start.hidden = false;
+  start.focus();
+}
+
+// 시작 화면을 누르는 것도 입력이라 이용 상한 시계가 그때 시작한다
+start.addEventListener("click", () => {
+  start.hidden = true;
+  input.focus();
+});
+
+// 새 대화, 무입력 1분, 이용 상한 3분, 세션 404가 모두 이 함수로 화면을 비운다.
+// 시간이 다 돼 비울 때만(toStart) 시작 화면을 다시 보인다. 토큰은 건드리지 않는다.
+function resetAll({ toStart = false } = {}) {
   chat.reset();
   basket.clear();
   actions.reset();
@@ -165,15 +207,15 @@ function resetAll() {
   input.value = "";
   hideNotice();
   loadGuide();
-  idle.touch();
+  idle.reset();
+  if (toStart) showStart();
 }
 
 $("composer").addEventListener("submit", (event) => {
   event.preventDefault();
   submit();
 });
-$("new-chat").addEventListener("click", resetAll);
+$("new-chat").addEventListener("click", () => resetAll());
 
-takeTokenFromHash();
-if (getToken()) loadGuide();
-else onUnauthorized();
+loadGuide();
+start.focus();

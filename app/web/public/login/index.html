@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>책방 로그인</title>
+  <link rel="stylesheet" href="../shared/base.css">
+  <link rel="stylesheet" href="./login.css">
+</head>
+<body>
+  <main class="login">
+    <h1>도서관 로그인</h1>
+    <form id="login-form" autocomplete="off">
+      <label>아이디
+        <input id="login-id" type="text" maxlength="100" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <label>비밀번호
+        <input id="login-password" type="password" maxlength="200" autocomplete="off" required>
+      </label>
+      <button type="submit" id="login-submit" class="send">로그인</button>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
+    </form>
+    <p class="login-note">공용 PC에서는 비밀번호를 저장하지 마세요. 브라우저가 저장하겠냐고 물으면 거절해 주세요.</p>
+  </main>
+  <script type="module" src="./login.js"></script>
+</body>
+</html>
