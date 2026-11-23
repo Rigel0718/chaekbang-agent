@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>도서관 운영</title>
+  <link rel="stylesheet" href="../shared/base.css">
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+  <header class="admin-top">
+    <div class="who"><strong id="org"></strong> <span id="login-id" class="muted"></span></div>
+    <button type="button" id="logout" class="btn">로그아웃</button>
+  </header>
+
+  <nav class="tabs" aria-label="관리 화면">
+    <button type="button" class="tab" data-tab="chat" id="tab-chat">운영 대화</button>
+    <button type="button" class="tab" data-tab="approvals" id="tab-approvals">승인 목록 <span id="pending-count" class="badge" hidden></span></button>
+    <button type="button" class="tab" data-tab="requests" id="tab-requests">희망도서</button>
+    <button type="button" class="tab" data-tab="overdue" id="tab-overdue" hidden>오늘의 연체</button>
+  </nav>
+
+  <main class="admin-main">
+    <section id="panel-chat" class="panel" data-panel="chat" hidden>
+      <div id="chat-thread" class="thread" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form" autocomplete="off">
+        <input id="chat-input" type="text" maxlength="500" placeholder="예: 이번 달 대출이 많은 분야 알려줘" aria-label="운영 에이전트에게 질문" autocomplete="off">
+        <button type="submit" id="chat-send" class="primary">보내기</button>
+        <button type="button" id="chat-new" class="btn">새 대화</button>
+      </form>
+    </section>
+
+    <section id="panel-approvals" class="panel" data-panel="approvals" hidden>
+      <div class="view-switch" role="group" aria-label="보기">
+        <button type="button" class="btn" id="view-pending" aria-pressed="true">승인 대기</button>
+        <button type="button" class="btn" id="view-all" aria-pressed="false">전체</button>
+      </div>
+      <section class="group" data-kind="curations"><h2>큐레이션</h2><ul class="list" id="list-curations"></ul></section>
+      <section class="group" data-kind="templates" id="group-templates" hidden><h2>연체 안내문 틀</h2><ul class="list" id="list-templates"></ul></section>
+      <section class="group" data-kind="purchases"><h2>구매 요청서</h2><ul class="list" id="list-purchases"></ul></section>
+    </section>
+
+    <section id="panel-requests" class="panel" data-panel="requests" hidden>
+      <h2>처리 전 희망도서</h2>
+      <ul class="list" id="list-requests"></ul>
+      <button type="button" id="more-requests" class="btn" hidden>더 보기</button>
+    </section>
+
+    <section id="panel-overdue" class="panel" data-panel="overdue" hidden>
+      <h2>오늘의 연체 안내</h2>
+      <p id="overdue-summary" class="muted"></p>
+      <ul class="list" id="list-overdue"></ul>
+    </section>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

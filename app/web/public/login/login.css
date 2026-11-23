@@ -1,0 +1,14 @@
+.login { max-width: 420px; margin: 0 auto; padding: 48px 16px; }
+.login h1 { font-size: 1.4em; margin: 0 0 20px; }
+#login-form { display: flex; flex-direction: column; gap: 14px; }
+#login-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9em; color: var(--muted); }
+#login-form input {
+  font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--text); min-height: 44px;
+}
+.send {
+  min-height: 44px; border: 0; border-radius: 999px; background: var(--accent); color: #fff;
+  padding: 10px 20px; font-size: 1em;
+}
+.login-error { margin: 0; color: var(--warn); }
+.login-note { margin-top: 20px; color: var(--muted); font-size: 0.85em; }

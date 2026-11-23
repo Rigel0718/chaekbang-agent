@@ -1,11 +1,24 @@
 // 서버 호출. 기관은 토큰으로 정해지므로 library_id를 보내지 않는다.
-// 브라우저 저장소에는 토큰 키 하나만 쓴다(README 규칙).
+// 브라우저 저장소에는 화면마다 토큰 키 하나만 쓴다(README 규칙).
+//   키오스크(이용자 화면): localStorage  PC를 다시 켜도 이어진다
+//   관리자 화면:           sessionStorage 탭을 닫으면 사라지고 키오스크 토큰을 덮어쓰지 않는다
+// 화면은 처음에 useScreen으로 어느 쪽인지 정한다. 저장소 접근은 이 파일의 아래 함수들에만 있다.
 
-const TOKEN_KEY = "chaekbang.token";
+const KIOSK_TOKEN_KEY = "chaekbang.kiosk.token";
+const ADMIN_TOKEN_KEY = "chaekbang.admin.token";
+const LOGIN_PATH = "/ui/login/";
+
+let screen = "kiosk";
+
+export function useScreen(name) {
+  if (name !== "kiosk" && name !== "admin") throw new Error(`모르는 화면: ${name}`);
+  screen = name;
+}
 
 export function getToken() {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    if (screen === "admin") return sessionStorage.getItem(ADMIN_TOKEN_KEY);
+    return localStorage.getItem(KIOSK_TOKEN_KEY);
   } catch {
     return null;
   }
@@ -13,7 +26,8 @@ export function getToken() {
 
 export function setToken(token) {
   try {
-    localStorage.setItem(TOKEN_KEY, token);
+    if (screen === "admin") sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else localStorage.setItem(KIOSK_TOKEN_KEY, token);
   } catch {
     // 저장이 막혀 있으면 이번 화면에서만 쓴다
   }
@@ -21,10 +35,18 @@ export function setToken(token) {
 
 export function clearToken() {
   try {
-    localStorage.removeItem(TOKEN_KEY);
+    if (screen === "admin") sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    else localStorage.removeItem(KIOSK_TOKEN_KEY);
   } catch {
     // 저장이 막혀 있으면 지울 것도 없다
   }
+}
+
+// 이 화면의 토큰을 지우고 로그인 화면으로 간다. 이동하는 동안 화면이 그려지지 않게 끝나지 않는 약속을 돌려준다.
+export function goLogin() {
+  clearToken();
+  location.replace(LOGIN_PATH);
+  return new Promise(() => {});
 }
 
 // 오류 종류: unauthorized(401) not_found(404) conflict(409) limit(429) invalid(422) other
@@ -69,6 +91,12 @@ function query(path, q, signal) {
   return request(`${path}?q=${encodeURIComponent(q)}`, { signal }).then((r) => r.json());
 }
 
+const APPROVAL_BASES = {
+  curations: "/curations",
+  templates: "/overdue-notice-templates",
+  purchases: "/purchase-requests",
+};
+
 export const api = {
   suggest: (q, signal) => query("/catalog/suggest", q, signal),
   search: (q, signal) => query("/catalog/search", q, signal),
@@ -92,4 +120,48 @@ export const api = {
       method: "POST",
       body: { member_number: memberNumber, title, author, isbn },
     }).then((r) => r.json()),
+  // 로그인 화면과 역할 확인
+  login: (loginId, password) =>
+    request("/auth/login", { method: "POST", body: { login_id: loginId, password } }).then((r) =>
+      r.json(),
+    ),
+  me: () => request("/auth/me").then((r) => r.json()),
+  logout: () => request("/auth/logout", { method: "POST" }),
+  // 관리자 화면. 기관 정보는 운영 방식을 읽는 데 쓴다.
+  library: () => request("/library").then((r) => r.json()),
+  adminOpenMessages: (body, signal) => request("/admin-agent/messages", { method: "POST", body, signal }),
+  adminEndSession: (id) => request(`/admin-agent/sessions/${id}`, { method: "DELETE" }),
+  // 승인 목록: kind는 curations | templates | purchases. 한 종류의 경로는 APPROVAL_BASES 한 곳에 있다.
+  approvalPending: (kind) =>
+    request(`${APPROVAL_BASES[kind]}?status=pending_approval`).then((r) => r.json()),
+  approvalAll: (kind) => request(`${APPROVAL_BASES[kind]}`).then((r) => r.json()),
+  approvalGet: (kind, id) => request(`${APPROVAL_BASES[kind]}/${id}`).then((r) => r.json()),
+  approve: (kind, id) => request(`${APPROVAL_BASES[kind]}/${id}/approve`, { method: "POST" }).then((r) => r.json()),
+  reject: (kind, id, reason) =>
+    request(`${APPROVAL_BASES[kind]}/${id}/reject`, { method: "POST", body: { reason } }).then((r) =>
+      r.json(),
+    ),
+  unpublish: (id) => request(`${APPROVAL_BASES.curations}/${id}/unpublish`, { method: "POST" }).then((r) => r.json()),
+  // 희망도서와 오늘의 연체
+  bookRequests: (offset, limit) =>
+    request(`/book-requests?status=requested&limit=${limit}&offset=${offset}`).then((r) => r.json()),
+  closeBookRequest: (id) =>
+    request(`/book-requests/${id}`, { method: "PATCH", body: { status: "closed" } }).then((r) => r.json()),
+  overdueToday: () => request("/overdue-notices/today").then((r) => r.json()),
 };
+
+// 열 때 이 화면의 토큰으로 역할을 확인한다. 토큰이 없거나 401이거나 역할이 다르면 이 화면의 토큰만 지우고
+// 로그인 화면으로 보낸다(끝나지 않는 약속). 다른 오류는 그대로 던진다.
+export async function requireRole(role) {
+  useScreen(role);
+  if (!getToken()) return goLogin();
+  let me;
+  try {
+    me = await api.me();
+  } catch (error) {
+    if (error.kind === "unauthorized") return goLogin();
+    throw error;
+  }
+  if (me.role !== role) return goLogin();
+  return me;
+}
