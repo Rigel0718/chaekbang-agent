@@ -16,7 +16,7 @@ MVP 대상은 작은도서관이다. 독립서점은 2단계 '모드'(대출 대
 ## 현재 단계
 
 <!-- 이 절은 세 줄까지만. 결정·수치·미룬 일은 docs/roadmap.md에 쓴다. -->
-진행 중: 없음(`add-purchase-request` archive 끝) · 다음: `add-web-ui`
+진행 중: 없음(`add-web-ui` archive 끝) · 다음: `add-admin-analytics-ui`(24b, 가칭)
 change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾기, 비슷한 책, 최근 기록), 미룬 일은 `docs/roadmap.md`에 있다.
 
 ## OpenSpec 작업 규칙
@@ -77,7 +77,7 @@ uv run alembic upgrade head                  # 마이그레이션 적용
 uv run alembic revision --autogenerate -m "" # 마이그레이션 생성
 uv run python scripts/seed.py                # 시드 데이터
 uv run uvicorn app.main:app --reload         # 서버 (Swagger: /docs)
-# 이용자 화면: /ui/librarian/#token=<키오스크 토큰> (토큰은 Swagger의 POST /auth/login, 로그인 화면은 add-web-ui)
+# 로그인 /ui/login/ → 이용자 화면 /ui/librarian/ (키오스크 계정), 관리자 화면 /ui/admin/ (관리자 계정)
 uv run pytest                                # 테스트
 uv run ruff check . && uv run ruff format .  # 린트·포맷
 uv run python scripts/enrich_books.py        # 운영자: 공식 서지 채움, 정보나루·카카오·YES24 세 키 필요 (--limit, --retry-failed)
