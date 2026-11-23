@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from app.central.embedding import EmbeddingError, EmbeddingFailure
+from app.central.models import EMBEDDING_DIM
 from app.core.config import Settings, get_settings
 
 # 모델별 질의 접두어. 모델 저장소 `config_sentence_transformers.json`의 `prompts.query`와 같다.
@@ -32,7 +33,7 @@ class TeiEmbedder:
         settings = settings or get_settings()
         self._http = http
         self.name = settings.embedding_model
-        self.dim = settings.embedding_dim
+        self.dim = EMBEDDING_DIM
         self.max_tokens = settings.embedding_max_tokens
         self.query_prefix = QUERY_PREFIXES.get(self.name, "")
 

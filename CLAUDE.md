@@ -63,7 +63,7 @@ change 순서와 상태, 확정된 기본값(임베딩 텍스트, 주제로 찾�
 
 - Python 3.12, FastAPI, Pydantic v2
 - PostgreSQL 16 (+ fuzzystrmatch, pgvector. 이미지 `pgvector/pgvector`), SQLAlchemy 2.0 (async), Alembic
-- 임베딩: 로컬 Text Embeddings Inference(TEI) 컨테이너, 기본 모델 `dragonkue/snowflake-arctic-embed-l-v2.0-ko`(1024차원, 입력 512토큰). 서버는 같은 가중치의 ONNX 변환본(`TEI_MODEL_ID`)으로만, ONNX 실행기로 띄운다. 다른 모델은 먼저 ONNX로 변환한다. 앱에는 torch를 넣지 않고 `httpx`로 부른다
+- 임베딩: 로컬 Text Embeddings Inference(TEI) 컨테이너, 기본 모델 `dragonkue/snowflake-arctic-embed-l-v2.0-ko`(1024차원, 입력 512토큰). 서버는 같은 가중치의 ONNX 변환본(compose의 `TEI_MODEL_ID`)으로만, ONNX 실행기로 띄운다. 다른 모델은 먼저 ONNX로 변환한다. 앱에는 torch를 넣지 않고 `httpx`로 부른다
 - 패키지 관리: uv / 린트·포맷: ruff / 테스트: pytest, pytest-asyncio, httpx
 - 로컬 실행: Docker Compose
 - LLM: OpenAI Responses API (기본 `gpt-6-luna`, 모델별 가격은 `app/core/config.py`의 `LLM_PRICES`)
@@ -121,7 +121,8 @@ uv run python -m evals.admin_agent            # 운영 에이전트 분석 질�
 - ISBN은 하이픈 없는 13자리 문자열로 저장한다.
 - 상태 값은 `StrEnum`으로 정의한다.
 - 서명으로 줄 세우는 코드는 `app/core/text.py`의 `korean_order`(ICU `ko-x-icu`)를 쓴다. DB 기본 collation은 바꾸지 않는다.
-- 외부 API 키, DB URL은 `.env`에서 읽고 코드에 하드코딩하지 않는다. `.env.example`을 함께 관리한다.
+- 설정은 `app/core/config.py`의 `Settings` 하나다. `.env`에서 읽는 값은 비밀과 설치마다 다른 값(DB 접속, 외부 API 키, 시드 비밀번호, 임베딩 서버 주소·켜기)뿐이고 `ENV_FIELDS`에 적는다. 나머지(토큰 수명, 세션·실행 상한, LLM 모델, 시간 제한)는 코드값이며 환경변수와 `.env`로 덮이지 않는다. 새 설정은 코드값이 기본이다. 외부 API 키와 DB URL은 코드에 하드코딩하지 않고, `.env.example`을 함께 관리한다.
+- 임베딩 모델 이름과 입력 한도는 `config.py`와 `docker-compose.yml`에 같은 값으로 둔다(테스트가 비교한다).
 - 외부 도서 API의 표지 이미지는 저장하지 않고 원본 URL로만 표시하며, 출처를 함께 보여준다.
 - 공식 서지는 소장 도서의 ISBN만 채운다. YES24 이용 조건이 전체 도서 정보의 축적과 재배포를 금지하므로 미리 대량으로 받아 두지 않는다. 받은 원본은 저장소에 넣지 않는다. 예외(평가 표본, 실험 장서, 출처 값, 대출 신호 파일)와 저장하지 않는 값(카카오 판매가·판매 상태, 정보나루 표지)은 `docs/data-sources.md`에 있다.
 - 에이전트는 공통 실행기 하나에 프로필(프롬프트, tool 묶음, 권한)만 바꿔 쓴다. tool은 같은 프로세스에서 service를 감싸고, 이름·설명·JSON Schema로 정의한다. `library_id`는 실행기가 코드로 주입하고 LLM이 정하지 않는다.

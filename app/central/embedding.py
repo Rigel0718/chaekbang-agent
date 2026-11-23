@@ -201,7 +201,7 @@ async def run_layer(
 
     full이면 모두 다시 인코딩하고, 아니면 벡터가 없거나 텍스트 해시가 달라진 대상만 인코딩한다.
     텍스트가 빈 대상(소개 없는 책의 `description`)은 벡터를 만들지 않고 `blank`로 센다.
-    배치 크기를 주지 않으면 설정 값(`EMBEDDING_BATCH_SIZE`)을 쓴다. 인코더가 실패하면 그 자리에서
+    배치 크기를 주지 않으면 설정 값(`embedding_batch_size`)을 쓴다. 인코더가 실패하면 그 자리에서
     멈추고 `stopped`에 이유를 담는다. 끝난 배치는 저장돼 있다.
     """
     size = batch_size or get_settings().embedding_batch_size

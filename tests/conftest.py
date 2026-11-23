@@ -10,8 +10,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-# 비밀번호 해시 비용을 낮춰 계정을 많이 만드는 테스트를 빠르게 한다 (설정을 읽기 전에 정한다).
-os.environ["PASSWORD_SCRYPT_N"] = "1024"
 # 시드 테스트용 계정 비밀번호 (.env에 없어도 테스트가 돌게 한다)
 os.environ.setdefault("SEED_ADMIN_PASSWORD", "seed-admin-pass")
 os.environ.setdefault("SEED_KIOSK_PASSWORD", "seed-kiosk-pass")
@@ -28,6 +26,10 @@ from app.core.db import get_session
 from app.core.migrations import alembic_config
 from app.main import app
 from tests.helpers import add_library, add_staff, add_staff_session
+
+# 비밀번호 해시 비용을 낮춰 계정을 많이 만드는 테스트를 빠르게 한다. 정책값은 환경변수로 덮이지
+# 않으므로 설정 객체를 직접 바꾼다(첫 테스트 전에, 해시는 부를 때마다 설정을 읽는다).
+get_settings().password_scrypt_n = 1024
 
 
 def _test_database_url() -> str:

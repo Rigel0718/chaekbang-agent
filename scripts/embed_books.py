@@ -95,7 +95,8 @@ def report_failure(error: EmbeddingError) -> int:
     if error.failure is EmbeddingFailure.MODEL_MISMATCH:
         print(
             f"임베딩 서버가 설정과 다릅니다 ({error.detail}). "
-            ".env의 EMBEDDING_MODEL·EMBEDDING_MAX_TOKENS와 맞춰 서버를 다시 띄우세요.",
+            "docker-compose.yml과 app/core/config.py의 모델 이름·입력 한도를 "
+            "맞춰 서버를 다시 띄우세요.",
             file=sys.stderr,
         )
         return EXIT_PRECONDITION

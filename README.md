@@ -68,7 +68,7 @@ uv run uvicorn app.main:app --reload
 1. `POST /auth/login`에 `{"login_id": "sunny-kiosk", "password": "..."}`를 보내 토큰을 받는다.
 2. 이후 요청에 `Authorization: Bearer <토큰>` 헤더를 붙인다. Swagger에서는 오른쪽 위 **Authorize**에 토큰을 넣는다.
 3. 키오스크(도서관 PC)는 기관 정보·기관 도서·사본 조회, 대출·반납, AI 사서 대화만 할 수 있다. 나머지는 관리자만 할 수 있고, 키오스크가 부르면 403이다.
-4. 토큰 만료: 관리자 12시간, 키오스크 30일 (`ADMIN_TOKEN_HOURS`, `KIOSK_TOKEN_HOURS`). `POST /auth/logout`으로 끊고, 비밀번호를 바꾸면 그 계정의 기존 토큰이 모두 끊긴다.
+4. 토큰 만료: 관리자 12시간, 키오스크 30일 (`app/core/config.py`의 `admin_token_hours`, `kiosk_token_hours`). `POST /auth/logout`으로 끊고, 비밀번호를 바꾸면 그 계정의 기존 토큰이 모두 끊긴다.
 
 ### 이전 스키마(무인 서점)에서 넘어올 때
 
@@ -170,7 +170,7 @@ uv run python -m evals.holdings_import
 
 ## 에이전트 실행기
 
-공통 실행기는 `app/agent/`에 있다. `.env`의 `OPENAI_API_KEY`가 없어도 서버는 시작하고, 실행만 고정 답으로 끝난다. 기본 모델은 `LLM_MODEL`이고, 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 규칙은 [app/agent/README.md](app/agent/README.md)를 참고한다.
+공통 실행기는 `app/agent/`에 있다. `.env`의 `OPENAI_API_KEY`가 없어도 서버는 시작하고, 실행만 고정 답으로 끝난다. 기본 모델은 `app/core/config.py`의 `llm_model`이고, 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 규칙은 [app/agent/README.md](app/agent/README.md)를 참고한다.
 
 ## 서지정보 채움 (운영자)
 

@@ -218,7 +218,7 @@ async def evaluate(
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.conversation")
-    parser.add_argument("--model", help="LLM 모델. 없으면 LLM_MODEL")
+    parser.add_argument("--model", help="LLM 모델. 없으면 기본 모델")
     parser.add_argument("--sets", default=",".join(SETS), help="쉼표로 나눈 세트")
     parser.add_argument("--only", help="쉼표로 나눈 항목 id")
     parser.add_argument("--out", type=Path, help="결과 폴더. 없으면 data/runs/<시각>-<모델>")
