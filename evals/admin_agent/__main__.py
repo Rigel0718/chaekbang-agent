@@ -176,7 +176,7 @@ async def evaluate(model: str | None, only: set[str] | None, out: Path | None) -
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.admin_agent")
-    parser.add_argument("--model", help="LLM 모델. 없으면 LLM_MODEL")
+    parser.add_argument("--model", help="LLM 모델. 없으면 기본 모델")
     parser.add_argument("--only", help="쉼표로 나눈 시나리오 id")
     parser.add_argument("--out", type=Path, help="결과 폴더. 없으면 data/runs/<시각>-<모델>")
     args = parser.parse_args()

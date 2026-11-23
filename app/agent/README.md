@@ -57,4 +57,4 @@ async for event in run(
 
 ## 모델
 
-기본 모델은 `LLM_MODEL`(`gpt-6-luna`)이고 키는 `.env`의 `OPENAI_API_KEY`에서만 읽는다. 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 비용은 저장하지 않고 토큰 수만 기록한다.
+기본 모델은 `llm_model`(`gpt-6-luna`, 코드값이라 `.env`로 바꾸지 않는다)이고 키는 `.env`의 `OPENAI_API_KEY`에서만 읽는다. 모델별 토큰 가격은 `app/core/config.py`의 `LLM_PRICES`에 있다. 비용은 저장하지 않고 토큰 수만 기록한다.

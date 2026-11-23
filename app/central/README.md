@@ -109,20 +109,20 @@
 - 텍스트는 서명(: 부제), 분류, 소개다. 저자는 넣지 않는다(텍스트 버전 2). 공식 소개가 없으면 소개 없이 만든다(기관 소개로 채우지 않는다). `scripts/embed_books.py`가 끝에 "공식 소개 없음 N건(그중 기관 소개 있음 M건)"을 출력한다.
 - **텍스트 종류**(`TextKind`, `scripts/embed_books.py --kind`): 기본 `full` 밖에 추천 실험의 비교용으로 `with_author`(서명, 저자 원문, 분류, 소개. 버전 1과 같은 필드), `description`(소개만), `title`·`category`(필드별 벡터)가 있다. 텍스트 버전은 2 그대로이고 종류마다 벡터가 따로 저장된다. 조립 규칙은 `app/core/embedding_text.py` 한 곳이다.
 - **빈 텍스트는 벡터를 만들지 않는다.** 그 종류의 값이 없는 책(소개 없는 책의 `description`)은 인코딩하지 않고 "빈 텍스트 N건"으로 센다. 빈 문자열을 인코딩하면 그런 책들이 모두 같은 벡터를 갖게 된다.
-- 배치 기본값은 4권이다(`EMBEDDING_BATCH_SIZE`). CPU ONNX에서는 배치가 클수록 느리고 1과 4가 같다(아래 표). GPU에서는 큰 배치가 빠를 수 있어 설정과 `--batch-size`를 남겼다.
+- 배치 기본값은 4권이다(`embedding_batch_size`). CPU ONNX에서는 배치가 클수록 느리고 1과 4가 같다(아래 표). GPU에서는 큰 배치가 빠를 수 있어 설정과 `--batch-size`를 남겼다.
 - 모델을 실행하는 코드는 `external/tei.py` 하나다. TEI의 요청·응답 형식은 이 파일 밖으로 나가지 않는다. 적재와 조회는 `Embedder`만 알고, 테스트는 가짜 인코더(`tests/embedding_helpers.py`)로 돈다.
 - 문서(도서)는 접두어 없이, 질의는 모델이 정한 접두어(`query: `)를 붙여 인코딩한다. TEI의 `prompt_name`을 쓰지 않고 앱이 문자열을 붙인다. 결과가 같다는 것은 `tests/embedding_live/`가 확인한다.
-- 항상 `normalize`와 `truncate`를 켠다. 입력 길이 한도(기본 512토큰)는 서버가 정한다. TEI에는 한도를 낮추는 옵션이 없어서 `docker/embedder/start.sh`가 모델 폴더의 `max_seq_length`를 `EMBEDDING_MAX_TOKENS`로 바꿔 띄운다. 모델의 원래 한도(8192토큰)로 띄우면 준비 단계에서 메모리가 6GB를 넘는다.
+- 항상 `normalize`와 `truncate`를 켠다. 입력 길이 한도(기본 512토큰)는 서버가 정한다. TEI에는 한도를 낮추는 옵션이 없어서 `docker/embedder/start.sh`가 모델 폴더의 `max_seq_length`를 compose에 적은 입력 한도(앱의 `embedding_max_tokens`와 같은 값)로 바꿔 띄운다. 모델의 원래 한도(8192토큰)로 띄우면 준비 단계에서 메모리가 6GB를 넘는다.
 - `check()`가 서버의 모델 이름과 입력 한도를 설정과 비교한다. 다르면 적재를 시작하지 않는다.
 - 오류에는 상태 코드와 종류만 남기고 입력 텍스트를 넣지 않는다.
-- **서비스 중 질의 인코딩**(AI 사서 주제로 찾기)은 `GuardedEmbedder`로 감싼다. 시간 제한(`EMBEDDING_QUERY_TIMEOUT_SECONDS`, 기본 2초)을 넘으면 `timeout`, 실패하면 `EMBEDDING_QUERY_PAUSE_SECONDS`(기본 30초) 동안 서버를 부르지 않고 `paused`를 낸다. 모델 확인(`check`)은 처음 쓸 때 한 번이고, 다른 모델이면 쉬기 뒤 다시 확인한다. 문서는 인코딩하지 않는다. 실패를 어떻게 다룰지(키워드 순위로 내려가기)는 부르는 쪽(`app/library/services/topic.py`)이 정한다. `EMBEDDING_QUERY_ENABLED=false`면 앱이 인코더를 만들지 않는다. 적재의 시간 제한(`EMBEDDING_TIMEOUT_SECONDS`)과 따로다.
+- **서비스 중 질의 인코딩**(AI 사서 주제로 찾기)은 `GuardedEmbedder`로 감싼다. 시간 제한(`embedding_query_timeout_seconds`, 기본 2초)을 넘으면 `timeout`, 실패하면 `embedding_query_pause_seconds`(기본 30초) 동안 서버를 부르지 않고 `paused`를 낸다. 모델 확인(`check`)은 처음 쓸 때 한 번이고, 다른 모델이면 쉬기 뒤 다시 확인한다. 문서는 인코딩하지 않는다. 실패를 어떻게 다룰지(키워드 순위로 내려가기)는 부르는 쪽(`app/library/services/topic.py`)이 정한다. `embedding_query_enabled`가 거짓이면(`.env`의 `EMBEDDING_QUERY_ENABLED=false`) 앱이 인코더를 만들지 않는다. 적재의 시간 제한(`embedding_timeout_seconds`)과 따로다.
 - 소개글은 로컬 컨테이너에만 보낸다. 외부 임베딩 API로 바꾸려면 YES24 이용 조건을 먼저 확인한다.
 
 ### 실행 방식: ONNX 변환본
 
-- **서버는 ONNX 변환본으로만 띄운다.** 같은 가중치의 변환본(`TEI_MODEL_ID`, 기본 `Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx`)을 ONNX(ort) 실행기로 띄운다. 저장소에 `onnx/model.onnx`가 없으면 시작 스크립트가 이유를 출력하고 멈춘다. 원본 저장소에는 ONNX 파일이 없어 Candle 실행기로만 돌았고, 적재가 1.7배쯤 느렸다(아래 표). 설정을 잘못 넣어 모르는 사이에 느린 실행기로 도는 일을 막으려고 Candle로 띄우는 길은 두지 않는다.
-- 벡터와 함께 저장하는 이름은 원본 이름(`EMBEDDING_MODEL`, `dragonkue/snowflake-arctic-embed-l-v2.0-ko`) 그대로다. 같은 벡터가 나오므로(아래) 이미 만든 벡터를 다시 만들지 않는다. 시작 스크립트가 이 이름을 `--served-model-name`으로 넘기고 `check()`가 비교한다.
-- **같은 벡터인지는 `tests/embedding_live/test_reference_vectors.py`가 지킨다.** 원본(Candle)으로 만든 기준 벡터(`tests/embedding_live/data/reference_vectors.json`, 직접 쓴 문서 5개와 질의 2개)와 지금 서버의 벡터가 모두 코사인 0.999 이상이어야 한다. 2026-11-11 ONNX 변환본은 0.99998 이상이었다. 실행 방식이나 TEI 버전을 바꾸면 임베딩 서버를 띄우고 `uv run pytest tests/embedding_live`를 돌린다. 미달이면 같은 모델이 아니므로 `EMBEDDING_MODEL`을 새 이름으로 두고 다시 적재한다.
+- **서버는 ONNX 변환본으로만 띄운다.** 같은 가중치의 변환본(`docker-compose.yml`의 `TEI_MODEL_ID`, 기본 `Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx`)을 ONNX(ort) 실행기로 띄운다. 저장소에 `onnx/model.onnx`가 없으면 시작 스크립트가 이유를 출력하고 멈춘다. 원본 저장소에는 ONNX 파일이 없어 Candle 실행기로만 돌았고, 적재가 1.7배쯤 느렸다(아래 표). 설정을 잘못 넣어 모르는 사이에 느린 실행기로 도는 일을 막으려고 Candle로 띄우는 길은 두지 않는다.
+- 벡터와 함께 저장하는 이름은 원본 이름(`embedding_model`, `dragonkue/snowflake-arctic-embed-l-v2.0-ko`) 그대로다. 같은 벡터가 나오므로(아래) 이미 만든 벡터를 다시 만들지 않는다. 시작 스크립트가 이 이름을 `--served-model-name`으로 넘기고 `check()`가 비교한다.
+- **같은 벡터인지는 `tests/embedding_live/test_reference_vectors.py`가 지킨다.** 원본(Candle)으로 만든 기준 벡터(`tests/embedding_live/data/reference_vectors.json`, 직접 쓴 문서 5개와 질의 2개)와 지금 서버의 벡터가 모두 코사인 0.999 이상이어야 한다. 2026-11-11 ONNX 변환본은 0.99998 이상이었다. 실행 방식이나 TEI 버전을 바꾸면 임베딩 서버를 띄우고 `uv run pytest tests/embedding_live`를 돌린다. 미달이면 같은 모델이 아니므로 `embedding_model`을 새 이름으로 두고 다시 적재한다.
 
 **ONNX 실행기로 떴는지 확인하는 방법.** TEI 1.9.4는 시작 로그에 실행기 이름을 찍지 않는다(디버그 로그로도 안 나온다). 아래 셋으로 본다.
 
@@ -154,7 +154,7 @@
 ### 모델 바꾸기
 
 1. 모델을 ONNX로 변환해 Hugging Face에 올린다. 서버는 ONNX 변환본만 띄운다. 저장소에 `onnx/model.onnx`(2GB가 넘으면 `onnx/model.onnx_data`도), 토크나이저, `1_Pooling/config.json`, `sentence_bert_config.json`, `config_sentence_transformers.json`이 있어야 한다.
-2. `.env`의 `TEI_MODEL_ID`(변환본 저장소)와 `EMBEDDING_MODEL`(벡터와 함께 저장할 이름, 보통 원본 모델 이름), 필요하면 `EMBEDDING_MAX_TOKENS`를 바꾸고 `docker compose --profile embedding up -d --force-recreate embedder`로 다시 띄운다.
+2. `docker-compose.yml`의 `TEI_MODEL_ID`(변환본 저장소)와 `EMBEDDING_MODEL`(벡터와 함께 저장할 이름, 보통 원본 모델 이름), 필요하면 `EMBEDDING_MAX_TOKENS`를 바꾸고, `app/core/config.py`의 `embedding_model`·`embedding_max_tokens`를 같은 값으로 바꾼다(`tests/core/test_config.py`가 둘을 비교한다). 그다음 `docker compose --profile embedding up -d --force-recreate embedder`로 다시 띄운다.
 3. 기준 벡터를 새 모델로 다시 만든다(`uv run python -m tests.embedding_live.reference --write`). 원본 실행기로 만들 수 없으면 변환할 때 sentence-transformers로 원본 벡터와 비교해 둔다.
 4. 질의 접두어가 있는 모델이면 `external/tei.py`의 `QUERY_PREFIXES`에 더한다. 모델 저장소 `config_sentence_transformers.json`의 `prompts`를 확인한다.
 5. `official_book_embeddings`와 `book_embeddings`의 벡터 열은 1024차원이다(`EMBEDDING_DIM`). 차원이 다른 모델은 마이그레이션이 먼저다.

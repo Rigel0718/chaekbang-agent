@@ -23,10 +23,12 @@ services:
     profiles: ["embedding"]
     entrypoint: ["sh", "/start.sh"]
     environment:
+      # 앱 설정(app/core/config.py)의 embedding_model·embedding_max_tokens와 같은 값이다.
+      # 치환 없이 적고, 같은지는 tests/core/test_config.py가 비교한다. 바꾸면 벡터를 다시 적재한다.
       # 띄울 모델 저장소. ONNX 변환본만 받는다(없으면 시작하지 않는다)
-      TEI_MODEL_ID: ${TEI_MODEL_ID:-Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-dragonkue/snowflake-arctic-embed-l-v2.0-ko}
-      EMBEDDING_MAX_TOKENS: ${EMBEDDING_MAX_TOKENS:-512}
+      TEI_MODEL_ID: Rigel97/snowflake-arctic-embed-l-v2.0-ko-onnx
+      EMBEDDING_MODEL: dragonkue/snowflake-arctic-embed-l-v2.0-ko
+      EMBEDDING_MAX_TOKENS: "512"
     ports:
       - "127.0.0.1:${EMBEDDING_PORT:-8090}:80"
     volumes:
