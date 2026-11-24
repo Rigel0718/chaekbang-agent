@@ -16,7 +16,14 @@ from app.library.models.circulation import Loan, Member
 from app.seed.library import LIBRARIES, SUNNY
 
 MEMBERS_PER_LIBRARY = 10
+# 앞의 회원에게만 가상의 휴대폰 번호를 준다(회원 로그인 확인용). 나머지는 번호가 없다.
+MEMBERS_WITH_PHONE = 7
 RETURNED, ACTIVE, OVERDUE = 5, 5, 3
+
+
+def seed_phone(library_no: int, n: int) -> str:
+    """기관 안에서 겹치지 않는 가상의 번호: 010-0000-<기관 번호><회원 순번 3자리>."""
+    return f"0100000{library_no}{n:03d}"
 
 
 async def seed_members(
@@ -25,8 +32,13 @@ async def seed_members(
     fake = Faker("ko_KR")
     fake.seed_instance(seed + 100)
     rows = [
-        {"library_id": library_ids[lib.key], "member_number": f"M{n:04d}", "name": fake.name()}
-        for lib in LIBRARIES
+        {
+            "library_id": library_ids[lib.key],
+            "member_number": f"M{n:04d}",
+            "name": fake.name(),
+            "phone": seed_phone(library_no, n) if n <= MEMBERS_WITH_PHONE else None,
+        }
+        for library_no, lib in enumerate(LIBRARIES, start=1)
         for n in range(1, MEMBERS_PER_LIBRARY + 1)
     ]
     result = await session.execute(

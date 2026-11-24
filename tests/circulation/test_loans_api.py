@@ -17,9 +17,11 @@ from tests.helpers import (
     add_member,
     assert_rejected,
     fetch,
+    login_member,
 )
 
 TODAY = date(2026, 11, 5)
+PHONE = "01011112222"
 
 
 @pytest.fixture(autouse=True)
@@ -34,14 +36,17 @@ async def shelf(session: AsyncSession, library_a: Tenant) -> dict:
     """A 기관(자체 대출)의 사본 하나와 회원 하나."""
     book = await add_library_book(session, library_a.id, title="모모")
     holding = await add_holding(session, library_a.id, book["id"], "EM0001")
-    member = await add_member(session, library_a.id, "M0001")
+    member = await add_member(session, library_a.id, "M0001", phone=PHONE)
     return {"book": book, "holding": holding, "member": member}
 
 
-async def _borrow(client: AsyncClient, accession: str = "EM0001", member: str = "M0001"):
-    return await client.post(
-        "/loans", json={"accession_number": accession, "member_number": member}
-    )
+async def _borrow(
+    client: AsyncClient, accession: str = "EM0001", *, login: bool = True, **body: str
+):
+    """로그인한 회원으로 빌린다. login=False면 회원 세션 없이 보낸다."""
+    if login and "X-Member-Token" not in client.headers:
+        await login_member(client, PHONE)
+    return await client.post("/loans", json={"accession_number": accession, **body})
 
 
 async def _return(client: AsyncClient, accession: str = "EM0001"):
@@ -94,9 +99,35 @@ async def test_due_date_uses_library_loan_days(
 async def test_unknown_member(
     kiosk_client: AsyncClient, session: AsyncSession, shelf: dict
 ) -> None:
-    """[circulation/loans] 대출하기 / 없는 회원번호"""
-    res = await _borrow(kiosk_client, member="NOPE")
-    assert res.status_code == 404
+    """[circulation/loans] 대출하기 / 없는 회원번호 (회원 토큰 없이 본문 회원번호만)"""
+    res = await _borrow(kiosk_client, login=False, member_number="M0001")
+    assert res.status_code == 403
+    assert (await fetch(session, "holdings", shelf["holding"]["id"]))["status"] == "available"
+
+
+async def test_borrow_member_is_session_member(
+    kiosk_client: AsyncClient, session: AsyncSession, library_a: Tenant, shelf: dict
+) -> None:
+    """[circulation/loans] 대출하기 / 본문의 회원번호는 쓰지 않음 (대출의 회원은 로그인한 회원)"""
+    other = await add_member(session, library_a.id, "M0002", phone="01033334444")
+    res = await _borrow(kiosk_client, member_number="M0002")
+    assert res.status_code == 201
+    row = await fetch(session, "loans", res.json()["id"])
+    assert row["member_id"] == shelf["member"]["id"] != other["id"]
+
+
+async def test_borrow_expired_member_session(
+    kiosk_client: AsyncClient,
+    session: AsyncSession,
+    shelf: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[circulation/loans] 대출하기 / 끝난 회원 세션"""
+    await login_member(kiosk_client, PHONE)
+    later = clock.now() + timedelta(minutes=3, seconds=1)
+    monkeypatch.setattr(clock, "now", lambda: later)
+    res = await _borrow(kiosk_client)
+    assert res.status_code == 403
     assert (await fetch(session, "holdings", shelf["holding"]["id"]))["status"] == "available"
 
 
@@ -126,7 +157,7 @@ async def test_lost_copy(
     """[circulation/loans] 대출 가능 조건 / 분실된 사본"""
     book = await add_library_book(session, library_a.id)
     await add_holding(session, library_a.id, book["id"], "LOST-1", status="lost")
-    await add_member(session, library_a.id, "M0001")
+    await add_member(session, library_a.id, "M0001", phone=PHONE)
     assert (await _borrow(kiosk_client, accession="LOST-1")).status_code == 409
 
 
@@ -153,13 +184,13 @@ async def test_two_active_loans_rejected_by_db(
 async def _imported_shelf(session: AsyncSession, library_b: Tenant) -> None:
     book = await add_library_book(session, library_b.id)
     await add_holding(session, library_b.id, book["id"], "EM0001")
-    await add_member(session, library_b.id, "M0001")
+    await add_member(session, library_b.id, "M0001", phone=PHONE)
 
 
 async def test_imported_library_borrow(
     kiosk_client_b: AsyncClient, session: AsyncSession, library_b: Tenant
 ) -> None:
-    """[circulation/loans] 운영 방식에 따른 대출 차단 / 외부 대출 기관에서 대출"""
+    """[circulation/loans] 운영 방식에 따른 대출 차단 / 외부 대출 기관은 로그인해도 대출하지 않음"""
     await _imported_shelf(session, library_b)
     res = await _borrow(kiosk_client_b)
     assert res.status_code == 409

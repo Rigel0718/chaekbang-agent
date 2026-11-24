@@ -8,6 +8,7 @@ from itertools import count
 from typing import Any
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -188,11 +189,29 @@ async def add_holding(
 
 
 async def add_member(
-    session: AsyncSession, library_id: int, member_number: str, name: str = "김이용"
+    session: AsyncSession,
+    library_id: int,
+    member_number: str,
+    name: str = "김이용",
+    phone: str | None = None,
 ) -> Any:
     return await insert(
-        session, "members", library_id=library_id, member_number=member_number, name=name
+        session,
+        "members",
+        library_id=library_id,
+        member_number=member_number,
+        name=name,
+        phone=phone,
     )
+
+
+async def login_member(client: AsyncClient, phone: str) -> str:
+    """회원 로그인한다. 이 클라이언트의 이후 요청에 `X-Member-Token`이 붙고, 토큰을 돌려준다."""
+    res = await client.post("/auth/member-login", json={"phone": phone})
+    assert res.status_code == 200, res.text
+    token = res.json()["member_token"]
+    client.headers["X-Member-Token"] = token
+    return token
 
 
 async def add_loan(

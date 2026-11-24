@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from app.core.schemas import Page, Pagination, page_of
-from app.library.deps import AdminStaff, CurrentStaff, Session
+from app.library.deps import AdminStaff, CurrentMember, CurrentStaff, Session
 from app.library.models.book_request import BookRequestStatus
 from app.library.schemas.book_request import (
     BookRequestAdminRead,
@@ -17,9 +17,11 @@ router = APIRouter(prefix="/book-requests", tags=["book-requests"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=BookRequestRead)
-async def create_request(data: BookRequestCreate, staff: CurrentStaff, session: Session):
-    """희망도서를 신청한다. 키오스크와 관리자 모두 쓴다. 응답에는 회원번호가 없다."""
-    return await book_requests.create_request(session, staff.library_id, data)
+async def create_request(
+    data: BookRequestCreate, staff: CurrentStaff, member: CurrentMember, session: Session
+):
+    """희망도서를 신청한다. 키오스크와 관리자 모두 쓴다. 신청 회원은 회원 세션이 정한다."""
+    return await book_requests.create_request(session, staff.library_id, member.member_id, data)
 
 
 @router.get("", response_model=Page[BookRequestAdminRead])

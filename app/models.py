@@ -28,6 +28,7 @@ TENANT_TABLES: set[str] = {
     "holdings",
     "holding_imports",
     "members",
+    "member_sessions",
     "loans",
     "agent_runs",
     "agent_steps",

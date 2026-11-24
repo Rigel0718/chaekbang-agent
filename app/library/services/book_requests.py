@@ -1,4 +1,4 @@
-"""희망도서 service. 회원번호는 신청할 때 회원을 찾는 데만 쓰고 저장하는 것은 회원 연결뿐이다.
+"""희망도서 service. 신청 회원은 회원 세션이 정하고 저장하는 것은 회원 연결뿐이다.
 
 소장 검사는 ISBN이 있을 때만 한다(서명 비교는 오타 허용이라 애매하다). 같은 회원의 같은 서명
 (맞춤 키) 처리 전 신청은 하나만 둔다. 동시 요청은 부분 UNIQUE 인덱스가 막는다.
@@ -10,17 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.models import Book
 from app.core import clock
-from app.core.errors import ConflictError, InvalidRequestError, NotFoundError
+from app.core.errors import ConflictError, InvalidRequestError
 from app.core.tenancy import get_owned
 from app.core.text import match_key
 from app.library.models.book_request import BookRequest, BookRequestStatus
 from app.library.models.catalog import LibraryBook
-from app.library.models.circulation import Member
 from app.library.recommendation.search import recommendable_ids
 from app.library.schemas.book_request import BookRequestCreate
 
 LABEL = "희망도서 신청"
-UNKNOWN_MEMBER = "회원번호를 확인해 주세요"
 ALREADY_REQUESTED = "이미 신청한 책이에요"
 ALREADY_HELD = "이미 도서관에 있는 책이에요"
 
@@ -42,15 +40,9 @@ async def _is_held(session: AsyncSession, library_id: int, isbn: str) -> bool:
 
 
 async def create_request(
-    session: AsyncSession, library_id: int, data: BookRequestCreate
+    session: AsyncSession, library_id: int, member_id: int, data: BookRequestCreate
 ) -> BookRequest:
-    member = await session.scalar(
-        select(Member).where(
-            Member.library_id == library_id, Member.member_number == data.member_number
-        )
-    )
-    if member is None:
-        raise NotFoundError(UNKNOWN_MEMBER)  # 받은 번호를 메시지에 넣지 않는다
+    """member_id는 회원 세션이 정한 값이다(요청 본문 값이 아니다)."""
     title_key = match_key(data.title)
     if not title_key:
         raise InvalidRequestError("서명에 글자나 숫자가 있어야 합니다")
@@ -60,7 +52,7 @@ async def create_request(
         select(
             exists().where(
                 BookRequest.library_id == library_id,
-                BookRequest.member_id == member.id,
+                BookRequest.member_id == member_id,
                 BookRequest.title_key == title_key,
                 BookRequest.status == BookRequestStatus.REQUESTED,
             )
@@ -70,7 +62,7 @@ async def create_request(
         raise ConflictError(ALREADY_REQUESTED)
     request = BookRequest(
         library_id=library_id,
-        member_id=member.id,
+        member_id=member_id,
         title=data.title,
         title_key=title_key,
         author=data.author,

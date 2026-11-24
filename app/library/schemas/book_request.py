@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, StringConstraints
 
-from app.core.schemas import Isbn, NonEmpty, ReadModel
+from app.core.schemas import Isbn, ReadModel
 from app.library.models.book_request import AUTHOR_LIMIT, TITLE_LIMIT, BookRequestStatus
 
 Title = Annotated[
@@ -22,9 +22,8 @@ def _blank_to_none(value: object) -> object:
 
 
 class BookRequestCreate(BaseModel):
-    """기관은 토큰으로 정한다. 회원번호는 본문에서만 받고 응답에 싣지 않는다."""
+    """기관은 직원 토큰, 신청 회원은 회원 세션이 정한다. 보낸 member_number는 무시한다."""
 
-    member_number: NonEmpty
     title: Title
     author: Annotated[Author | None, BeforeValidator(_blank_to_none)] = None
     isbn: Annotated[Isbn | None, BeforeValidator(_blank_to_none)] = None
