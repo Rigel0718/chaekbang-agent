@@ -100,6 +100,7 @@ const APPROVAL_BASES = {
 export const api = {
   suggest: (q, signal) => query("/catalog/suggest", q, signal),
   search: (q, signal) => query("/catalog/search", q, signal),
+  topic: (q, signal) => query("/catalog/topic", q, signal),
   similar: (id, signal) => request(`/catalog/books/${id}/similar`, { signal }).then((r) => r.json()),
   guide: (signal) => request("/library/guide", { signal }).then((r) => r.json()),
   // SSE 응답 그대로 돌려준다. 읽는 쪽은 sse.js다.

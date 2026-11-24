@@ -1,9 +1,11 @@
 // 자동완성. 입력이 멈추면(200ms) 부르고 앞 요청은 취소한다.
-// Enter는 화살표로 후보를 고른 때만 후보를 고르고, 아니면 항상 사서에게 보낸다.
+// Enter는 화살표로 후보를 고른 때만 후보를 고른다. 아니면 onSubmit이 부르는 main.js가 서명·저자 찾기를
+// 먼저 하고, 1권 이상이면 두 단계 결과를, 아니면 사서에게 보낸다.
 import { api } from "../shared/api.js";
 
 export const DEBOUNCE_MS = 200;
-const MAX_QUERY = 100;
+// 서버 검색 API의 질의 상한(`MAX_QUERY_LENGTH`)과 같다. 테스트가 맞춰 본다. 두 단계 검색도 이 값을 쓴다.
+export const MAX_QUERY = 100;
 
 export function createSuggest({ input, panel, onPick, onSearchAll, onSubmit, onUnauthorized }) {
   let hits = [];

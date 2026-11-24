@@ -29,6 +29,10 @@
 .results-title { margin: 14px 0 0; font-weight: 600; }
 .results-note { color: var(--muted); }
 
+/* 두 단계 결과: 위 단과 아래 단 사이를 띄우고 [사서에게 물어보기]는 끝에 둔다 */
+.two-step-lower { margin-top: 6px; }
+.two-step-ask { margin: 14px 0 6px; }
+
 .composer { position: relative; padding-top: 8px; max-width: 760px; width: 100%; }
 .field { display: flex; gap: 8px; }
 .field input {
