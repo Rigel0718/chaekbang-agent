@@ -41,6 +41,7 @@ ALL_TABLES = {
     "holdings",
     "holding_imports",
     "members",
+    "member_sessions",
     "loans",
     "agent_runs",
     "agent_steps",
@@ -73,7 +74,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 28
+    assert len(ALL_TABLES) == 29
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -89,7 +90,7 @@ async def test_korean_collation_present(engine: AsyncEngine) -> None:
     """
     async with engine.connect() as conn:
         await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
-    assert len(await _table_names(engine)) == 28
+    assert len(await _table_names(engine)) == 29
 
 
 async def test_korean_collation_missing(engine: AsyncEngine) -> None:
@@ -207,6 +208,72 @@ async def test_members_phone_column(engine: AsyncEngine, migrated_db: str) -> No
         await conn.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
     assert found["phone"]["nullable"] is True
     assert old is None
+
+
+async def test_member_phone_unique_per_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[circulation/members] 전화번호 유일성 / 저장 계층의 중복 거부
+
+    다른 기관의 같은 번호와 번호 없는 회원 여럿은 허용한다.
+    """
+    await add_member(session, library_a.id, "M0001", phone="01012345678")
+    await assert_rejected(
+        session,
+        "members",
+        library_id=library_a.id,
+        member_number="M0002",
+        name="다른 회원",
+        phone="01012345678",
+        match="uq_members_library_id_phone",
+    )
+    await add_member(session, library_b.id, "M0001", phone="01012345678")
+    await add_member(session, library_a.id, "M0003")
+    await add_member(session, library_a.id, "M0004")
+
+
+async def test_member_session_deleted_with_member(session: AsyncSession, library_a: Tenant) -> None:
+    """[circulation/member-login] 회원을 지우면 세션도 지운다 / 로그인 중인 회원 삭제"""
+    member = await add_member(session, library_a.id, "M0001", phone="01012345678")
+    staff_session = await session.scalar(
+        text("SELECT id FROM staff_sessions WHERE library_id = :id LIMIT 1"),
+        {"id": library_a.id},
+    )
+    await insert(
+        session,
+        "member_sessions",
+        library_id=library_a.id,
+        staff_session_id=staff_session,
+        member_id=member["id"],
+        token_hash="a" * 64,
+        expires_at=clock.now(),
+    )
+    await session.execute(text("DELETE FROM members WHERE id = :id"), {"id": member["id"]})
+    left = await session.scalar(
+        text("SELECT count(*) FROM member_sessions WHERE member_id = :id"), {"id": member["id"]}
+    )
+    assert left == 0
+
+
+async def test_member_session_rejects_member_of_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 회원으로 회원 세션 직접 저장"""
+    member_b = await add_member(session, library_b.id, "M0001", phone="01012345678")
+    staff_session = await session.scalar(
+        text("SELECT id FROM staff_sessions WHERE library_id = :id LIMIT 1"),
+        {"id": library_a.id},
+    )
+    await assert_rejected(
+        session,
+        "member_sessions",
+        library_id=library_a.id,
+        staff_session_id=staff_session,
+        member_id=member_b["id"],
+        token_hash="b" * 64,
+        expires_at=clock.now(),
+        match="fk_member_sessions_library_id_member_id_members",
+    )
 
 
 async def test_overdue_notice_template_rules(session: AsyncSession, library_a: Tenant) -> None:

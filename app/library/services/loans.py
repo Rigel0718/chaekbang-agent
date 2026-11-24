@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import clock
 from app.core.errors import ConflictError, NotFoundError
 from app.library.models.catalog import Holding, HoldingStatus
-from app.library.models.circulation import Loan, Member
+from app.library.models.circulation import Loan
 from app.library.models.library import Library, LoanMode
 from app.library.services.guide import compute_due_date
 
@@ -47,15 +47,11 @@ async def _lock_holding(session: AsyncSession, library_id: int, accession_number
 
 
 async def create_loan(
-    session: AsyncSession, library_id: int, accession_number: str, member_number: str
+    session: AsyncSession, library_id: int, accession_number: str, member_id: int
 ) -> Loan:
+    """member_id는 회원 세션이 정한 값이다(요청 본문 값이 아니다)."""
     await _library_for_circulation(session, library_id)
     holding = await _lock_holding(session, library_id, accession_number)
-    member = await session.scalar(
-        select(Member).where(Member.library_id == library_id, Member.member_number == member_number)
-    )
-    if member is None:
-        raise NotFoundError("회원번호를 확인해 주세요")
     if holding.status != HoldingStatus.AVAILABLE:
         raise ConflictError(f"지금 빌릴 수 없는 책입니다 (상태: {holding.status})")
 
@@ -65,7 +61,7 @@ async def create_loan(
     loan = Loan(
         library_id=library_id,
         holding_id=holding.id,
-        member_id=member.id,
+        member_id=member_id,
         loaned_on=today,
         due_on=due.due_on,
     )

@@ -17,18 +17,36 @@ def _duplicate(member_number: str) -> ConflictError:
     return ConflictError(f"이미 쓰는 회원번호입니다: {member_number}")
 
 
+def _duplicate_phone() -> ConflictError:
+    return ConflictError("이미 쓰는 전화번호입니다")  # 받은 번호를 메시지에 넣지 않는다
+
+
+async def _phone_taken(
+    session: AsyncSession, library_id: int, phone: str, *, except_id: int | None = None
+) -> bool:
+    query = select(Member.id).where(Member.library_id == library_id, Member.phone == phone)
+    if except_id is not None:
+        query = query.where(Member.id != except_id)
+    return await session.scalar(query) is not None
+
+
 async def create_member(session: AsyncSession, library_id: int, data: MemberCreate) -> Member:
     exists_query = select(Member.id).where(
         Member.library_id == library_id, Member.member_number == data.member_number
     )
     if await session.scalar(exists_query) is not None:
         raise _duplicate(data.member_number)
+    if data.phone is not None and await _phone_taken(session, library_id, data.phone):
+        raise _duplicate_phone()
     member = Member(library_id=library_id, **data.model_dump())
     session.add(member)
     try:
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
+        # 동시 요청으로 같은 번호가 먼저 들어간 경우만 여기까지 온다. 아니면 회원번호 중복이다.
+        if data.phone is not None and await _phone_taken(session, library_id, data.phone):
+            raise _duplicate_phone() from exc
         raise _duplicate(data.member_number) from exc
     await session.refresh(member)
     return member
@@ -57,9 +75,17 @@ async def update_member(
     session: AsyncSession, library_id: int, member_id: int, data: MemberUpdate
 ) -> Member:
     member = await get_member(session, library_id, member_id)
-    for field, value in data.changes().items():
+    changes = data.changes()
+    phone = changes.get("phone")
+    if phone is not None and await _phone_taken(session, library_id, phone, except_id=member.id):
+        raise _duplicate_phone()
+    for field, value in changes.items():
         setattr(member, field, value)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise _duplicate_phone() from exc
     await session.refresh(member)
     return member
 

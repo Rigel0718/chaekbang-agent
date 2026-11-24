@@ -1,18 +1,26 @@
-// 대출·반납·희망도서 입력칸. 칸 하나에 모드 셋(빌리기, 반납하기, 희망도서)이다.
-// LLM을 거치지 않고 기존 REST로 바로 보낸다. 회원번호는 화면 메모리의 입력칸에만 있고,
-// 칸을 닫거나 화면을 비우면 모두 지운다(공용 PC). 서버가 준 문구는 글자로만 넣는다.
+// 회원 로그인·대출·반납·희망도서 입력칸. 칸 하나에 모드 넷(로그인, 빌리기, 반납하기, 희망도서)이다.
+// LLM을 거치지 않고 기존 REST로 바로 보낸다. 휴대폰 번호는 화면 메모리의 입력칸에만 있고, 로그인에 성공하거나
+// 칸을 닫거나 화면을 비우면 지운다(공용 PC). 서버가 준 문구는 글자로만 넣는다.
+// 빌리기와 희망도서는 회원 로그인이 필요하다: 로그인 전이면 로그인 모드로 열고, 성공하면 이어서 한다.
 import { api } from "../shared/api.js";
 
 const MODES = {
-  borrow: { group: "loan", submit: "빌리기", fields: ["accession", "member"] },
+  login: { group: "login", submit: "로그인", fields: ["phone"] },
+  borrow: { group: "loan", submit: "빌리기", fields: ["accession"] },
   return: { group: "loan", submit: "반납하기", fields: ["accession"] },
-  request: { group: "request", submit: "신청하기", fields: ["title", "author", "isbn", "member"] },
+  request: { group: "request", submit: "신청하기", fields: ["title", "author", "isbn"] },
 };
 const REQUIRED = {
-  borrow: ["accession", "member"],
+  login: ["phone"],
+  borrow: ["accession"],
   return: ["accession"],
-  request: ["title", "member"],
+  request: ["title"],
 };
+// 제출할 때 로그인이 필요한 모드. 빌리기는 등록번호를 먼저 적을 수 있게 칸을 열고(반납하기와 같은 칸),
+// 희망도서는 칸을 열 때부터 로그인을 먼저 받는다.
+const NEEDS_LOGIN = new Set(["borrow", "request"]);
+const LOGIN_FIRST = new Set(["request"]);
+const LOGIN_AGAIN = "로그인이 끝났어요. 다시 로그인해 주세요.";
 const MISSING = "빈칸을 채워 주세요.";
 const INVALID = "입력한 값을 확인해 주세요.";
 const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
@@ -25,11 +33,14 @@ function dayLabel(iso) {
 }
 
 // ui: { panel, loanButton, requestButton, tabs, tabButtons, closeButton, form, inputs, labels,
-//       submit, result, setBusy(bool), onUnauthorized() }
-// inputs: { accession, member, title, author, isbn } 입력 요소, labels: 같은 이름의 라벨 요소
+//       submit, result, member, setBusy(bool), onUnauthorized(), onMemberLost() }
+// inputs: { phone, accession, title, author, isbn } 입력 요소, labels: 같은 이름의 라벨 요소
+// member: { loggedIn, token, login(phone) }(member.js), onMemberLost(): 회원 세션이 끝난 것을 화면에 알림
 export function createActions(ui) {
   let mode = null;
   let busy = false;
+  // 로그인에 성공한 뒤 이어서 할 일 하나: { reopen: 모드 } 또는 { then: 함수 }
+  let pending = null;
 
   function showResult(text, failed = false) {
     ui.result.textContent = text;
@@ -52,19 +63,35 @@ export function createActions(ui) {
     ui.submit.textContent = current.submit;
   }
 
+  // 로그인을 먼저 받는 모드를 로그인 전에 열면 로그인 모드로 열고, 성공하면 그 모드로 돌아온다.
+  // 이미 적은 입력은 지우지 않는다(등록번호, 서명).
   function open(next) {
+    if (LOGIN_FIRST.has(next) && !ui.member.loggedIn) {
+      askLogin({ reopen: next });
+      return;
+    }
     mode = next;
+    pending = null;
     ui.panel.hidden = false;
     showResult("");
     render();
-    const first = MODES[mode].fields[0];
-    ui.inputs[first].focus();
+    ui.inputs[MODES[mode].fields[0]].focus();
   }
 
-  // 닫을 때와 화면을 비울 때 모든 입력을 지운다(회원번호가 남지 않게)
+  function askLogin(after, message = "") {
+    pending = after;
+    mode = "login";
+    ui.panel.hidden = false;
+    showResult(message);
+    render();
+    ui.inputs.phone.focus();
+  }
+
+  // 닫을 때와 화면을 비울 때 모든 입력을 지운다(휴대폰 번호가 남지 않게)
   function close() {
     ui.panel.hidden = true;
     mode = null;
+    pending = null;
     clearInputs();
     showResult("");
   }
@@ -74,8 +101,21 @@ export function createActions(ui) {
   }
 
   async function send() {
+    if (mode === "login") {
+      await ui.member.login(value("phone"));
+      clearInputs(["phone"]);
+      const next = pending;
+      pending = null;
+      if (next?.reopen) {
+        open(next.reopen);
+      } else {
+        close();
+        next?.then?.();
+      }
+      return "";
+    }
     if (mode === "borrow") {
-      const loan = await api.borrow(value("accession"), value("member"));
+      const loan = await api.borrow(value("accession"), ui.member.token);
       clearInputs(["accession"]);
       const due = dayLabel(loan.due_on);
       return `『${loan.title}』을 빌렸어요.${due ? ` ${due}까지 반납해 주세요.` : ""}`;
@@ -85,12 +125,10 @@ export function createActions(ui) {
       clearInputs(["accession"]);
       return `『${loan.title}』을 반납했어요.`;
     }
-    await api.requestBook({
-      memberNumber: value("member"),
-      title: value("title"),
-      author: value("author"),
-      isbn: value("isbn"),
-    });
+    await api.requestBook(
+      { title: value("title"), author: value("author"), isbn: value("isbn") },
+      ui.member.token,
+    );
     clearInputs();
     return REQUESTED;
   }
@@ -106,6 +144,11 @@ export function createActions(ui) {
 
   async function submit() {
     if (busy || mode === null) return;
+    // 로그인 전에 빌리기·신청을 누르면 로그인부터 한다(이미 적은 값은 남는다)
+    if (NEEDS_LOGIN.has(mode) && !ui.member.loggedIn) {
+      askLogin({ reopen: mode });
+      return;
+    }
     if (REQUIRED[mode].some((name) => !value(name))) {
       showResult(MISSING, true);
       return;
@@ -116,11 +159,16 @@ export function createActions(ui) {
     showResult("");
     try {
       showResult(await send());
-      ui.inputs[MODES[mode].fields[0]].focus();
+      if (mode !== null) ui.inputs[MODES[mode].fields[0]].focus();
     } catch (error) {
       if (error.kind === "unauthorized") {
         close();
         ui.onUnauthorized();
+      } else if (error.kind === "member_required") {
+        // 서버의 회원 세션이 끝났다. 키오스크는 그대로 두고 회원만 로그아웃해 로그인 칸으로 돌아간다.
+        const again = mode;
+        ui.onMemberLost();
+        askLogin(NEEDS_LOGIN.has(again) ? { reopen: again } : null, LOGIN_AGAIN);
       } else {
         showResult(errorText(error), true);
       }
@@ -153,6 +201,8 @@ export function createActions(ui) {
       if (!available && mode !== null && MODES[mode].group === "loan") close();
     },
     openRequest: () => open("request"),
+    // 로그인 칸을 연다. 성공하면 then()을 부른다(담기처럼 칸이 필요 없는 동작).
+    openLogin: ({ then } = {}) => askLogin(then ? { then } : null),
     reset: close,
   };
 }

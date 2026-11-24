@@ -3,10 +3,12 @@ import { api, goLogin, requireRole } from "../shared/api.js";
 import { createActions } from "./actions.js";
 import { createBasket } from "./basket.js";
 import { createChat } from "./chat.js";
+import { createMember } from "./member.js";
 import { CAP_MS, CAP_WARN_MS, IDLE_MS, IDLE_WARN_MS, createIdleTimer } from "./idle.js";
 import { MAX_QUERY, createSuggest } from "./suggest.js";
 
 const SESSION_ENDED_NOTICE = "대화가 끝나서 새로 시작해요.";
+const MEMBER_ENDED_NOTICE = "로그아웃했어요. 다시 쓰려면 로그인해 주세요.";
 
 // 키오스크 계정이 아니면 로그인 화면으로 가고, 이 아래는 실행되지 않는다
 await requireRole("kiosk");
@@ -78,6 +80,25 @@ const basket = createBasket({
   toggle: $("basket-toggle"),
 });
 
+// 회원 로그인. 위 띠에는 이름·번호 없이 "로그인 중"만 보인다. 담은 책은 로그인한 동안에만 보인다.
+function renderMember(loggedIn) {
+  $("open-login").hidden = loggedIn;
+  $("member-status").hidden = !loggedIn;
+  $("member-logout").hidden = !loggedIn;
+  $("basket-toggle").hidden = !loggedIn;
+  $("basket").hidden = !loggedIn;
+}
+
+const member = createMember({
+  onChange(loggedIn) {
+    renderMember(loggedIn);
+    if (loggedIn) {
+      hideNotice();
+      idle.memberLoggedIn(); // 이용 상한은 로그인한 순간부터 센다
+    }
+  },
+});
+
 // 개발·확인용: ?idle_seconds=N, ?cap_seconds=N으로 두 시계를 짧게 줄인다(알림은 15초·30초 앞, 최소 1초).
 function seconds(name) {
   const value = Number(new URLSearchParams(location.search).get(name));
@@ -101,8 +122,8 @@ function showWarning(info) {
   warningKeep.hidden = info.kind !== "idle";
   const render = () => {
     const left = Math.max(0, Math.ceil((info.deadline - Date.now()) / 1000));
-    warningText.textContent =
-      info.kind === "idle" ? `${left}초 뒤 화면을 비워요` : `${left}초 뒤 이용 시간이 끝나 화면을 비워요`;
+    if (info.kind === "cap") warningText.textContent = `${left}초 뒤 이용 시간이 끝나 로그아웃해요`;
+    else warningText.textContent = info.member ? `${left}초 뒤 로그아웃해요` : `${left}초 뒤 화면을 비워요`;
   };
   render();
   warning.hidden = false;
@@ -115,8 +136,9 @@ const idle = createIdleTimer({
   capMs: capSeconds ? capSeconds * 1000 : CAP_MS,
   capWarnMs: capSeconds ? Math.max(1000, (capSeconds - 30) * 1000) : CAP_WARN_MS,
   onWarn: showWarning,
-  // 답을 받는 중이면 resetAll의 chat.reset()이 진행 중인 요청을 끊는다. 로그아웃은 하지 않고 시작 화면을 보인다.
-  onClear: () => resetAll({ toStart: true }),
+  // 로그인하지 않았으면 화면을 비우고 시작 화면을 보인다(답을 받는 중이면 요청을 끊는다).
+  // 로그인 중이면 회원만 로그아웃한다(받는 중인 답은 끊지 않는다). 키오스크 토큰은 어느 쪽도 건드리지 않는다.
+  onClear: ({ member: loggedIn }) => (loggedIn ? memberLogout({ notify: true }) : resetAll({ toStart: true })),
 });
 
 const actions = createActions({
@@ -128,32 +150,43 @@ const actions = createActions({
   closeButton: $("desk-close"),
   form: $("desk-form"),
   inputs: {
+    phone: $("in-phone"),
     accession: $("in-accession"),
-    member: $("in-member"),
     title: $("in-title"),
     author: $("in-author"),
     isbn: $("in-isbn"),
   },
   labels: {
+    phone: $("label-phone"),
     accession: $("label-accession"),
-    member: $("label-member"),
     title: $("label-title"),
     author: $("label-author"),
     isbn: $("label-isbn"),
   },
   submit: $("desk-submit"),
   result: $("desk-result"),
+  member,
   setBusy(busy) {
     if (busy) idle.pause();
     else idle.resume();
   },
   onUnauthorized,
+  onMemberLost: memberLost,
 });
+
+// 카드의 [담기]는 로그인한 회원만 쓴다. 로그인 전이면 로그인 칸을 열고, 성공하면 그 책을 담는다.
+const memberBasket = {
+  has: (id) => basket.has(id),
+  toggle(book) {
+    if (member.loggedIn) basket.toggle(book);
+    else actions.openLogin({ then: () => basket.toggle(book) });
+  },
+};
 
 const chat = createChat({
   thread: $("thread"),
   emptyState: $("empty"),
-  basket,
+  basket: memberBasket,
   setBusy(busy) {
     send.disabled = busy;
     if (busy) idle.pause();
@@ -162,7 +195,7 @@ const chat = createChat({
   onUnauthorized,
   onRequestBook: () => actions.openRequest(),
   onSessionLost() {
-    resetAll();
+    resetChat();
     showNotice(SESSION_ENDED_NOTICE);
   },
 });
@@ -200,8 +233,10 @@ start.addEventListener("click", () => {
   input.focus();
 });
 
-// 새 대화, 무입력 1분, 이용 상한 3분, 세션 404가 모두 이 함수로 화면을 비운다.
-// 시간이 다 돼 비울 때만(toStart) 시작 화면을 다시 보인다. 토큰은 건드리지 않는다.
+// 화면을 비우는 길은 셋이다. 어느 쪽도 키오스크 토큰은 건드리지 않는다.
+//   resetAll   로그인하지 않았을 때 무입력 1분: 전부 비우고(toStart) 시작 화면
+//   resetChat  [새 대화], 서버 대화 세션 끝(404): 대화·자동완성·알림·입력만. 로그인과 담은 책은 남긴다
+//   memberLogout  [로그아웃], 로그인 중 무입력 1분, 이용 상한 3분: 회원 로그아웃. 대화·담은 책·입력칸도 비운다
 function resetAll({ toStart = false } = {}) {
   chat.reset();
   basket.clear();
@@ -214,11 +249,41 @@ function resetAll({ toStart = false } = {}) {
   if (toStart) showStart();
 }
 
+function resetChat() {
+  chat.reset();
+  suggest.close();
+  input.value = "";
+  hideNotice();
+  loadGuide();
+  // 로그인하지 않았으면 지금처럼 시계도 처음으로. 로그인 중이면 이용 상한을 건드리지 않는다.
+  if (!member.loggedIn) idle.reset();
+}
+
+function memberLogout({ notify = false } = {}) {
+  idle.memberLoggedOut();
+  basket.clear();
+  actions.reset();
+  resetChat(); // 로그아웃하면 대화도 비운다(다음 사람이 앞사람의 대화를 보지 않게). 받는 중인 답은 끊긴다
+  const done = member.logout(); // 화면은 바로 로그아웃하고 서버 세션은 뒤에서 끊는다
+  if (notify) showNotice(MEMBER_ENDED_NOTICE);
+  return done;
+}
+
+// 요청 중에 서버가 회원 세션이 끝났다고 답했다(403). 화면만 로그아웃하고, 로그인 칸은 actions가 연다.
+function memberLost() {
+  idle.memberLoggedOut();
+  basket.clear();
+  resetChat();
+  member.logout({ remote: false });
+}
+
 $("composer").addEventListener("submit", (event) => {
   event.preventDefault();
   submit();
 });
-$("new-chat").addEventListener("click", () => resetAll());
+$("new-chat").addEventListener("click", () => resetChat());
+$("open-login").addEventListener("click", () => actions.openLogin());
+$("member-logout").addEventListener("click", () => memberLogout());
 
 loadGuide();
 start.focus();

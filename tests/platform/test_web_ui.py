@@ -34,6 +34,8 @@ def _reference(base: Path, ref: str) -> Path | None:
     """HTML이 참조하거나 JS가 불러오는 같은 출처의 파일."""
     if ref.startswith(("http:", "https:", "data:", "#")):
         return None
+    if ref.endswith("/"):  # 화면 이동 링크(/ui/login/). 화면 HTML은 따로 내주는지 본다
+        return None
     if ref.startswith("/ui/"):
         return PUBLIC / ref.removeprefix("/ui/")
     return (base.parent / ref).resolve()
@@ -121,6 +123,8 @@ ALLOWED_CALLS = {
     "/auth/login": {"POST"},
     "/auth/me": {"GET"},
     "/auth/logout": {"POST"},
+    "/auth/member-login": {"POST"},
+    "/auth/member-logout": {"POST"},
     "/catalog/suggest": {"GET"},
     "/catalog/search": {"GET"},
     "/catalog/topic": {"GET"},
@@ -228,22 +232,102 @@ def test_screen_requests_exist_on_server():
     assert not missing, f"서버에 없는 경로: {missing}"
 
 
-# 회원번호의 행선지
+# 회원 토큰의 행선지
 
 
-def test_member_number_only_in_loan_and_request_bodies():
-    """[web-ui] 회원번호를 보내는 곳: `member_number`는 대출·희망도서 본문에만 있다."""
-    readers = {PUBLIC / "admin" / "requests.js", PUBLIC / "admin" / "overdue.js"}
-    for path in _js_files():
-        text = _code(path)
-        if path != API_JS and path not in readers:
-            assert "member_number" not in text, path
+def test_member_token_header_only_in_loan_request_logout():
+    """[web-ui] 회원 토큰의 행선지: `X-Member-Token`은 대출·신청·회원 로그아웃에만 붙는다."""
     entries = _api_entries()
-    assert {name for name, src in entries.items() if "member_number" in src} == {
+    assert {name for name, src in entries.items() if "MEMBER_HEADER" in src} == {
+        "memberLogout",
         "borrow",
         "requestBook",
     }
-    assert "member_number" not in API_JS.read_text(encoding="utf-8").split("export const api")[0]
+    # 헤더 이름을 쓰는 곳은 api.js의 상수 하나뿐이다
+    for path in _js_files():
+        text = _code(path)
+        assert text.count("X-Member-Token") == (1 if path == API_JS else 0), path
+
+
+def test_member_number_nowhere_but_admin_readers():
+    """[web-ui] 회원 토큰의 행선지: `member_number`는 관리자 목록 두 파일 말고는 어디에도 없다."""
+    readers = {PUBLIC / "admin" / "requests.js", PUBLIC / "admin" / "overdue.js"}
+    for path in _js_files():
+        if path not in readers:
+            assert "member_number" not in _code(path), path
+
+
+def test_member_required_error_kind():
+    """[web-ui] 회원 로그인: 403은 회원 세션 오류(member_required)이고 401과 따로 다룬다."""
+    code = _code(API_JS)
+    assert '403: "member_required"' in code
+    actions = _code(PUBLIC / "librarian" / "actions.js")
+    assert 'error.kind === "member_required"' in actions
+    assert actions.count("ui.onMemberLost()") == 1
+    # 회원 세션 오류는 키오스크 토큰을 지우거나 로그인 화면으로 보내지 않는다
+    block = actions[actions.index('error.kind === "member_required"') :].split("} else {")[0]
+    assert not re.search(r"goLogin|clearToken|onUnauthorized", block)
+
+
+def test_member_token_not_in_storage():
+    """[web-ui] 회원 토큰은 저장소에 없음: 회원 토큰은 member.js의 변수 한 칸에만 있다."""
+    member_js = _code(PUBLIC / "librarian" / "member.js")
+    assert not re.search(r"localStorage|sessionStorage|indexedDB|document\.cookie", member_js)
+    assert "setToken" not in member_js
+    for path in (PUBLIC / "librarian").glob("*.js"):
+        assert "setToken" not in _code(path), path
+
+
+def test_member_login_markup():
+    """[web-ui] 회원 로그인: 로그인은 보이고 담은 책·로그아웃은 숨김으로 시작한다."""
+    html = INDEX.read_text(encoding="utf-8")
+
+    def tag(element_id: str) -> str:
+        match = re.search(rf"<\w+\b[^>]*\bid=\"{element_id}\"[^>]*>", html)
+        assert match, element_id
+        return match.group(0)
+
+    assert not re.search(r"\bhidden\b", tag("open-login"))
+    for element_id in ("basket-toggle", "basket", "member-status", "member-logout"):
+        assert re.search(r"\bhidden\b", tag(element_id)), element_id
+    # 회원번호 칸은 없고 휴대폰 번호 칸이 하나 있다
+    assert 'id="in-member"' not in html and "회원번호" not in html
+    assert len(re.findall(r"<input\b[^>]*\bid=\"in-phone\"", html)) == 1
+    for field in re.findall(r"<input\b[^>]*>", html):
+        if re.search(r'id="in-(phone|accession|title|author|isbn)"', field):
+            assert 'autocomplete="off"' in field, field
+
+
+def test_member_logout_also_clears_the_chat():
+    """[web-ui] 이용자 화면의 무입력·이용 상한 비우기: 회원 로그아웃은 대화도 비운다."""
+    code = _code(LIBRARIAN_MAIN)
+    for name in ("memberLogout", "memberLost"):
+        body = code[code.index(f"function {name}(") :].split("\n}\n")[0]
+        assert "resetChat();" in body, name
+        assert "idle.memberLoggedOut();" in body and "basket.clear();" in body, name
+    # [새 대화]는 로그인과 담은 책을 남긴다
+    reset_chat = code[code.index("function resetChat()") :].split("\n}\n")[0]
+    assert "basket.clear" not in reset_chat and "member.logout" not in reset_chat
+
+
+def test_staff_login_link():
+    """[web-ui] 이용자 화면의 직원 로그인 이동: 로그인 화면으로 가는 링크는 이동만 한다."""
+    html = INDEX.read_text(encoding="utf-8")
+    link = re.search(r"<a\b[^>]*\bid=\"staff-login\"[^>]*>", html)
+    assert link and 'href="/ui/login/"' in link.group(0)
+    assert not re.search(r"\bhidden\b", link.group(0))
+    # 링크는 HTML뿐이다: 직원 로그아웃도 토큰 지우기도 하지 않는다
+    for path in (PUBLIC / "librarian").glob("*.js"):
+        assert "staff-login" not in _code(path), path
+
+
+def test_member_status_shows_no_member_value():
+    """[web-ui] 이용자 화면의 회원 로그인: 위 띠에는 이름·번호 없이 "로그인 중"만 보인다."""
+    main = _code(LIBRARIAN_MAIN)
+    assert 'id="member-status"' in INDEX.read_text(encoding="utf-8")
+    render = main[main.index("function renderMember") :].split("\n}\n")[0]
+    assert "textContent" not in render  # 로그인 중 글자는 HTML의 고정 문구다
+    assert "로그인 중" in INDEX.read_text(encoding="utf-8")
 
 
 def test_chat_request_body_keys():
@@ -403,10 +487,11 @@ def test_kiosk_screen_requires_kiosk_role_and_has_no_logout():
     """[web-ui] 받는 역할(이용자 쪽)과 로그아웃: kiosk만 받고 이용자 화면에 로그아웃이 없다."""
     code = _code(LIBRARIAN_MAIN)
     assert code.index('await requireRole("kiosk")') < code.index("createChat(")
-    for path in [*(PUBLIC / "librarian").glob("*.js"), INDEX]:
-        text = _code(path) if path.suffix == ".js" else path.read_text(encoding="utf-8")
-        assert "logout" not in text.lower(), path
-        assert "로그아웃" not in text, path
+    # 직원 로그아웃(`/auth/logout`)은 없다. 있는 [로그아웃]은 회원 로그아웃이다.
+    for path in (PUBLIC / "librarian").glob("*.js"):
+        text = _code(path)
+        assert "api.logout" not in text and "/auth/logout" not in text, path
+        assert "clearToken" not in text, path
 
 
 def test_require_role_clears_only_own_key_and_goes_to_login():
@@ -439,16 +524,30 @@ def test_clearing_time_values():
     session_seconds = get_settings().librarian_session_idle_minutes * 60
     assert _seconds("IDLE_MS") < session_seconds
     assert _seconds("CAP_MS") < session_seconds
+    # 서버 회원 세션 수명은 이용 상한과 같다(화면이 로그아웃을 놓쳐도 서버가 같은 때 끊는다)
+    assert get_settings().member_session_minutes * 60 == _seconds("CAP_MS")
 
 
-def test_cap_clock_does_not_pause_or_extend():
-    """[web-ui] 이용 상한: 답 받는 중에 멈추지 않고 입력해도 늘지 않는다(시작은 첫 입력 한 번)."""
+def test_cap_clock_starts_at_login_and_does_not_pause_or_extend():
+    """[web-ui] 이용 상한: 로그인에서 시작하고, 답 받는 중에 멈추지 않으며 입력해도 늘지 않는다."""
     code = _code(IDLE_JS)
     pause = code[code.index("pause() {") : code.index("resume() {")]
     assert "stopCap" not in pause and "armCap" not in pause
-    # 상한을 거는 곳은 비운 뒤 첫 입력(started가 거짓일 때) 한 곳뿐이다
+    # 상한을 거는 곳은 회원 로그인 한 곳뿐이다(첫 입력과 입력마다는 걸지 않는다)
     assert len(re.findall(r"armCap\(\)", code)) == 2  # 정의와 호출
-    assert re.search(r"if \(!started\) \{\s*started = true;\s*armCap\(\);", code)
+    login = code[code.index("memberLoggedIn() {") : code.index("memberLoggedOut() {")]
+    assert "armCap();" in login
+    activity = code[code.index("function activity()") :].split("}\n")[0]
+    assert "armCap" not in activity
+
+
+def test_idle_clock_logs_out_member_only():
+    """[web-ui] 이용 상한: 로그인 중에는 회원만 로그아웃하고 아니면 화면을 비운다."""
+    code = _code(IDLE_JS)
+    expire = code[code.index("function expire()") : code.index("function expireMember()")]
+    assert "if (memberOn)" in expire and "onClear({ member: true })" in expire
+    assert "reset();" in expire and "onClear({ member: false })" in expire
+    assert code.count("onClear({ member: true })") == 2  # 무입력과 이용 상한
 
 
 # 관리자 화면
@@ -566,14 +665,14 @@ def test_start_screen_shown_first_and_clear_does_not_log_out():
     code = _code(LIBRARIAN_MAIN)
     # 시작 화면을 다시 보이는 건 시계가 부르는 resetAll 하나뿐이고 다른 비우기는 보이지 않는다
     assert code.count("toStart: true") == 1
-    assert "onClear: () => resetAll({ toStart: true })" in code
-    assert "onSessionLost() {\n    resetAll();" in code
-    assert '$("new-chat").addEventListener("click", () => resetAll());' in code
-    # 비우는 길(resetAll, showStart)에는 토큰·로그인·로그아웃이 없다
+    assert "loggedIn ? memberLogout({ notify: true }) : resetAll({ toStart: true })" in code
+    assert "onSessionLost() {\n    resetChat();" in code
+    assert '$("new-chat").addEventListener("click", () => resetChat());' in code
+    # 비우는 길(resetAll, resetChat, memberLogout, showStart)에는 직원 토큰·로그인 화면 이동이 없다
     start = code.index("function showStart()")
     end = code.index('$("composer")')
     clearing = code[start:end]
-    assert not re.search(r"goLogin|clearToken|logout|location\.", clearing, re.IGNORECASE)
+    assert not re.search(r"goLogin|clearToken|api\.logout|/auth/logout|location\.", clearing)
     assert "if (toStart) showStart();" in clearing
 
 

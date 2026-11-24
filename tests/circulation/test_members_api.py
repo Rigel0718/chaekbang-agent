@@ -265,3 +265,48 @@ async def test_kiosk_cannot_create_member_with_phone(kiosk_client: AsyncClient) 
         "/members", json={"member_number": "M1", "name": "김이용", "phone": "01012345678"}
     )
     assert res.status_code == 403
+
+
+# --- 전화번호 유일성 ---
+
+
+async def _create(client: AsyncClient, number: str, phone: str | None = None):
+    body = {"member_number": number, "name": "이용자"}
+    if phone is not None:
+        body["phone"] = phone
+    return await client.post("/members", json=body)
+
+
+async def test_duplicate_phone_create(admin_client: AsyncClient) -> None:
+    """[circulation/members] 전화번호 유일성 / 같은 기관에서 번호 중복 등록, 형식만 다른 번호"""
+    assert (await _create(admin_client, "M0001", "01012345678")).status_code == 201
+    for phone in ("01012345678", "010-1234-5678"):
+        res = await _create(admin_client, "M0002", phone)
+        assert res.status_code == 409
+        assert "01012345678" not in res.text and "5678" not in res.text
+    assert len((await admin_client.get("/members")).json()["items"]) == 1
+
+
+async def test_duplicate_phone_update(admin_client: AsyncClient) -> None:
+    """[circulation/members] 전화번호 유일성 / 번호 수정이 겹침, 자기 번호로 다시 고치기는 허용"""
+    first = (await _create(admin_client, "M0001", "01012345678")).json()
+    second = (await _create(admin_client, "M0002", "01022223333")).json()
+    res = await admin_client.patch(f"/members/{second['id']}", json={"phone": "010-1234-5678"})
+    assert res.status_code == 409
+    assert (await admin_client.get(f"/members/{second['id']}")).json()["phone"] == "01022223333"
+    same = await admin_client.patch(f"/members/{first['id']}", json={"phone": "010-1234-5678"})
+    assert same.status_code == 200
+
+
+async def test_same_phone_other_library(
+    admin_client: AsyncClient, admin_client_b: AsyncClient
+) -> None:
+    """[circulation/members] 전화번호 유일성 / 다른 기관의 같은 번호"""
+    assert (await _create(admin_client, "M0001", "01012345678")).status_code == 201
+    assert (await _create(admin_client_b, "M0001", "01012345678")).status_code == 201
+
+
+async def test_many_members_without_phone(admin_client: AsyncClient) -> None:
+    """[circulation/members] 전화번호 유일성 / 번호 없는 회원 여럿"""
+    for number in ("M0001", "M0002", "M0003"):
+        assert (await _create(admin_client, number)).status_code == 201

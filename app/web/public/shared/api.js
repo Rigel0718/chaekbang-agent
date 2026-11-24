@@ -49,8 +49,16 @@ export function goLogin() {
   return new Promise(() => {});
 }
 
-// 오류 종류: unauthorized(401) not_found(404) conflict(409) limit(429) invalid(422) other
-const KINDS = { 401: "unauthorized", 404: "not_found", 409: "conflict", 422: "invalid", 429: "limit" };
+// 오류 종류: unauthorized(401) member_required(403) not_found(404) conflict(409) limit(429) invalid(422) other
+// 403은 이용자 화면에서 회원 세션이 없거나 끝났다는 뜻이다(직원 토큰 오류 401과 따로 다룬다).
+const KINDS = {
+  401: "unauthorized",
+  403: "member_required",
+  404: "not_found",
+  409: "conflict",
+  422: "invalid",
+  429: "limit",
+};
 
 export class ApiError extends Error {
   constructor(status, detail) {
@@ -63,8 +71,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = "GET", body, signal } = {}) {
-  const headers = {};
+// 회원 토큰은 대출·희망도서·회원 로그아웃 요청에만 붙인다. 호출하는 쪽이 토큰을 넘기고 이 파일은 쥐지 않는다.
+const MEMBER_HEADER = "X-Member-Token";
+
+async function request(path, { method = "GET", body, signal, extraHeaders } = {}) {
+  const headers = { ...extraHeaders };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -106,20 +117,27 @@ export const api = {
   // SSE 응답 그대로 돌려준다. 읽는 쪽은 sse.js다.
   openMessages: (body, signal) => request("/librarian/messages", { method: "POST", body, signal }),
   endSession: (id) => request(`/librarian/sessions/${id}`, { method: "DELETE" }),
-  // 대출·반납·희망도서 입력칸(actions.js). 회원번호는 이 둘의 본문에만 들어간다(대화 요청에는 넣지 않는다).
-  borrow: (accessionNumber, memberNumber) =>
+  // 회원 로그인(휴대폰 번호)과 대출·반납·희망도서 입력칸(actions.js). 번호는 로그인 요청의 본문에만 들어가고,
+  // 대출·희망도서는 회원 토큰 헤더로 회원을 정한다(대화 요청에는 회원 값이 없다).
+  memberLogin: (phone) =>
+    request("/auth/member-login", { method: "POST", body: { phone } }).then((r) => r.json()),
+  memberLogout: (memberToken) =>
+    request("/auth/member-logout", { method: "POST", extraHeaders: { [MEMBER_HEADER]: memberToken } }),
+  borrow: (accessionNumber, memberToken) =>
     request("/loans", {
       method: "POST",
-      body: { accession_number: accessionNumber, member_number: memberNumber },
+      body: { accession_number: accessionNumber },
+      extraHeaders: { [MEMBER_HEADER]: memberToken },
     }).then((r) => r.json()),
   returnBook: (accessionNumber) =>
     request("/loans/return", { method: "POST", body: { accession_number: accessionNumber } }).then(
       (r) => r.json(),
     ),
-  requestBook: ({ memberNumber, title, author, isbn }) =>
+  requestBook: ({ title, author, isbn }, memberToken) =>
     request("/book-requests", {
       method: "POST",
-      body: { member_number: memberNumber, title, author, isbn },
+      body: { title, author, isbn },
+      extraHeaders: { [MEMBER_HEADER]: memberToken },
     }).then((r) => r.json()),
   // 로그인 화면과 역할 확인
   login: (loginId, password) =>

@@ -129,6 +129,8 @@ class Settings(BaseSettings):
     # 인증 토큰 만료 시간. 키오스크는 도서관 PC에 켜 두는 화면이라 길다.
     admin_token_hours: int = 12
     kiosk_token_hours: int = 720
+    # 키오스크의 회원 로그인 세션. 화면의 이용 상한(로그인부터 180초)과 같은 3분이다.
+    member_session_minutes: int = 3
 
     # "오늘"(대출일, 반납 예정일, 연체)을 정하는 기관 시간대. 서울로 고정한다.
     library_timezone: str = "Asia/Seoul"

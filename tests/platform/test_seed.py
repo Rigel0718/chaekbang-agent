@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
 from collections.abc import AsyncIterator
@@ -132,6 +133,13 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
     assert {"lost", "damaged"} <= statuses
 
     assert await _count(session, "members") == 20
+    # 두 기관 모두 전화번호가 있는 회원과 없는 회원이 있다 [platform/dev-seed-data]
+    phone_counts = (
+        await session.execute(
+            text("SELECT count(phone), count(*) - count(phone) FROM members GROUP BY library_id")
+        )
+    ).all()
+    assert len(phone_counts) == 2 and all(a >= 1 and b >= 1 for a, b in phone_counts)
     loans = (
         (
             await session.execute(
@@ -172,6 +180,10 @@ async def test_seed_creates_expected_rows(session: AsyncSession) -> None:
 async def test_seed_respects_domain_rules(session: AsyncSession) -> None:
     """[platform/dev-seed-data] 시드 데이터 생성 / 시드 데이터가 도메인 규칙을 지킴"""
     await _seed(session)
+    phones = (await session.execute(text("SELECT library_id, phone FROM members"))).all()
+    numbers = [(lib, phone) for lib, phone in phones if phone is not None]
+    assert len(numbers) == len(set(numbers))  # 기관 안에서 겹치지 않는다
+    assert all(re.fullmatch(r"0\d{8,10}", phone) for _lib, phone in numbers)
     for table in ("books", "library_books"):
         rows = (await session.execute(text(f"SELECT isbn, list_price FROM {table}"))).all()
         for isbn, price in rows:

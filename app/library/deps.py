@@ -7,13 +7,14 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
 from app.core.db import get_session
 from app.core.security import hash_token
+from app.library.models.circulation import MemberSession
 from app.library.models.library import StaffRole, StaffSession, StaffUser
 
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -31,6 +32,9 @@ class StaffContext:
     @property
     def is_admin(self) -> bool:
         return self.role == StaffRole.ADMIN
+
+
+MEMBER_REQUIRED = "회원 로그인이 필요합니다"
 
 
 def _unauthorized() -> HTTPException:
@@ -83,3 +87,44 @@ async def require_admin(staff: CurrentStaff) -> StaffContext:
 
 
 AdminStaff = Annotated[StaffContext, Depends(require_admin)]
+
+_member_header = APIKeyHeader(
+    name="X-Member-Token",
+    auto_error=False,
+    description="POST /auth/member-login으로 받은 회원 토큰",
+)
+MemberToken = Annotated[str | None, Depends(_member_header)]
+
+
+@dataclass(frozen=True)
+class MemberContext:
+    member_id: int
+    session_id: int
+
+
+async def current_member(
+    staff: CurrentStaff, session: Session, token: MemberToken
+) -> MemberContext:
+    """회원 세션이 유효할 때만 통과한다. 직원 토큰 오류(401)가 먼저, 회원 세션 오류는 403이다.
+
+    세션은 로그아웃·만료 전이고, 이 키오스크 세션과 이 기관의 것이어야 한다.
+    """
+    row = None
+    if token:
+        row = (
+            await session.execute(
+                select(MemberSession.id, MemberSession.member_id).where(
+                    MemberSession.token_hash == hash_token(token),
+                    MemberSession.library_id == staff.library_id,
+                    MemberSession.staff_session_id == staff.session_id,
+                    MemberSession.revoked_at.is_(None),
+                    MemberSession.expires_at > clock.now(),
+                )
+            )
+        ).one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, MEMBER_REQUIRED)
+    return MemberContext(member_id=row.member_id, session_id=row.id)
+
+
+CurrentMember = Annotated[MemberContext, Depends(current_member)]

@@ -51,8 +51,9 @@ class MemberRead(ReadModel):
 
 
 class LoanCreate(BaseModel):
+    """빌리는 회원은 본문이 아니라 회원 세션이 정한다. 보낸 member_number는 무시한다."""
+
     accession_number: NonEmpty
-    member_number: NonEmpty
 
 
 class LoanReturn(BaseModel):

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query, status
 
 from app.core import clock
 from app.core.schemas import Page, Pagination
-from app.library.deps import AdminStaff, CurrentStaff, Session
+from app.library.deps import AdminStaff, CurrentMember, CurrentStaff, Session
 from app.library.models.circulation import Loan
 from app.library.schemas.circulation import LoanCreate, LoanRead, LoanReturn
 from app.library.services import loans
@@ -29,10 +29,12 @@ def _view(loan: Loan) -> LoanRead:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=LoanRead)
-async def create_loan(data: LoanCreate, staff: CurrentStaff, session: Session):
-    """키오스크와 관리자 모두 쓴다."""
+async def create_loan(
+    data: LoanCreate, staff: CurrentStaff, member: CurrentMember, session: Session
+):
+    """키오스크와 관리자 모두 쓴다. 빌리는 회원은 회원 세션(`X-Member-Token`)이 정한다."""
     loan = await loans.create_loan(
-        session, staff.library_id, data.accession_number, data.member_number
+        session, staff.library_id, data.accession_number, member.member_id
     )
     return _view(loan)
 

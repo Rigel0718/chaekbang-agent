@@ -7,6 +7,9 @@
 .top-actions { display: flex; gap: 8px; margin-left: auto; }
 .top-actions .btn { padding: 8px 16px; }
 .basket-toggle { display: none; }
+.top-actions [hidden] { display: none !important; }
+.staff-login { display: inline-block; text-decoration: none; color: var(--muted); }
+.member-status { align-self: center; color: var(--accent); font-weight: 600; white-space: nowrap; }
 
 .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; margin-top: 8px; min-height: 0; }
 .chat-col { display: flex; flex-direction: column; min-height: 0; }
@@ -67,6 +70,8 @@
 .suggest li.active, .suggest li:hover { background: var(--accent-soft); }
 .suggest li.all { color: var(--accent); font-weight: 600; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; margin-top: 4px; }
 
+.basket[hidden] { display: none; }
+.layout:has(.basket[hidden]) { grid-template-columns: minmax(0, 1fr); }
 .basket { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; align-self: start; position: sticky; top: 16px; }
 .basket h2 { margin: 0 0 8px; font-size: 1em; }
 .basket ul { list-style: none; margin: 0; padding: 0; }
