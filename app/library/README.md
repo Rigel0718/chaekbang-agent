@@ -28,7 +28,7 @@
 | `hooks.py` | 기관 개별 기능의 접점(사건, 관련 책 범위 제공자) |
 | `enrichment_targets.py` | 운영자 층 접점 구현, 처리 현황 |
 | `recommendation/` | `search`(추천 가능 조건, 키워드 검색), `lookup`(서명·저자 찾기, 자동완성, 문장 속 서명, 고른 책 확인), `checks`(소장 검사), `cards`(요약과 카드), `events`(노출 기록) |
-| `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest`, `GET /catalog/books/{id}/similar`(비슷한 책) |
+| `api/catalog.py` | `GET /catalog/search`, `GET /catalog/suggest`, `GET /catalog/topic`(주제로 찾기), `GET /catalog/books/{id}/similar`(비슷한 책) |
 | `api/guide.py`, `services/guide.py` | `GET/PUT /library/guide`, `/library/closures`. 개관 여부(`day_status`), 반납 예정일(`due_date`, `compute_due_date`) |
 | `recommendation/authors.py` | 같은 지은이의 책 `same_author_books`, 지은이 키 SQL 식 `writer_keys_sql` |
 | `services/author_keys.py` | 저자 키 다시 맞추기 `rebuild_author_keys`, 맞춰지지 않은 분류기호 세기 |
@@ -39,7 +39,7 @@
 | `recommendation/related.py` | 비슷한 책 `find_similar`(같은 시리즈·같은 저자·KDC·벡터 이웃·함께 대출, 판본 제외 `editions_of`, 근거), 최근 기록 `find_from_history`(기록 신호), 우리 도서관 인기 `popular_ranking`, 정보나루 인기 `national_popular_ranking`, ISBN 순위 → 소장 책 `held_ranking`, 대출 신호 공급 `LoanSignals`, 벡터 근거만 있는 책의 최소 유사도, 설정 `SimilarSettings`·`HistorySettings` |
 | `recommendation/basis.py` | 관련 책의 근거 코드 `basis_codes`와 문구 `basis_texts`(순수 함수) |
 | `services/related.py` | 제품 경로: 비슷한 책 `similar_for_book`, 대화 세션의 책으로 최근 기록 `related_for_session`. REST와 tool이 이 함수만 부른다 |
-| `services/topic.py` | 제품 경로: 주제로 찾기 `search_by_topic`(기본 설정, 10권, 키워드 순위로 내려가기, 키워드 근거 없음), 실행 값 이름 `QUERY_ENCODER`. 소장 도서 검색 tool이 이 함수만 부른다 |
+| `services/topic.py` | 제품 경로: 주제로 찾기 `search_by_topic`(기본 설정, 10권, 키워드 순위로 내려가기, 키워드 근거 없음), 질의 글을 낱말로 나눠 부르는 `search_topic_text`(REST용), 실행 값 이름 `QUERY_ENCODER`. 소장 도서 검색 tool이 이 함수만 부른다 |
 | `models/embedding.py` | `BookEmbedding`(공식 서지 없는 기관 도서·모델·텍스트 버전·종류마다 벡터 하나) |
 | `tools.py` | AI 사서의 조회 tool: `search_collection`(주제로 찾기), `find_book`(서명·저자 찾기), `find_related_books`(관련 책), `get_book_detail`, `get_library_guide`(안내), 범위를 좁힌 tool을 만드는 `search_tool`·`related_tool` |
 | `librarian.py` | 답 구조, 프롬프트, 운영 방식별 프로필(`build_librarian_profiles`), 정리 규칙, `LibrarianExtension` |
@@ -137,6 +137,7 @@
   - 키워드 순위가 비고 벡터 순위로만 나오면 결과의 `note`가 소개로 맞는지 보라고 알린다(키워드 근거 없음). 결과를 비우는 유사도 문턱은 없다. 결과가 비면 `note`가 다시 찾기나 희망도서를 알린다.
   - 내려가기를 `find_by_topic` 안에 두지 않는다. 실험이 같은 함수를 부르므로 실험 중의 인코딩 실패가 조용히 키워드만으로 바뀌면 안 된다.
   - 이용자 문장은 받지 않는다. 벡터 질의는 LLM이 넘긴 낱말을 이은 것이다.
+  - REST `GET /catalog/topic`(`api/catalog.py`)도 이 함수를 감싼다(`search_topic_text`). 이용자 화면의 두 단계 검색이 쓴다. 친 글을 공백으로 나눈 낱말이 곧 낱말이라 "이용자 문장은 받지 않는다"와 어긋나지 않는다(화면은 100자를 넘는 글을 보내지 않는다). 글자·숫자 없는 낱말은 빼고, 남는 낱말이 없으면 둘러보기 대신 빈 목록이다. LLM·질의 저장·기록 없음.
 - 벡터 인덱스는 없다. 5,000권(공식 4,500 + 기관 500) 두 층 조회가 약 45ms다(처음 한 번 약 68ms).
 - CPU에서 한 권에 약 1.45초가 걸린다(ONNX, 배치 4). 전체 적재는 드물게, 평소에는 증분으로 돌린다.
 

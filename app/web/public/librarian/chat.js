@@ -8,6 +8,18 @@ const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const WAITING = "사서가 살펴보는 중…";
 const BOOK_REQUEST_NOTE = "찾는 책이 없다면 희망도서를 신청해 주세요.";
 const BOOK_REQUEST_BUTTON = "희망도서 신청";
+const ASK_BUTTON = "사서에게 물어보기";
+const TOP_TITLE = "이 책을 찾으시나요?";
+const LOWER_WAITING = "관련된 책을 찾는 중…";
+// 두 단계 결과의 위 단에 보이는 책 수(찾기 결과의 앞쪽). 나머지는 자동완성의 "모두 찾기"로 본다.
+export const TWO_STEP_TOP_COUNT = 2;
+
+// "'질의'와/과 관련된 책": 마지막 글자가 받침 있는 한글이면 `과`, 아니면 `와`
+function relatedTitle(query) {
+  const code = query.charCodeAt(query.length - 1);
+  const batchim = code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0;
+  return `'${query}'${batchim ? "과" : "와"} 관련된 책`;
+}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -21,6 +33,10 @@ export function createChat(ui) {
   let sessionId = null;
   let busy = false;
   let controller = null;
+  // 두 단계 검색: 서명·저자 찾기 요청 중이면 searching, 아래 단의 주제 검색 요청은 pending에 둔다
+  let searching = false;
+  let searchController = null;
+  const pending = new Set();
 
   const cardOptions = {
     loadSimilar: (id) => api.similar(id),
@@ -141,7 +157,76 @@ export function createChat(ui) {
     return true;
   }
 
+  // 아래 단: 주제 검색 결과에서 위 단의 책을 뺀다. 비거나 실패하면 아래 단을 제목째 지운다.
+  async function fillLower(lower, query, shown, signal) {
+    let books;
+    try {
+      books = await api.topic(query, signal);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (error.kind === "unauthorized") return ui.onUnauthorized();
+      lower.remove();
+      return;
+    }
+    const rest = books.filter((book) => !shown.has(book.library_book_id));
+    if (rest.length === 0) {
+      lower.remove();
+      return;
+    }
+    lower.replaceChildren(element("p", "results-title", relatedTitle(query)), cards(rest, "summary").strip);
+  }
+
+  // 두 단계 결과: 위 단은 바로, 아래 단은 주제 검색이 오면 채운다. 서버 세션은 건드리지 않는다.
+  function showTwoStep(query, found) {
+    const top = found.slice(0, TWO_STEP_TOP_COUNT);
+    const block = element("section", "results two-step");
+    const lower = element("div", "two-step-lower");
+    lower.append(element("p", "results-note", LOWER_WAITING));
+    const ask = element("button", "btn two-step-ask", ASK_BUTTON);
+    ask.type = "button";
+    ask.addEventListener("click", () => {
+      if (busy || ask.disabled) return;
+      ask.disabled = true;
+      sendText(query);
+    });
+    block.append(element("p", "results-title", TOP_TITLE), cards(top, "summary").strip, lower, ask);
+    add(block);
+    const mine = new AbortController();
+    pending.add(mine);
+    fillLower(lower, query, new Set(top.map((book) => book.library_book_id)), mine.signal).finally(() =>
+      pending.delete(mine),
+    );
+  }
+
+  // Enter: 서명·저자 찾기를 먼저 부른다. 1권 이상이면 두 단계 결과, 0권이거나 실패하면(401은 로그인 화면) 대화로 보낸다.
+  async function submitText(text) {
+    if (searching) return;
+    searching = true;
+    const mine = new AbortController();
+    searchController = mine;
+    let found = null;
+    try {
+      found = await api.search(text, mine.signal);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (error.kind === "unauthorized") return ui.onUnauthorized();
+    } finally {
+      if (searchController === mine) {
+        searchController = null;
+        searching = false;
+      }
+    }
+    if (mine.signal.aborted) return;
+    if (!found || found.length === 0) return sendText(text);
+    showTwoStep(text, found);
+  }
+
   function reset() {
+    if (searchController) searchController.abort();
+    searchController = null;
+    searching = false;
+    for (const request of pending) request.abort();
+    pending.clear();
     if (controller) controller.abort();
     if (sessionId) api.endSession(sessionId).catch(() => {});
     sessionId = null;
@@ -153,9 +238,13 @@ export function createChat(ui) {
     sendText,
     sendSelected,
     showSearch,
+    submitText,
     reset,
     get busy() {
       return busy;
+    },
+    get searching() {
+      return searching;
     },
   };
 }

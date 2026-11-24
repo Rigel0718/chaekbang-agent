@@ -18,6 +18,7 @@ from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.embedding import Embedder, EmbeddingError, EmbeddingFailure
+from app.core.text import match_key
 from app.library.recommendation.search import (
     SEARCH_LIMIT,
     Candidate,
@@ -81,3 +82,18 @@ async def search_by_topic(
             return TopicResult(await _ordered(session, library_id, ids), matched, True)
     ids = await keyword_ranking(session, library_id, keywords, within=within, depth=SEARCH_LIMIT)
     return TopicResult(await _ordered(session, library_id, ids), bool(ids), vector_used=False)
+
+
+async def search_topic_text(
+    session: AsyncSession, library_id: int, text: str, *, encoder: Embedder | None
+) -> TopicResult:
+    """이용자가 친 글을 공백으로 나눈 낱말로 `search_by_topic`을 부른다(주제로 찾기 REST).
+
+    글자·숫자가 하나도 없는 낱말(`·`, `!?`)은 뺀다. 낱말이 남지 않으면 둘러보기로 가지 않고 빈
+    결과이며 인코더를 부르지 않는다. 화면의 "관련된 책"에 아무 책이나 뜨지 않게 하기 위해서다.
+    남은 낱말은 그대로 넘긴다(`C++`의 기호는 서명 찾기처럼 뜻이 있다).
+    """
+    keywords = [word for word in text.split() if match_key(word)]
+    if not keywords:
+        return TopicResult([], keyword_matched=False, vector_used=False)
+    return await search_by_topic(session, library_id, keywords, encoder=encoder)

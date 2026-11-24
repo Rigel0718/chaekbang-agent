@@ -4,7 +4,7 @@ import { createActions } from "./actions.js";
 import { createBasket } from "./basket.js";
 import { createChat } from "./chat.js";
 import { CAP_MS, CAP_WARN_MS, IDLE_MS, IDLE_WARN_MS, createIdleTimer } from "./idle.js";
-import { createSuggest } from "./suggest.js";
+import { MAX_QUERY, createSuggest } from "./suggest.js";
 
 const SESSION_ENDED_NOTICE = "대화가 끝나서 새로 시작해요.";
 
@@ -170,18 +170,21 @@ const chat = createChat({
 const suggest = createSuggest({
   input,
   panel: $("suggest"),
-  onPick: (hit) => (chat.busy ? false : chat.sendSelected(hit.library_book_id, hit.title)),
-  onSearchAll: (query) => chat.showSearch(query),
+  onPick: (hit) =>
+    chat.busy || chat.searching ? false : chat.sendSelected(hit.library_book_id, hit.title),
+  onSearchAll: (query) => (chat.searching ? false : chat.showSearch(query)),
   onSubmit: submit,
   onUnauthorized,
 });
 
 function submit() {
   const text = input.value.trim();
-  if (!text || chat.busy) return;
+  if (!text || chat.busy || chat.searching) return;
   suggest.close();
   input.value = "";
-  chat.sendText(text);
+  // 질의 상한을 넘는 글은 질문이라 찾기 없이 사서에게 보낸다. 아니면 서명·저자 찾기를 먼저 한다.
+  if (text.length > MAX_QUERY) chat.sendText(text);
+  else chat.submitText(text);
 }
 
 const start = $("start-screen");

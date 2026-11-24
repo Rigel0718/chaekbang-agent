@@ -8,6 +8,7 @@ from fastapi.routing import APIRoute
 from httpx import AsyncClient
 
 from app.core.config import get_settings
+from app.library.api.catalog import MAX_QUERY_LENGTH
 from app.library.schemas.catalog import BookSummary, RelatedBook
 from app.library.schemas.librarian import BookCard
 from app.main import app
@@ -122,6 +123,7 @@ ALLOWED_CALLS = {
     "/auth/logout": {"POST"},
     "/catalog/suggest": {"GET"},
     "/catalog/search": {"GET"},
+    "/catalog/topic": {"GET"},
     "/catalog/books/{id}/similar": {"GET"},
     "/librarian/messages": {"POST"},
     "/librarian/sessions/{id}": {"DELETE"},
@@ -573,3 +575,47 @@ def test_start_screen_shown_first_and_clear_does_not_log_out():
     clearing = code[start:end]
     assert not re.search(r"goLogin|clearToken|logout|location\.", clearing, re.IGNORECASE)
     assert "if (toStart) showStart();" in clearing
+
+
+# 이용자 화면의 두 단계 검색
+
+SUGGEST_JS = PUBLIC / "librarian" / "suggest.js"
+CHAT_JS = PUBLIC / "librarian" / "chat.js"
+
+
+def test_two_step_query_limit_matches_server():
+    """[web-ui] 긴 입력: 화면의 질의 상한은 서버의 질의 상한과 같고 Enter 갈림이 쓴다."""
+    match = re.search(r"export const MAX_QUERY = (\d+);", _code(SUGGEST_JS))
+    assert match
+    assert int(match.group(1)) == MAX_QUERY_LENGTH
+    main = _code(LIBRARIAN_MAIN)
+    assert 'import { MAX_QUERY, createSuggest } from "./suggest.js";' in main
+    assert "text.length > MAX_QUERY" in main
+
+
+def test_two_step_top_count():
+    """[web-ui] 위 단 권수: 두 단계 결과의 위 단은 찾기 결과의 앞 2권이다."""
+    assert re.search(r"export const TWO_STEP_TOP_COUNT = 2;", _code(CHAT_JS))
+    assert "found.slice(0, TWO_STEP_TOP_COUNT)" in _code(CHAT_JS)
+
+
+def test_two_step_enter_flow_and_no_session():
+    """[web-ui] 두 단계 결과: 찾기 먼저, 위 단 제외, 사서에게 한 번, 세션을 안 건드린다."""
+    chat = _code(CHAT_JS)
+    start = chat.index("async function fillLower")
+    end = chat.index("function reset()")
+    flow = chat[start:end]
+    # 찾기 → 주제 검색 순서, 0권·실패는 대화, 401은 로그인 화면
+    assert flow.index("api.search(") < flow.index("showTwoStep(text, found)")
+    assert "return sendText(text)" in flow
+    assert "ui.onUnauthorized()" in flow
+    # 아래 단은 위 단의 책을 빼고, 비거나 실패하면 제목째 지운다
+    assert "!shown.has(book.library_book_id)" in flow
+    assert flow.count("lower.remove()") == 2
+    # 사서에게 물어보기는 한 번만 보내고 꺼진다
+    assert "if (busy || ask.disabled) return;" in flow
+    assert "ask.disabled = true;" in flow
+    # 두 단계 결과는 서버 세션을 만들거나 바꾸지 않는다
+    assert "sessionId" not in flow and "openMessages" not in flow and "endSession" not in flow
+    # 찾는 중의 Enter는 무시한다
+    assert "chat.busy || chat.searching" in _code(LIBRARIAN_MAIN)
