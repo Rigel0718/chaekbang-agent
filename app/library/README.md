@@ -55,6 +55,7 @@
 | `approval.py` | 공통 승인 틀: 상태 `ApprovalStatus`, 종류별 전이 표 `TransitionTable`(`PUBLISHING`·`CONFIRMING`), 조건부 갱신 `transition`, 실행 상태 `mark_executed`, 승인 칸 `ApprovalMixin` |
 | `overdue_tools.py` | 운영 에이전트의 연체 tool: `list_overdue_loans`(회원 값 없는 결과 `OverdueLoanList`), `draft_overdue_notice`(틀을 승인 대기로, 입력 기록 없음). 자체 대출 기관 프로필에만 |
 | `services/overdue_notices.py`, `api/overdue_notices.py`, `overdue_template.py` | 연체 안내: 틀 관리 `/overdue-notice-templates`, 오늘의 목록 `GET /overdue-notices/today`(모두 관리자), 자리표시 검사·채우기(순수 함수) |
+| `services/basket.py`, `api/basket.py`, `schemas/basket.py` | 담은 책: `GET /basket`(지금 상태의 책 값 + 담은 시각), `PUT`·`DELETE /basket/{id}`, `DELETE /basket`(모두 회원 세션). 1분 정리 작업(`purge_forever`)이 만료한 줄을 지운다 |
 | `services/book_requests.py`, `api/book_requests.py`, `schemas/book_request.py` | 희망도서: 신청 `POST /book-requests`(키오스크·관리자), 목록·닫기 `GET`·`PATCH /book-requests`(관리자). 이용자 화면이 REST로 바로 부른다(AI 사서 tool 아님) |
 | `services/purchase_requests.py`, `api/purchase_requests.py`, `schemas/purchase_request.py` | 구매 요청서: 관리 `/purchase-requests`(모두 관리자). 금액 계산 `price_items`, 상세의 추정 금액 `request_detail`, 승인·확정 `approve_request`. 정가 조회기는 `get_list_prices`(`app/central/list_prices.py`) |
 | `services/purchase_candidates.py`, `schemas/purchase_candidates.py` | 구매 후보 `GET /purchase-requests/candidates`: 희망도서(ISBN별), 인기, 분야 숫자. 필드는 허용 목록 |
@@ -212,8 +213,17 @@
 - **실패는 한 가지로 답한다**: 없는 번호와 형식이 틀린 번호가 같은 404 "번호를 확인해 주세요"이고 받은 번호를 메시지·로그에 넣지 않는다. 응답은 `{ member_token, expires_at }`뿐이다(이름·회원번호·번호 없음).
 - **회원 세션**(`member_sessions`): 키오스크 세션(`staff_sessions`)에 묶고 수명은 3분(`member_session_minutes`, 이용자 화면의 이용 상한과 같다)이다. 토큰은 해시로만 저장한다. 한 키오스크 세션에는 열린 회원 세션이 하나라 새 로그인이 앞 세션을 끊는다. 회원을 지우면 세션도 함께 지워진다(복합 외래 키 `ON DELETE CASCADE`). 끝난 지 하루가 지난 행은 다음 로그인에서 지운다.
 - **`current_member`**(`deps.py`)는 직원 토큰을 먼저 확인하고(오류는 401), `X-Member-Token`의 세션이 같은 기관·같은 키오스크 세션·철회 전·만료 전일 때만 통과한다. 아니면 403 "회원 로그인이 필요합니다"다. 401(직원 토큰)과 403(회원 세션)을 나누는 것은 이용자 화면이 회원 오류에 키오스크를 로그아웃하지 않게 하기 위해서다. 키오스크 세션이 끝나면 회원 세션도 쓸 수 없다.
-- **회원 세션이 필요한 곳**은 `POST /loans`와 `POST /book-requests`뿐이다. 반납(`/loans/return`)은 등록번호만 쓴다. AI 사서 대화·검색은 회원 토큰을 받지 않고 쓰지 않는다. 외부 대출 기관도 로그인할 수 있다(희망도서 때문). 대출은 로그인해도 409다.
+- **회원 세션이 필요한 곳**은 `POST /loans`, `POST /book-requests`, 담은 책 `/basket`뿐이다. 반납(`/loans/return`)은 등록번호만 쓴다. AI 사서 대화·검색은 회원 토큰을 받지 않고 쓰지 않는다. 외부 대출 기관도 로그인할 수 있다(희망도서 때문). 대출은 로그인해도 409다.
 - 실패 횟수 제한과 문자 인증은 아직 없다(개선 사항).
+
+## 담은 책
+
+- **저장**: `basket_items(library_id, member_id, library_book_id, added_at)`뿐이다(검색어·대화·값 복사 없음). `(library_id, member_id)`·`(library_id, library_book_id)` 복합 외래 키가 모두 `ON DELETE CASCADE`라 회원이나 기관 도서를 지우면 함께 지워지고, 같은 회원·같은 책은 한 줄이다.
+- **보관**: 담은 시각부터 3시간(`basket_keep_hours`), 10권(`basket_limit`, 11권째 409), 둘 다 코드값이다. 같은 책을 다시 담아도 시각은 그대로이고(멱등 204) 늘지 않는다. 읽을 때 3시간이 지난 줄을 거르고, `purge_forever`가 1분마다 지운다(`services/chat.py`는 `purge_expired`를 부르기만 한다).
+- **API**: 회원은 회원 세션이 정하고(경로·본문에 회원 값 없음), 기관은 직원 토큰이 정한다. 담기는 `get_findable`로 확인해 없는 책·다른 기관 책·소장에서 빠진 책이 모두 같은 404이고, 빼기는 id를 검사하지 않는다(다른 기관 id는 아무것도 지우지 않고 204).
+- **신선도**: `GET`이 담은 줄의 id로 `get_candidates`·`shelf_of`·`summary_values`로 지금 책 값을 만든다. 대출 중은 그대로 보이고, 추천할 수 없게 된 책은 응답에서만 숨긴다(읽기만 하고 줄은 3시간 뒤 사라진다).
+- **경계**: 추천·AI 사서·분석·노출 기록·대화 기록·로그에 쓰지 않는다. 테이블을 언급하는 앱 파일을 허용 목록으로 검사한다(`tests/platform/test_basket_boundary.py`). 자연어 SQL이 열리면 허용 테이블에 넣지 않는다.
+- **받아들인 위험**: 번호만 알면 남의 담은 책이 3시간 동안 보인다(문자 인증·실패 횟수 제한과 함께 미룸).
 
 ## 연체 안내
 

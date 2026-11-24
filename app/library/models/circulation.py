@@ -115,3 +115,40 @@ class Loan(TimestampMixin, Base):
         foreign_keys="[Loan.library_id, Loan.member_id]",
         viewonly=True,
     )
+
+
+class BasketItem(Base):
+    """회원이 담은 책 한 권. 책 id와 담은 시각뿐이고 정해진 시간이 지나면 사라진다.
+
+    같은 기관의 회원과 기관 도서만 가리키고, 회원이나 기관 도서를 지우면 함께 지워진다.
+    추천·분석·기록 어디에도 쓰지 않는다(`circulation/member-basket` 스펙).
+    """
+
+    __tablename__ = "basket_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["library_id", "member_id"],
+            ["members.library_id", "members.id"],
+            name="fk_basket_items_library_id_member_id_members",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["library_id", "library_book_id"],
+            ["library_books.library_id", "library_books.id"],
+            name="fk_basket_items_library_id_library_book_id_library_books",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "library_id",
+            "member_id",
+            "library_book_id",
+            name="uq_basket_items_library_id_member_id_library_book_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="RESTRICT"))
+    member_id: Mapped[int] = mapped_column(Integer)
+    library_book_id: Mapped[int] = mapped_column(Integer)
+    # 담은 시각. 보관 3시간의 기준이라 DB 기본값이 아니라 코드(clock.now)가 넣는다.
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

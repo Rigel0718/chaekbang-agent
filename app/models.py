@@ -46,6 +46,7 @@ TENANT_TABLES: set[str] = {
     "book_requests",
     "purchase_requests",
     "purchase_request_items",
+    "basket_items",
 }
 
 __all__ = [

@@ -133,6 +133,8 @@ ALLOWED_CALLS = {
     "/librarian/sessions/{id}": {"DELETE"},
     "/library": {"GET"},
     "/library/guide": {"GET"},
+    "/basket": {"GET", "DELETE"},
+    "/basket/{id}": {"PUT", "DELETE"},
     "/loans": {"POST"},
     "/loans/return": {"POST"},
     "/book-requests": {"GET", "POST"},
@@ -236,12 +238,16 @@ def test_screen_requests_exist_on_server():
 
 
 def test_member_token_header_only_in_loan_request_logout():
-    """[web-ui] 회원 토큰의 행선지: `X-Member-Token`은 대출·신청·회원 로그아웃에만 붙는다."""
+    """[web-ui] 회원 토큰의 행선지: `X-Member-Token`은 대출·신청·담은 책·로그아웃에만 붙는다."""
     entries = _api_entries()
     assert {name for name, src in entries.items() if "MEMBER_HEADER" in src} == {
         "memberLogout",
         "borrow",
         "requestBook",
+        "basket",
+        "addBasket",
+        "removeBasket",
+        "clearBasket",
     }
     # 헤더 이름을 쓰는 곳은 api.js의 상수 하나뿐이다
     for path in _js_files():
@@ -288,7 +294,7 @@ def test_member_login_markup():
         return match.group(0)
 
     assert not re.search(r"\bhidden\b", tag("open-login"))
-    for element_id in ("basket-toggle", "basket", "member-status", "member-logout"):
+    for element_id in ("basket-toggle", "basket", "basket-clear", "member-status", "member-logout"):
         assert re.search(r"\bhidden\b", tag(element_id)), element_id
     # 회원번호 칸은 없고 휴대폰 번호 칸이 하나 있다
     assert 'id="in-member"' not in html and "회원번호" not in html
@@ -299,12 +305,21 @@ def test_member_login_markup():
 
 
 def test_member_logout_also_clears_the_chat():
-    """[web-ui] 이용자 화면의 무입력·이용 상한 비우기: 회원 로그아웃은 대화도 비운다."""
+    """[web-ui] 이용자 화면의 무입력·이용 상한 비우기: 회원 로그아웃은 바로 시작 화면이다."""
     code = _code(LIBRARIAN_MAIN)
-    for name in ("memberLogout", "memberLost"):
-        body = code[code.index(f"function {name}(") :].split("\n}\n")[0]
-        assert "resetChat();" in body, name
-        assert "idle.memberLoggedOut();" in body and "basket.clear();" in body, name
+    # 버튼·무입력·이용 상한: 문구 없이 resetAll로 바로 시작 화면(익명 시계를 다시 세지 않음)
+    body = code[code.index("function memberLogout(") :].split("\n}\n")[0]
+    assert "idle.memberLoggedOut();" in body and "member.logout()" in body
+    assert "resetAll({ toStart: true })" in body and "showNotice" not in body
+    # 403은 시작 화면 없이 화면만 로그아웃하고 로그인 칸으로 간다
+    lost = code[code.index("function memberLost(") :].split("\n}\n")[0]
+    assert (
+        "resetChat();" in lost and "idle.memberLoggedOut();" in lost and "basket.clear();" in lost
+    )
+    assert "toStart" not in lost
+    # resetAll은 대화·담은 책·입력칸을 비운다
+    reset_all = code[code.index("function resetAll(") :].split("\n}\n")[0]
+    assert "chat.reset();" in reset_all and "basket.clear();" in reset_all
     # [새 대화]는 로그인과 담은 책을 남긴다
     reset_chat = code[code.index("function resetChat()") :].split("\n}\n")[0]
     assert "basket.clear" not in reset_chat and "member.logout" not in reset_chat
@@ -625,7 +640,7 @@ def test_admin_approval_actions_guarded():
     assert code.index("if (!reason)") < code.index("api.reject(kind, row.id, reason)")
     assert "REJECT_LIMIT = 200" in code
     api_text = API_JS.read_text(encoding="utf-8")
-    assert 'method: "PUT"' not in api_text  # 고치기 없음
+    assert api_text.count('method: "PUT"') == 1  # 고치기 없음: PUT은 담은 책 담기뿐
     assert api_text.count('method: "PATCH"') == 1  # 희망도서 닫기뿐
     # 상태별 동작: 게시 내리기는 큐레이션의 게시 상태에서만
     assert 'kind === "curations" && row.status === "published"' in code
@@ -664,8 +679,8 @@ def test_start_screen_shown_first_and_clear_does_not_log_out():
     assert tag and not re.search(r"\bhidden\b", tag.group(0))
     code = _code(LIBRARIAN_MAIN)
     # 시작 화면을 다시 보이는 건 시계가 부르는 resetAll 하나뿐이고 다른 비우기는 보이지 않는다
-    assert code.count("toStart: true") == 1
-    assert "loggedIn ? memberLogout({ notify: true }) : resetAll({ toStart: true })" in code
+    assert code.count("toStart: true") == 2  # 시계의 익명 비우기와 회원 로그아웃 둘
+    assert "loggedIn ? memberLogout() : resetAll({ toStart: true })" in code
     assert "onSessionLost() {\n    resetChat();" in code
     assert '$("new-chat").addEventListener("click", () => resetChat());' in code
     # 비우는 길(resetAll, resetChat, memberLogout, showStart)에는 직원 토큰·로그인 화면 이동이 없다
@@ -718,3 +733,46 @@ def test_two_step_enter_flow_and_no_session():
     assert "sessionId" not in flow and "openMessages" not in flow and "endSession" not in flow
     # 찾는 중의 Enter는 무시한다
     assert "chat.busy || chat.searching" in _code(LIBRARIAN_MAIN)
+
+
+# 담은 책 화면
+
+
+def test_basket_add_button_follows_login_class():
+    """[web-ui] 담은 책 화면: 로그인 전에는 [담기]가 없고 바깥 클래스 하나로 바로 바뀐다."""
+    css = (PUBLIC / "librarian" / "librarian.css").read_text(encoding="utf-8")
+    assert re.search(r"\.btn-basket\s*\{\s*display:\s*none", css)
+    assert re.search(r"\.app\.logged-in \.btn-basket\s*\{\s*display:\s*inline-block", css)
+    code = _code(LIBRARIAN_MAIN)
+    body = code[code.index("function renderMember(") :].split("\n}\n")[0]
+    assert 'classList.toggle("logged-in", loggedIn)' in body
+    # 로그인 전 담기를 로그인 뒤 이어서 하는 길은 없다
+    assert "memberBasket" not in code
+    assert "then:" not in _code(PUBLIC / "librarian" / "actions.js")
+
+
+def test_basket_loads_after_login_and_logout_keeps_server_copy():
+    """[web-ui] 담은 책 화면: 로그인하면 불러오고, 로그아웃·403은 화면의 사본만 비운다."""
+    code = _code(LIBRARIAN_MAIN)
+    login = code[code.index("onChange(loggedIn)") :].split("\n  },\n")[0]
+    assert "basket.load()" in login
+    for name in ("resetAll", "memberLost"):
+        body = code[code.index(f"function {name}(") :].split("\n}\n")[0]
+        assert "basket.clear();" in body and "clearBasket" not in body, name
+    basket_js = _code(PUBLIC / "librarian" / "basket.js")
+    clear = basket_js[basket_js.index("clear() {") :].split("\n    },")[0]
+    assert "api." not in clear  # 비우기(clear)는 서버를 부르지 않는다
+    assert not re.search(r"localStorage|sessionStorage|indexedDB|document\.cookie", basket_js)
+
+
+def test_basket_mutations_wait_for_server():
+    """[web-ui] 담은 책 화면: 서버가 성공한 뒤에 사본을 바꾸고, 실패 문구는 둘뿐이다."""
+    basket_js = _code(PUBLIC / "librarian" / "basket.js")
+    change = basket_js[basket_js.index("async function change(") :].split("\n  }\n")[0]
+    assert change.index("await api.") < change.index("entries.set(") < change.index("catch")
+    code = _code(LIBRARIAN_MAIN)
+    assert '"담은 책은 10권까지예요"' in code and '"잠시 뒤 다시 눌러 주세요"' in code
+    # 401은 로그인 화면, 403은 회원 로그아웃과 로그인 칸
+    handler = code[code.index("function basketError(") :].split("\n}\n")[0]
+    assert "onUnauthorized()" in handler and "memberLost()" in handler
+    assert "actions.openLogin()" in handler

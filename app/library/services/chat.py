@@ -54,6 +54,7 @@ from app.library.recommendation.lookup import found_in_text, get_findable
 from app.library.recommendation.search import Candidate
 from app.library.schemas.catalog import BookSummary
 from app.library.schemas.librarian import AnswerPayload, BookCard
+from app.library.services.basket import purge_expired as purge_expired_baskets
 from app.library.services.related import SESSION_BOOKS
 from app.library.services.topic import QUERY_ENCODER
 
@@ -434,11 +435,13 @@ async def purge_forever(
     open_session: Callable[[], AbstractAsyncContextManager[AsyncSession]],
     interval: float = PURGE_INTERVAL_SECONDS,
 ) -> None:
-    """서버가 도는 동안 정해진 간격으로 모든 기관의 끝난 세션을 지운다. 실패하면 다음 회차다."""
+    """서버가 도는 동안 정해진 간격으로 모든 기관의 끝난 세션과 만료한 담은 책을 지운다."""
     while True:
-        try:
-            async with open_session() as session:
-                await purge_expired(session)
-        except Exception as exc:  # noqa: BLE001 - 다음 회차에 다시 한다
-            logger.error("chat session purge failed: %s", type(exc).__name__)
+        # 끝난 대화 세션과 보관 시간이 지난 담은 책을 지운다. 하나가 실패해도 다른 하나는 한다.
+        for purge in (purge_expired, purge_expired_baskets):
+            try:
+                async with open_session() as session:
+                    await purge(session)
+            except Exception as exc:  # noqa: BLE001 - 다음 회차에 다시 한다
+                logger.error("%s failed: %s", purge.__name__, type(exc).__name__)
         await asyncio.sleep(interval)

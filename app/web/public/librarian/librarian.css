@@ -80,6 +80,12 @@
 .basket li .where, .basket li .state { grid-column: 1; color: var(--muted); font-size: 0.9em; }
 .basket li .remove { grid-column: 2; grid-row: 1 / span 3; align-self: start; border: 0; background: none; color: var(--muted); font-size: 1.2em; }
 .basket-empty { color: var(--muted); font-size: 0.9em; margin: 0; }
+.basket li .synced { grid-column: 1; color: var(--muted); font-size: 0.8em; }
+.basket-clear { margin-top: 10px; }
+.basket-clear[hidden] { display: none; }
+/* [담기]는 로그인한 동안에만 보인다. 이미 떠 있는 카드도 바깥 클래스 하나로 바로 바뀐다 */
+.btn-basket { display: none; }
+.app.logged-in .btn-basket { display: inline-block; }
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); }

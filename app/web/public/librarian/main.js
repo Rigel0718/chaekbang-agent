@@ -8,7 +8,8 @@ import { CAP_MS, CAP_WARN_MS, IDLE_MS, IDLE_WARN_MS, createIdleTimer } from "./i
 import { MAX_QUERY, createSuggest } from "./suggest.js";
 
 const SESSION_ENDED_NOTICE = "대화가 끝나서 새로 시작해요.";
-const MEMBER_ENDED_NOTICE = "로그아웃했어요. 다시 쓰려면 로그인해 주세요.";
+const BASKET_FULL = "담은 책은 10권까지예요";
+const BASKET_RETRY = "잠시 뒤 다시 눌러 주세요";
 
 // 키오스크 계정이 아니면 로그인 화면으로 가고, 이 아래는 실행되지 않는다
 await requireRole("kiosk");
@@ -72,16 +73,32 @@ async function loadGuide() {
   }
 }
 
+// 담은 책 요청이 실패했을 때: 401은 키오스크 로그인 화면, 403은 회원 로그아웃과 로그인 칸, 그 밖은 짧은 문구
+function basketError(error) {
+  if (error.kind === "unauthorized") return onUnauthorized();
+  if (error.kind === "member_required") {
+    memberLost();
+    actions.openLogin();
+    return undefined;
+  }
+  showNotice(error.kind === "conflict" ? BASKET_FULL : BASKET_RETRY);
+  return undefined;
+}
+
 const basket = createBasket({
   list: $("basket-list"),
   empty: $("basket-empty"),
   count: $("basket-count"),
   panel: $("basket"),
   toggle: $("basket-toggle"),
+  clearAll: $("basket-clear"),
+  token: () => member.token,
+  onError: basketError,
 });
 
-// 회원 로그인. 위 띠에는 이름·번호 없이 "로그인 중"만 보인다. 담은 책은 로그인한 동안에만 보인다.
+// 회원 로그인. 위 띠에는 이름·번호 없이 "로그인 중"만 보인다. 담은 책과 카드의 [담기]는 로그인한 동안에만 보인다.
 function renderMember(loggedIn) {
+  document.querySelector(".app").classList.toggle("logged-in", loggedIn);
   $("open-login").hidden = loggedIn;
   $("member-status").hidden = !loggedIn;
   $("member-logout").hidden = !loggedIn;
@@ -95,6 +112,7 @@ const member = createMember({
     if (loggedIn) {
       hideNotice();
       idle.memberLoggedIn(); // 이용 상한은 로그인한 순간부터 센다
+      basket.load(); // 서버에 보관한 담은 책을 불러온다
     }
   },
 });
@@ -138,7 +156,7 @@ const idle = createIdleTimer({
   onWarn: showWarning,
   // 로그인하지 않았으면 화면을 비우고 시작 화면을 보인다(답을 받는 중이면 요청을 끊는다).
   // 로그인 중이면 회원만 로그아웃한다(받는 중인 답은 끊지 않는다). 키오스크 토큰은 어느 쪽도 건드리지 않는다.
-  onClear: ({ member: loggedIn }) => (loggedIn ? memberLogout({ notify: true }) : resetAll({ toStart: true })),
+  onClear: ({ member: loggedIn }) => (loggedIn ? memberLogout() : resetAll({ toStart: true })),
 });
 
 const actions = createActions({
@@ -174,19 +192,10 @@ const actions = createActions({
   onMemberLost: memberLost,
 });
 
-// 카드의 [담기]는 로그인한 회원만 쓴다. 로그인 전이면 로그인 칸을 열고, 성공하면 그 책을 담는다.
-const memberBasket = {
-  has: (id) => basket.has(id),
-  toggle(book) {
-    if (member.loggedIn) basket.toggle(book);
-    else actions.openLogin({ then: () => basket.toggle(book) });
-  },
-};
-
 const chat = createChat({
   thread: $("thread"),
   emptyState: $("empty"),
-  basket: memberBasket,
+  basket, // 카드의 [담기]는 로그인한 동안에만 보인다(CSS), 담기는 서버가 성공한 뒤 반영한다
   setBusy(busy) {
     send.disabled = busy;
     if (busy) idle.pause();
@@ -234,9 +243,10 @@ start.addEventListener("click", () => {
 });
 
 // 화면을 비우는 길은 셋이다. 어느 쪽도 키오스크 토큰은 건드리지 않는다.
-//   resetAll   로그인하지 않았을 때 무입력 1분: 전부 비우고(toStart) 시작 화면
+//   resetAll   로그인하지 않았을 때 무입력 1분, 회원 로그아웃: 전부 비우고(toStart) 시작 화면
 //   resetChat  [새 대화], 서버 대화 세션 끝(404): 대화·자동완성·알림·입력만. 로그인과 담은 책은 남긴다
-//   memberLogout  [로그아웃], 로그인 중 무입력 1분, 이용 상한 3분: 회원 로그아웃. 대화·담은 책·입력칸도 비운다
+//   memberLogout  [로그아웃], 로그인 중 무입력 1분, 이용 상한 3분: 회원 로그아웃 뒤 resetAll로 바로 시작 화면. 대화·화면의 담은 책·입력칸도 비운다
+//                 (서버에 보관한 담은 책은 지우지 않는다. 다시 로그인하면 나온다)
 function resetAll({ toStart = false } = {}) {
   chat.reset();
   basket.clear();
@@ -259,13 +269,12 @@ function resetChat() {
   if (!member.loggedIn) idle.reset();
 }
 
-function memberLogout({ notify = false } = {}) {
+function memberLogout() {
   idle.memberLoggedOut();
-  basket.clear();
-  actions.reset();
-  resetChat(); // 로그아웃하면 대화도 비운다(다음 사람이 앞사람의 대화를 보지 않게). 받는 중인 답은 끊긴다
   const done = member.logout(); // 화면은 바로 로그아웃하고 서버 세션은 뒤에서 끊는다
-  if (notify) showNotice(MEMBER_ENDED_NOTICE);
+  // 대화·담은 책·입력칸을 비우고 바로 시작 화면으로 간다(다음 사람이 앞사람의 화면을 보지 않게).
+  // 문구도, 익명 무입력 시계를 한 번 더 세는 일도 없다. 받는 중인 답은 끊긴다.
+  resetAll({ toStart: true });
   return done;
 }
 

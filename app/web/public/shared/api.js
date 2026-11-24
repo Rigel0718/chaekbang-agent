@@ -71,7 +71,7 @@ export class ApiError extends Error {
   }
 }
 
-// 회원 토큰은 대출·희망도서·회원 로그아웃 요청에만 붙인다. 호출하는 쪽이 토큰을 넘기고 이 파일은 쥐지 않는다.
+// 회원 토큰은 대출·희망도서·담은 책·회원 로그아웃 요청에만 붙인다. 호출하는 쪽이 토큰을 넘기고 이 파일은 쥐지 않는다.
 const MEMBER_HEADER = "X-Member-Token";
 
 async function request(path, { method = "GET", body, signal, extraHeaders } = {}) {
@@ -129,6 +129,15 @@ export const api = {
       body: { accession_number: accessionNumber },
       extraHeaders: { [MEMBER_HEADER]: memberToken },
     }).then((r) => r.json()),
+  // 담은 책: 서버에 회원별로 3시간 보관한다. 담기·빼기·비우기는 본문 없이 204다.
+  basket: (memberToken) =>
+    request("/basket", { extraHeaders: { [MEMBER_HEADER]: memberToken } }).then((r) => r.json()),
+  addBasket: (id, memberToken) =>
+    request(`/basket/${id}`, { method: "PUT", extraHeaders: { [MEMBER_HEADER]: memberToken } }),
+  removeBasket: (id, memberToken) =>
+    request(`/basket/${id}`, { method: "DELETE", extraHeaders: { [MEMBER_HEADER]: memberToken } }),
+  clearBasket: (memberToken) =>
+    request("/basket", { method: "DELETE", extraHeaders: { [MEMBER_HEADER]: memberToken } }),
   returnBook: (accessionNumber) =>
     request("/loans/return", { method: "POST", body: { accession_number: accessionNumber } }).then(
       (r) => r.json(),

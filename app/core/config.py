@@ -131,6 +131,9 @@ class Settings(BaseSettings):
     kiosk_token_hours: int = 720
     # 키오스크의 회원 로그인 세션. 화면의 이용 상한(로그인부터 180초)과 같은 3분이다.
     member_session_minutes: int = 3
+    # 회원이 담은 책: 담은 시각부터 보관하는 시간과 한 회원이 담을 수 있는 권수
+    basket_keep_hours: int = 3
+    basket_limit: int = 10
 
     # "오늘"(대출일, 반납 예정일, 연체)을 정하는 기관 시간대. 서울로 고정한다.
     library_timezone: str = "Asia/Seoul"

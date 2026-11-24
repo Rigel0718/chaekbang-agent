@@ -2,6 +2,7 @@
 // LLM을 거치지 않고 기존 REST로 바로 보낸다. 휴대폰 번호는 화면 메모리의 입력칸에만 있고, 로그인에 성공하거나
 // 칸을 닫거나 화면을 비우면 지운다(공용 PC). 서버가 준 문구는 글자로만 넣는다.
 // 빌리기와 희망도서는 회원 로그인이 필요하다: 로그인 전이면 로그인 모드로 열고, 성공하면 이어서 한다.
+// (담기는 로그인 전에는 버튼이 없어 이어서 할 일이 없다.)
 import { api } from "../shared/api.js";
 
 const MODES = {
@@ -39,7 +40,7 @@ function dayLabel(iso) {
 export function createActions(ui) {
   let mode = null;
   let busy = false;
-  // 로그인에 성공한 뒤 이어서 할 일 하나: { reopen: 모드 } 또는 { then: 함수 }
+  // 로그인에 성공한 뒤 이어서 할 일 하나: { reopen: 모드 }
   let pending = null;
 
   function showResult(text, failed = false) {
@@ -110,7 +111,6 @@ export function createActions(ui) {
         open(next.reopen);
       } else {
         close();
-        next?.then?.();
       }
       return "";
     }
@@ -201,8 +201,8 @@ export function createActions(ui) {
       if (!available && mode !== null && MODES[mode].group === "loan") close();
     },
     openRequest: () => open("request"),
-    // 로그인 칸을 연다. 성공하면 then()을 부른다(담기처럼 칸이 필요 없는 동작).
-    openLogin: ({ then } = {}) => askLogin(then ? { then } : null),
+    // 로그인 칸을 연다(담은 책의 회원 세션 오류 뒤처럼 이어서 할 일이 없을 때).
+    openLogin: () => askLogin(null),
     reset: close,
   };
 }

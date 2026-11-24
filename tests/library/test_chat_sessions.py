@@ -112,11 +112,15 @@ async def test_periodic_purge(session: AsyncSession, library_a: Tenant, library_
     old_b = await _old_session(session, library_b.id)
 
     purged = asyncio.Event()
+    opened = 0
 
     @contextlib.asynccontextmanager
     async def open_session():
+        nonlocal opened
+        opened += 1
         yield session
-        purged.set()
+        if opened == 2:  # 한 회차는 끝난 세션과 만료한 담은 책, 두 번 연다
+            purged.set()
 
     task = asyncio.create_task(chat.purge_forever(open_session, interval=3600))
     try:
