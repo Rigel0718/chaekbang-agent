@@ -59,6 +59,7 @@ ALL_TABLES = {
     "library_closures",
     "library_guide_entries",
     "book_embeddings",
+    "basket_items",
 }
 
 
@@ -74,7 +75,7 @@ async def test_upgrade_creates_all_tables(engine: AsyncEngine) -> None:
     conftest의 migrated_db가 base로 내린 뒤 head까지 올린 DB다.
     """
     assert await _table_names(engine) == ALL_TABLES
-    assert len(ALL_TABLES) == 29
+    assert len(ALL_TABLES) == 30
     async with engine.connect() as conn:
         extensions = set(await conn.scalars(text("select extname from pg_extension")))
         functions = set(await conn.scalars(text("select proname from pg_proc")))
@@ -90,7 +91,7 @@ async def test_korean_collation_present(engine: AsyncEngine) -> None:
     """
     async with engine.connect() as conn:
         await conn.run_sync(lambda c: require_collation(c, KOREAN_COLLATION))
-    assert len(await _table_names(engine)) == 29
+    assert len(await _table_names(engine)) == 30
 
 
 async def test_korean_collation_missing(engine: AsyncEngine) -> None:
@@ -977,3 +978,70 @@ async def test_lookup_keys_fullwidth_and_nfd(session: AsyncSession, library_a: T
     decomposed = unicodedata.normalize("NFD", "데미안")
     nfd = await add_library_book(session, library_a.id, None, title=decomposed, author="헤세")
     assert nfd["title_jamo_starts"] == jamo_starts("데미안")
+
+
+async def test_basket_items_rules(session: AsyncSession, library_a: Tenant) -> None:
+    """[platform/database-schema] 마이그레이션으로 스키마 생성 / 담은 책 테이블의 저장 계층 규칙"""
+    member = await add_member(session, library_a.id, "M0001")
+    book = await add_library_book(session, library_a.id)
+    values = {
+        "library_id": library_a.id,
+        "member_id": member["id"],
+        "library_book_id": book["id"],
+        "added_at": clock.now(),
+    }
+    await insert(session, "basket_items", **values)
+    await assert_rejected(
+        session, "basket_items", **values, match="uq_basket_items_library_id_member_id"
+    )
+
+
+async def test_basket_items_reject_other_library(
+    session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[platform/database-schema] 기관 간 참조 금지 / 다른 기관 회원·도서로 담은 책 직접 저장"""
+    member_a = await add_member(session, library_a.id, "M0001")
+    member_b = await add_member(session, library_b.id, "M0001")
+    book_a = await add_library_book(session, library_a.id)
+    book_b = await add_library_book(session, library_b.id)
+    await assert_rejected(
+        session,
+        "basket_items",
+        library_id=library_a.id,
+        member_id=member_b["id"],
+        library_book_id=book_a["id"],
+        added_at=clock.now(),
+        match="fk_basket_items_library_id_member_id_members",
+    )
+    await assert_rejected(
+        session,
+        "basket_items",
+        library_id=library_a.id,
+        member_id=member_a["id"],
+        library_book_id=book_b["id"],
+        added_at=clock.now(),
+        match="fk_basket_items_library_id_library_book_id_library_books",
+    )
+
+
+async def test_basket_items_deleted_with_member_and_book(
+    session: AsyncSession, library_a: Tenant
+) -> None:
+    """[circulation/member-basket] 회원을 지우면 담은 책도 지운다 / 회원 삭제, 기관 도서 삭제"""
+    member = await add_member(session, library_a.id, "M0001")
+    book1 = await add_library_book(session, library_a.id)
+    book2 = await add_library_book(session, library_a.id, isbn=None, title="다른 책")
+    for book in (book1, book2):
+        await insert(
+            session,
+            "basket_items",
+            library_id=library_a.id,
+            member_id=member["id"],
+            library_book_id=book["id"],
+            added_at=clock.now(),
+        )
+    await session.execute(text("DELETE FROM library_books WHERE id = :id"), {"id": book1["id"]})
+    left = await session.scalar(text("SELECT count(*) FROM basket_items"))
+    assert left == 1
+    await session.execute(text("DELETE FROM members WHERE id = :id"), {"id": member["id"]})
+    assert await session.scalar(text("SELECT count(*) FROM basket_items")) == 0

@@ -25,6 +25,7 @@ from app.library.admin_agent import build_admin_profiles
 from app.library.api import (
     admin_agent,
     auth,
+    basket,
     book_enrichment,
     book_requests,
     catalog,
@@ -86,6 +87,7 @@ app.include_router(holding_imports.router)
 app.include_router(members.router)
 app.include_router(loans.router)
 app.include_router(book_requests.router)
+app.include_router(basket.router)
 app.include_router(librarian.router)
 app.include_router(admin_agent.router)
 app.include_router(curations.router)

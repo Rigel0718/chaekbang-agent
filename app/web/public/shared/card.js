@@ -27,7 +27,7 @@ function element(tag, className, text) {
   return node;
 }
 
-function formatSynced(iso) {
+export function formatSynced(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleString("ko-KR", {
@@ -38,7 +38,7 @@ function formatSynced(iso) {
   });
 }
 
-function statusText(book) {
+export function statusText(book) {
   if (book.available_count > 0) return `대출 가능 ${book.available_count}권`;
   if (book.on_loan_count > 0) return "모두 대출 중";
   return "대출 가능한 책이 없어요";
