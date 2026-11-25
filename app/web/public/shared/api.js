@@ -61,20 +61,23 @@ const KINDS = {
 };
 
 export class ApiError extends Error {
-  constructor(status, detail) {
+  constructor(status, detail, body = null) {
     super(detail || `요청에 실패했어요 (${status})`);
     this.status = status;
     this.kind = KINDS[status] || "other";
     // 409·429의 서버 문구는 대화에서 그대로 보인다. 입력칸(actions.js)은 404 문구도 보인다.
     // 422는 형식 오류라 보이지 않는다.
     this.detail = typeof detail === "string" ? detail : null;
+    // 응답 본문 전체. 장서 가져오기의 422는 못 찾은 열(missing)과 파일의 머리글(headers)을 함께 싣는다.
+    this.body = body && typeof body === "object" ? body : null;
   }
 }
 
 // 회원 토큰은 대출·희망도서·담은 책·회원 로그아웃 요청에만 붙인다. 호출하는 쪽이 토큰을 넘기고 이 파일은 쥐지 않는다.
 const MEMBER_HEADER = "X-Member-Token";
 
-async function request(path, { method = "GET", body, signal, extraHeaders } = {}) {
+// form은 FormData(파일 올리기)다. 이때는 Content-Type을 붙이지 않는다(브라우저가 경계값과 함께 붙인다).
+async function request(path, { method = "GET", body, form, signal, extraHeaders } = {}) {
   const headers = { ...extraHeaders };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -84,22 +87,36 @@ async function request(path, { method = "GET", body, signal, extraHeaders } = {}
     headers,
     signal,
     cache: "no-store",
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: form !== undefined ? form : body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
-    let detail = null;
+    let payload = null;
     try {
-      detail = (await response.json()).detail;
+      payload = await response.json();
     } catch {
       // 본문이 JSON이 아니면 상태 코드만 쓴다
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, payload ? payload.detail : null, payload);
   }
   return response;
 }
 
 function query(path, q, signal) {
   return request(`${path}?q=${encodeURIComponent(q)}`, { signal }).then((r) => r.json());
+}
+
+// 장서 가져오기 올리기 본문: 파일과, 고른 열이 있으면 {표준 열: 파일의 머리글} JSON.
+function importForm(file, mapping) {
+  const form = new FormData();
+  form.append("file", file);
+  if (mapping && Object.keys(mapping).length) form.append("column_mapping", JSON.stringify(mapping));
+  return form;
+}
+
+// 행 목록 거르기: { outcome: "skipped" } 또는 { flag: "invalid_isbn" } 하나.
+function importFilter(filter) {
+  const [name, value] = Object.entries(filter)[0];
+  return `${name}=${encodeURIComponent(value)}`;
 }
 
 const APPROVAL_BASES = {
@@ -176,6 +193,20 @@ export const api = {
   closeBookRequest: (id) =>
     request(`/book-requests/${id}`, { method: "PATCH", body: { status: "closed" } }).then((r) => r.json()),
   overdueToday: () => request("/overdue-notices/today").then((r) => r.json()),
+  // 장서 가져오기(외부 대출 기관). 적용은 대량 제적 확인 전(importApply)과 확인 뒤(importApplyConfirmed)로 나눈다.
+  importUpload: (file, mapping) =>
+    request("/holding-imports", { method: "POST", form: importForm(file, mapping) }).then((r) => r.json()),
+  importList: (limit) => request(`/holding-imports?limit=${limit}`).then((r) => r.json()),
+  importGet: (id) => request(`/holding-imports/${id}`).then((r) => r.json()),
+  // 적용 전 미리 보기만 지울 수 있다(적용한 기록은 409).
+  importDelete: (id) => request(`/holding-imports/${id}`, { method: "DELETE" }),
+  importRows: (id, filter, offset, limit) =>
+    request(`/holding-imports/${id}/rows?${importFilter(filter)}&limit=${limit}&offset=${offset}`).then((r) =>
+      r.json(),
+    ),
+  importApply: (id) => request(`/holding-imports/${id}/apply`, { method: "POST" }).then((r) => r.json()),
+  importApplyConfirmed: (id) =>
+    request(`/holding-imports/${id}/apply?confirm_withdraw=true`, { method: "POST" }).then((r) => r.json()),
 };
 
 // 열 때 이 화면의 토큰으로 역할을 확인한다. 토큰이 없거나 401이거나 역할이 다르면 이 화면의 토큰만 지우고

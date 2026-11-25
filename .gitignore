@@ -21,3 +21,6 @@ evals/recommendation/data/
 evals/conversation/data/
 # 운영 에이전트 평가의 실행 결과. 가상 기관이지만 실행마다 쌓여서 넣지 않는다
 evals/admin_agent/data/
+
+# 장서 가져오기 화면 확인용 견본 (scripts/make_import_samples.py)
+import-samples/

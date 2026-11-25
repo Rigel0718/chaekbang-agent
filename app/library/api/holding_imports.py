@@ -62,6 +62,12 @@ async def get_import(import_id: int, staff: AdminStaff, session: Session):
     return await holding_imports.get_import(session, staff.library_id, import_id)
 
 
+@router.delete("/{import_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_import(import_id: int, staff: AdminStaff, session: Session):
+    """적용 전의 미리 보기를 지운다. 적용한 기록은 409다."""
+    await holding_imports.delete_preview(session, staff.library_id, import_id)
+
+
 @router.get("/{import_id}/rows", response_model=Page[HoldingImportRow])
 async def list_rows(
     import_id: int,

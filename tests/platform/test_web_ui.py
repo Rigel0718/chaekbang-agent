@@ -9,7 +9,10 @@ from httpx import AsyncClient
 
 from app.core.config import get_settings
 from app.library.api.catalog import MAX_QUERY_LENGTH
+from app.library.importing import rows as import_rows
+from app.library.importing.columns import LABELS
 from app.library.schemas.catalog import BookSummary, RelatedBook
+from app.library.schemas.holding_imports import HoldingImportRead, HoldingImportRow
 from app.library.schemas.librarian import BookCard
 from app.main import app
 
@@ -155,6 +158,10 @@ ALLOWED_CALLS = {
     "/purchase-requests/{id}/approve": {"POST"},
     "/purchase-requests/{id}/reject": {"POST"},
     "/overdue-notices/today": {"GET"},
+    "/holding-imports": {"GET", "POST"},
+    "/holding-imports/{id}": {"GET", "DELETE"},
+    "/holding-imports/{id}/rows": {"GET"},
+    "/holding-imports/{id}/apply": {"POST"},
 }
 
 
@@ -582,20 +589,41 @@ def test_admin_screen_requires_admin_role():
     assert "persisted" in code and 'requireRole("admin")' in code.split("persisted")[1]
 
 
-def test_admin_overdue_hidden_until_internal():
-    """[web-ui] 처음 그린 화면·보이는 조건(관리자): 연체 탭·틀 묶음은 internal 한 곳에서 푼다."""
+ADMIN_MODE_SHOWS = {
+    "internal": ('$("tab-overdue").hidden = false;', '$("group-templates").hidden = false;'),
+    "external": ('$("tab-imports").hidden = false;',),
+}
+
+
+def test_admin_mode_tabs_start_hidden():
+    """[web-ui] 처음 그린 화면(관리자): 연체 탭·틀 묶음·장서 가져오기 탭은 숨김으로 시작한다."""
     html = ADMIN_INDEX.read_text(encoding="utf-8")
-    for element_id in ("tab-overdue", "group-templates"):
+    for element_id in ("tab-overdue", "group-templates", "tab-imports"):
         tag = re.search(rf"<\w+\b[^>]*\bid=\"{element_id}\"[^>]*>", html)
         assert tag and re.search(r"\bhidden\b", tag.group(0)), element_id
+
+
+def test_admin_mode_tabs_shown_in_one_place():
+    """[web-ui] 보이는 조건(관리자): 운영 방식은 한 곳에서 읽고, 연체 탭·틀 묶음은 internal,
+    장서 가져오기 탭은 external일 때만 보인다."""
     code = _admin_code("main.js")
     assert len(re.findall(r"loan_mode", code)) == 1
-    assert 'library.loan_mode === "internal"' in code
-    block = code[code.index('library.loan_mode === "internal"') :].split("}")[0]
-    assert block.count('$("tab-overdue").hidden = false;') == 1
-    assert block.count('$("group-templates").hidden = false;') == 1
-    assert code.count('$("tab-overdue").hidden = false;') == 1
-    assert code.count('$("group-templates").hidden = false;') == 1
+    for mode, shows in ADMIN_MODE_SHOWS.items():
+        condition = f'mode === "{mode}"'
+        assert code.count(condition) == 1, condition
+        block = code[code.index(condition) :].split("}")[0]
+        for show in shows:
+            assert block.count(show) == 1, (mode, show)
+            assert code.count(show) == 1, show
+
+
+def test_admin_hidden_tab_hash_opens_chat():
+    """[web-ui] 자체 대출 기관(관리자): 숨긴 탭의 주소는 운영 대화로 간다."""
+    code = _admin_code("main.js")
+    block = code[code.index("function tabName()") :].split("\n}")[0]
+    assert 'if (name === "overdue" && !overdueEnabled) return DEFAULT_TAB;' in block
+    assert 'if (name === "imports" && !importsEnabled) return DEFAULT_TAB;' in block
+    assert 'const DEFAULT_TAB = "chat";' in code
 
 
 def test_admin_chat_request_body_keys():
@@ -776,3 +804,62 @@ def test_basket_mutations_wait_for_server():
     handler = code[code.index("function basketError(") :].split("\n}\n")[0]
     assert "onUnauthorized()" in handler and "memberLost()" in handler
     assert "actions.openLogin()" in handler
+
+
+# 장서 가져오기 화면
+
+
+def _js_table(code: str, name: str) -> dict[str, str]:
+    block = code[code.index(f"const {name} = {{") :].split("};")[0]
+    return dict(re.findall(r"(\w+):\s*\"([^\"]+)\"", block))
+
+
+def test_import_screen_reads_only_schema_fields():
+    """[web-ui] 화면이 읽는 값: 가져오기 화면의 record.·row. 필드는 응답 스키마에 있다."""
+    code = _admin_code("imports.js")
+    for name, schema in (("record", HoldingImportRead), ("row", HoldingImportRow)):
+        used = set(re.findall(rf"\b{name}\.(\w+)", code))
+        assert used, name
+        assert used <= set(schema.model_fields), (name, used - set(schema.model_fields))
+    assert "donor" not in set(re.findall(r"\brow\.(\w+)", code))
+
+
+def test_import_screen_labels_match_server():
+    """[web-ui] 열과 표기의 이름: 열 키·이름이 서버와 같고 표기 넷이 모두 있다."""
+    code = _admin_code("imports.js")
+    assert _js_table(code, "FIELD_LABELS") == LABELS
+    flags = {getattr(import_rows, name) for name in dir(import_rows) if name.startswith("FLAG_")}
+    assert len(flags) == 4
+    assert set(_js_table(code, "FLAG_LABELS")) == flags
+
+
+def test_import_apply_confirms_before_each_request():
+    """[web-ui] 적용 취소·대량 제적 확인: 확인 뒤에만 요청한다."""
+    code = _admin_code("imports.js")
+    assert code.index("confirm(APPLY_CONFIRM)") < code.index("api.importApply(id)")
+    ask = code.index("confirm(MASS_WITHDRAW_CONFIRM)")
+    assert code.index("if (!massWithdraw) throw error;") < ask
+    assert ask < code.index("api.importApplyConfirmed(id)")
+    assert code.count("api.importApplyConfirmed(") == 1
+    entries = _api_entries()
+    assert "confirm_withdraw" not in entries["importApply"].split("importApplyConfirmed")[0]
+    assert "confirm_withdraw=true" in entries["importApplyConfirmed"]
+
+
+def test_import_apply_button_only_on_latest_preview():
+    """[web-ui] 오래된 미리 보기: [적용]은 가장 최근 기록이 미리 보기일 때만 만든다."""
+    code = _admin_code("imports.js")
+    assert 'record.status === "preview" && record.id === latestId' in code
+    assert code.count('button("적용"') == 1
+    assert "latestId = page.items.length ? page.items[0].id : null;" in code
+
+
+def test_import_delete_button_only_on_preview():
+    """[web-ui] 삭제 버튼의 자리: 미리 보기에만 만들고 확인 뒤에만 삭제를 요청한다."""
+    code = _admin_code("imports.js")
+    assert code.count('button("삭제"') == 1
+    start = code.index('if (record.status === "preview") {')
+    block = code[start:].split("box.append(actions);")[0]
+    assert 'button("삭제"' in block
+    assert code.index("confirm(DELETE_CONFIRM)") < code.index("api.importDelete(id)")
+    assert code.count("api.importDelete(") == 1

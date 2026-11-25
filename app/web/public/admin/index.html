@@ -18,6 +18,7 @@
     <button type="button" class="tab" data-tab="approvals" id="tab-approvals">승인 목록 <span id="pending-count" class="badge" hidden></span></button>
     <button type="button" class="tab" data-tab="requests" id="tab-requests">희망도서</button>
     <button type="button" class="tab" data-tab="overdue" id="tab-overdue" hidden>오늘의 연체</button>
+    <button type="button" class="tab" data-tab="imports" id="tab-imports" hidden>장서 가져오기</button>
   </nav>
 
   <main class="admin-main">
@@ -50,6 +51,19 @@
       <h2>오늘의 연체 안내</h2>
       <p id="overdue-summary" class="muted"></p>
       <ul class="list" id="list-overdue"></ul>
+    </section>
+
+    <section id="panel-imports" class="panel" data-panel="imports" hidden>
+      <h2>장서 파일 올리기</h2>
+      <form id="import-form" class="import-form">
+        <input id="import-file" type="file" accept=".xlsx,.xls,.csv,.txt" aria-label="장서 파일(xlsx, CSV)" required>
+        <button type="submit" id="import-submit" class="primary">올리기</button>
+      </form>
+      <div id="import-columns" class="import-columns"></div>
+      <p id="import-error" class="error-line" role="alert"></p>
+      <div id="import-summary"></div>
+      <h2>지난 가져오기</h2>
+      <ul class="list" id="list-imports"></ul>
     </section>
   </main>
   <script type="module" src="./main.js"></script>
