@@ -41,6 +41,23 @@ table.items th, table.items td { border-bottom: 1px solid var(--line); padding: 
 .member-row { padding: 12px 14px; display: grid; gap: 2px; }
 .member-row .line { margin: 0; overflow-wrap: anywhere; }
 
+.import-form, .import-columns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.import-columns:not(:empty) { margin-top: 10px; }
+.import-form input[type="file"] { flex: 1 1 260px; min-height: 44px; font: inherit; }
+.column-pick { display: flex; gap: 6px; align-items: center; }
+.column-pick select { min-height: 44px; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; max-width: 220px; }
+.error-line:empty { display: none; }
+.detail-box { padding: 12px 14px; }
+.detail-box p { margin: 4px 0; overflow-wrap: anywhere; }
+.detail-box .detail-actions { align-items: center; }
+
+/* 지난 가져오기: 적용한 기록은 색을 채우고, 미리 보기는 점선이다. 연 기록은 테두리를 두껍게 한다. */
+.record-applied { background: var(--accent-soft); }
+.record-applied .status-badge { background: var(--accent); color: #fff; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.record-preview { border-style: dashed; }
+.record-preview .status-badge { color: var(--warn); border: 1px solid var(--warn); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.row.is-open { border: 2px solid var(--accent); }
+
 @media (max-width: 720px) {
   .admin-main { padding: 12px; }
   table.items thead { display: none; }

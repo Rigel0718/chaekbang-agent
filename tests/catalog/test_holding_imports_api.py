@@ -1,11 +1,14 @@
 """[catalog/holdings-import] 업로드, 미리 보기, 기록 조회."""
 
 import json
+import re
+from pathlib import Path
 
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.library.schemas.holding_imports import HoldingImportRow
 from tests.catalog.import_helpers import csv_bytes, import_file, upload
 from tests.conftest import Tenant
 from tests.helpers import VALID_ISBN
@@ -145,3 +148,106 @@ async def test_list_records(admin_client_b: AsyncClient) -> None:
     assert [r["id"] for r in listed["items"]] == [applied["id"]]
     assert listed["items"][0]["status"] == "applied"
     assert applied["applied_at"] is not None
+
+
+# 행 응답에 기증처를 넣지 않는다. 필드를 더하면 이 목록이 실패하므로 개인정보가 아닌지 보고 넣는다.
+ROW_FIELDS = {
+    "row_no",
+    "outcome",
+    "skip_reason",
+    "flags",
+    "accession_number",
+    "title",
+    "author",
+    "isbn",
+    "status",
+    "acquisition",
+}
+
+
+def test_row_schema_fields_are_fixed() -> None:
+    """[catalog/holdings-import] 가져오기 기록 조회: 행 응답 필드는 정해진 목록, 기증처 없음."""
+    assert set(HoldingImportRow.model_fields) == ROW_FIELDS
+
+
+async def test_rows_have_no_donor(admin_client_b: AsyncClient, session: AsyncSession) -> None:
+    """[catalog/holdings-import] 가져오기 기록 조회 / 행 응답에 기증처 없음"""
+    res = await upload(
+        admin_client_b,
+        [*HEADER, "수입구분", "기증처"],
+        ["EM1", "모모", "엔데", "기증", "기증자홍길동"],
+    )
+    assert res.status_code == 201, res.text
+    import_id = res.json()["id"]
+    # 기증처는 기록에는 저장된다(적용 때 쓴다). 응답에서만 빠져야 한다.
+    stored = await session.scalar(
+        text("SELECT rows -> 0 ->> 'donor' FROM holding_imports WHERE id = :id"), {"id": import_id}
+    )
+    assert stored == "기증자홍길동"
+    for params in ({}, {"outcome": "create"}):
+        rows = await admin_client_b.get(f"/holding-imports/{import_id}/rows", params=params)
+        items = rows.json()["items"]
+        assert items and all(set(item) == ROW_FIELDS for item in items)
+        assert "기증자홍길동" not in rows.text
+    assert "기증자홍길동" not in (await admin_client_b.get(f"/holding-imports/{import_id}")).text
+    assert "기증자홍길동" not in (await admin_client_b.get("/holding-imports")).text
+
+
+IMPORTS_JS = Path(__file__).resolve().parents[2] / "app/web/public/admin/imports.js"
+
+
+async def test_mass_withdraw_message_has_screen_mark(admin_client_b: AsyncClient) -> None:
+    """[web-ui] 대량 제적 응답의 구분: 화면이 보는 낱말은 대량 제적 409에만 있다."""
+    mark = re.search(r'MASS_WITHDRAW_MARK = "(\w+)"', IMPORTS_JS.read_text(encoding="utf-8"))[1]
+    books = [[f"EM{i}", f"책{i}", "저자"] for i in range(1, 5)]
+    applied = await import_file(admin_client_b, HEADER, *books)
+
+    again = await admin_client_b.post(f"/holding-imports/{applied['id']}/apply")
+    assert again.status_code == 409 and mark not in again.json()["detail"]
+
+    partial = await upload(admin_client_b, HEADER, books[0])
+    res = await admin_client_b.post(f"/holding-imports/{partial.json()['id']}/apply")
+    assert res.status_code == 409 and mark in res.json()["detail"]
+
+
+async def test_delete_preview(admin_client_b: AsyncClient, session: AsyncSession) -> None:
+    """[catalog/holdings-import] 미리 보기 삭제 / 미리 보기 지우기"""
+    await import_file(admin_client_b, HEADER, ["EM1", "모모", "엔데"])
+    preview = (await upload(admin_client_b, HEADER, ["EM2", "데미안", "헤세"])).json()
+    holdings = await _count(session, "holdings")
+    url = f"/holding-imports/{preview['id']}"
+
+    res = await admin_client_b.delete(url)
+    assert res.status_code == 204, res.text
+    assert (await admin_client_b.get(url)).status_code == 404
+    listed = (await admin_client_b.get("/holding-imports")).json()
+    assert preview["id"] not in [r["id"] for r in listed["items"]] and listed["total"] == 1
+    assert await _count(session, "holdings") == holdings
+    assert (await admin_client_b.delete(url)).status_code == 404
+
+
+async def test_delete_applied_rejected(admin_client_b: AsyncClient) -> None:
+    """[catalog/holdings-import] 미리 보기 삭제 / 적용한 기록"""
+    applied = await import_file(admin_client_b, HEADER, ["EM1", "모모", "엔데"])
+    url = f"/holding-imports/{applied['id']}"
+    assert (await admin_client_b.delete(url)).status_code == 409
+    assert (await admin_client_b.get(url)).json()["status"] == "applied"
+
+
+async def test_delete_scope_and_roles(
+    admin_client: AsyncClient,
+    admin_client_b: AsyncClient,
+    kiosk_client_b: AsyncClient,
+    session: AsyncSession,
+    library_a: Tenant,
+) -> None:
+    """[catalog/holdings-import] 미리 보기 삭제 / 다른 기관과 권한"""
+    record = (await upload(admin_client_b, HEADER, ["EM1", "모모", "엔데"])).json()
+    url = f"/holding-imports/{record['id']}"
+    assert (await kiosk_client_b.delete(url)).status_code == 403
+    assert (await admin_client.delete(url)).status_code == 409  # 자체 대출 기관
+    await session.execute(
+        text("UPDATE libraries SET loan_mode = 'external' WHERE id = :id"), {"id": library_a.id}
+    )
+    assert (await admin_client.delete(url)).status_code == 404  # 다른 기관의 기록
+    assert (await admin_client_b.get(url)).json()["status"] == "preview"

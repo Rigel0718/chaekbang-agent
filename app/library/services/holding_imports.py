@@ -1,4 +1,4 @@
-"""장서 가져오기 service: 미리 보기, 적용, 기록 조회.
+"""장서 가져오기 service: 미리 보기, 적용, 기록 조회, 미리 보기 삭제.
 
 REST 라우터와 이후 운영 에이전트의 import_holdings tool이 함께 쓴다.
 """
@@ -325,6 +325,17 @@ async def apply_import(
         raise ConflictError("다른 작업과 겹쳤습니다. 다시 적용해 주세요") from exc
     await session.refresh(record)
     return record
+
+
+async def delete_preview(session: AsyncSession, library_id: int, import_id: int) -> None:
+    """적용 전 기록을 지운다. 미리 보기는 장서를 바꾸지 않았다. 적용한 기록은 이력이라 남긴다."""
+    await _require_external_library(session, library_id, lock=True)  # 적용과 겹치지 않게 한다
+    record = await get_owned(session, HoldingImport, library_id, import_id, label=LABEL)
+    await session.refresh(record)  # 기관 행을 잠근 뒤의 상태로 판단한다
+    if record.status == ImportStatus.APPLIED:
+        raise ConflictError("적용한 가져오기는 지울 수 없습니다")
+    await session.delete(record)
+    await session.commit()
 
 
 async def get_import(session: AsyncSession, library_id: int, import_id: int) -> HoldingImport:

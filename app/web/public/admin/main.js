@@ -2,6 +2,7 @@
 import { api, goLogin, requireRole } from "../shared/api.js";
 import { createApprovals } from "./approvals.js";
 import { createChat } from "./chat.js";
+import { createImports } from "./imports.js";
 import { createOverdue } from "./overdue.js";
 import { createRequests } from "./requests.js";
 
@@ -18,15 +19,20 @@ function onUnauthorized() {
   goLogin();
 }
 
-// 연체 안내는 자체 대출 기관만 쓴다. 기관 정보를 못 읽으면 숨긴 채 둔다(서버 409가 방어선).
+// 연체 안내는 자체 대출 기관만, 장서 가져오기는 외부 대출 기관만 쓴다. 운영 방식은 여기서 한 번 읽는다.
+// 기관 정보를 못 읽으면 둘 다 숨긴 채 둔다(서버 409가 방어선).
 let overdueEnabled = false;
+let importsEnabled = false;
 async function loadLibrary() {
   try {
-    const library = await api.library();
-    if (library.loan_mode === "internal") {
+    const mode = (await api.library()).loan_mode;
+    if (mode === "internal") {
       overdueEnabled = true;
       $("tab-overdue").hidden = false;
       $("group-templates").hidden = false;
+    } else if (mode === "external") {
+      importsEnabled = true;
+      $("tab-imports").hidden = false;
     }
   } catch (error) {
     if (error.kind === "unauthorized") onUnauthorized();
@@ -76,6 +82,16 @@ const tabs = {
     list: $("list-overdue"),
     onUnauthorized,
   }),
+  imports: createImports({
+    form: $("import-form"),
+    file: $("import-file"),
+    submit: $("import-submit"),
+    columns: $("import-columns"),
+    error: $("import-error"),
+    summary: $("import-summary"),
+    list: $("list-imports"),
+    onUnauthorized,
+  }),
 };
 
 let current = null;
@@ -84,6 +100,7 @@ function tabName() {
   const name = location.hash.slice(1);
   if (!(name in tabs)) return DEFAULT_TAB;
   if (name === "overdue" && !overdueEnabled) return DEFAULT_TAB;
+  if (name === "imports" && !importsEnabled) return DEFAULT_TAB;
   return name;
 }
 
