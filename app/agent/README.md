@@ -8,7 +8,7 @@
 - 기관 범위 주입. LLM은 기관을 정할 수 없다
 - 실행 값 주입(`run(tool_values=…)` → `ctx.values`). 실행기는 뜻을 모른다
 - 최종 답 검사와 재시도, 위반 항목 정리, 고정 답
-- 한도와 오류 처리, 진행 사건
+- 한도와 오류 처리, 진행 사건, 결과 사건(tool이 고른 화면용 값)
 - 실행 기록(`agent_runs`, `agent_steps`)
 
 ## 구성
@@ -19,7 +19,7 @@
 | `profile.py` | `Profile`, `FinalCheck`, `Violation`, `CheckContext` |
 | `llm.py` | LLM 접점과 중립 메시지 형식 |
 | `openai_client.py` | OpenAI Responses API 어댑터 |
-| `runner.py` | `run()`: 호출 루프, 사건 |
+| `runner.py` | `run()`: 호출 루프, 사건(`StatusEvent`, `ResultEvent`, `AnswerEvent`, `DoneEvent`) |
 | `records.py` | 기록 쓰기, 기관 범위 조회 |
 | `models.py` | `AgentRun`, `AgentStep`, 상태 값 |
 
@@ -34,6 +34,7 @@
 - 세션은 부르는 쪽이 넘긴다. tool과 검사는 그 세션 하나로 순서대로 돈다.
 - `run()`의 `history`에는 이전 이용자 문장과 답 외에 코드의 안내(`Instruction`)를 넣을 수 있다. 안내는 LLM에 developer 메시지로 가고, 검사가 받는 이용자 문장(`user_texts`)에는 들어가지 않는다.
 - `run()`의 `tool_values`는 실행을 시작한 코드가 tool에 넘기는 읽기 전용 값이다(예: AI 사서 대화의 세션 책 id). 실행기는 이름과 뜻을 모르고 그대로 `ctx.values`로 전한다. LLM 입력과 섞이지 않고(입력 모델은 `extra="forbid"`), 실행 기록에 남기지 않는다. 이름은 값을 쓰는 패키지가 상수로 정한다.
+- tool은 화면용 변환 `present(입력, 결과)`를 고를 수 있다. 순수 함수(DB·외부 호출 없음)이고 값이나 `None`을 돌려준다. 실행기는 성공한 호출의 값만 모았다가 **검사를 통과한 답이나 정리한 답으로 끝날 때만** 답 바로 앞에 호출 순서대로 `ResultEvent`로 낸다. 고정 답·실패·거절·중단이면 내지 않는다. 오류로 끝난 호출(도메인 오류, 입력 검증)은 변환을 부르지 않는다. 값의 뜻은 모르고 실행 기록에 넘기지 않는다. 변환이 예외를 내면 tool 예외와 같이 실패로 끝난다. 화면에 무엇을 보일지(회원 값을 넣지 않는 것 포함)는 tool을 가진 패키지가 정하고 테스트한다.
 - 실패는 덜 내보내는 쪽으로 간다. 검사가 죽으면 답은 나가지 않고 고정 답이 나간다.
 
 ## 새 tool 추가

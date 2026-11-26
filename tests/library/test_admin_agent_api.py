@@ -17,7 +17,7 @@ from app.library import librarian as librarian_profile
 from app.library.models.chat import ChatMessage, ChatRole, ChatSession
 from tests.agent.fakes import call, tool_turn
 from tests.conftest import Tenant
-from tests.helpers import add_member, insert
+from tests.helpers import add_held_book, add_member, insert
 from tests.library.chat_helpers import LlmSlot, event, parse_sse
 from tests.library.chat_helpers import talk as librarian_talk
 
@@ -70,6 +70,54 @@ async def test_event_order(admin_client: AsyncClient, fake_llm: LlmSlot) -> None
     assert [e.name for e in events] == ["session", "status", "answer", "done"]
     assert event(events, "answer") == {"message": "모두 0권이에요", "unsupported": None}
     assert event(events, "done")["status"] == "completed"
+
+
+def grouped_status_call() -> Any:
+    return tool_turn(
+        call("get_collection_status", {"group_by": "field", "fields": None, "audience": None})
+    )
+
+
+async def test_event_order_with_result(
+    admin_client: AsyncClient, fake_llm: LlmSlot, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[agent/admin] 운영 에이전트 대화 요청 / 결과 사건이 있는 순서"""
+    await add_held_book(session, library_a.id, title="표에 나올 책", kdc="813")
+    fake_llm.script(grouped_status_call(), answer("문학이 1권이에요"))
+    events = await talk(admin_client, "분야별로 책이 몇 권씩 있어?")
+    assert [e.name for e in events] == ["session", "status", "result", "answer", "done"]
+    table = event(events, "result")
+    assert (table["kind"], table["title"], table["bar_column"]) == ("table", "분야별 장서", 1)
+    assert ["문학", 1, 1] in table["rows"]
+
+
+async def test_result_not_in_chat_messages(
+    admin_client: AsyncClient, fake_llm: LlmSlot, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[agent/admin] 결과 사건의 개인정보와 기관 범위 / 대화 기록에 없음"""
+    await add_held_book(session, library_a.id, title="기록에 없을 서명", kdc="813")
+    fake_llm.script(grouped_status_call(), answer("분야별로 세었어요"))
+    events = await talk(admin_client, "분야별로 책이 몇 권씩 있어?")
+    assert "기록에 없을 서명" not in str(event(events, "result"))  # 묶음 표에는 서명이 없다
+    session_id = uuid.UUID(event(events, "session")["session_id"])
+    rows = await session.execute(
+        select(ChatMessage.role, ChatMessage.content).where(ChatMessage.session_id == session_id)
+    )
+    assert [tuple(r) for r in rows] == [
+        (ChatRole.USER, "분야별로 책이 몇 권씩 있어?"),
+        (ChatRole.ASSISTANT, "분야별로 세었어요"),
+    ]
+
+
+async def test_events_by_name_still_have_answer(
+    admin_client: AsyncClient, fake_llm: LlmSlot
+) -> None:
+    """[platform/admin-agent-evals] 평가 러너처럼 사건을 이름별로 모아도 답과 끝을 읽는다"""
+    fake_llm.script(grouped_status_call(), answer("분야별로 세었어요"))
+    events = {e.name: e.data for e in await talk(admin_client, "분야별로 책이 몇 권씩 있어?")}
+    assert events["answer"]["message"] == "분야별로 세었어요"
+    assert events["done"]["status"] == "completed"
+    assert events["result"]["kind"] == "table"
 
 
 async def test_kiosk_forbidden(kiosk_client: AsyncClient, fake_llm: LlmSlot) -> None:

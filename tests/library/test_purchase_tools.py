@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import ToolResult
 from app.agent.models import AgentStep
-from app.agent.runner import run
+from app.agent.runner import ResultEvent, run
 from app.core import clock
 from app.features.children.analytics import admin_extension
 from app.library.admin_agent import build_admin_profiles
@@ -74,12 +74,14 @@ def draft(*items: tuple[str, int], period: str | None = None, id: str = "c2") ->
 
 async def _run(
     session: AsyncSession, llm: FakeLlm, library_id: int, mode: LoanMode = LoanMode.INTERNAL
-) -> None:
+) -> list[Any]:
     profile = build_admin_profiles([admin_extension()])[mode]
-    async for _ in run(
-        session=session, llm=llm, profile=profile, library_id=library_id, user_text="요청서"
-    ):
-        pass
+    return [
+        e
+        async for e in run(
+            session=session, llm=llm, profile=profile, library_id=library_id, user_text="요청서"
+        )
+    ]
 
 
 async def _popular_book(
@@ -285,3 +287,20 @@ async def test_canary_requester_never_reaches_llm_or_records(
     # 같은 값이 관리자 희망도서 목록에는 나온다(검사가 헛돌지 않는지 확인).
     listed = await admin_client.get("/book-requests")
     assert CANARY["member_number"] in listed.text
+
+
+# --- 결과 사건 ---
+
+
+async def test_draft_result_event(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/admin] 초안 결과 사건 / 구매 요청서 초안"""
+    await _setup(session, library_a.id)
+    llm = FakeLlm([candidates(), draft((VALID_ISBN, 1)), answer()])
+    events = await _run(session, llm, library_a.id)
+    [value] = [e.value for e in events if isinstance(e, ResultEvent)]
+    body = json.loads(_results(llm, 2)[-1].content)
+    assert value.model_dump(mode="json") == {
+        "kind": "draft",
+        "draft": "purchase",
+        "id": body["purchase_request_id"],
+    }

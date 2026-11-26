@@ -3,8 +3,8 @@
 입력 모델은 ToolInput을 상속한다. 정의되지 않은 값을 받지 않으므로 LLM은 library_id를 넣을 수 없고,
 기관은 실행기가 ToolContext로 주입한다. 실행을 시작한 코드는 실행 값(`ToolContext.values`)도 넘길 수
 있다. 실행기는 그 뜻을 모른 채 읽기 전용으로 전하고, LLM은 바꿀 수 없으며 실행 기록에 남지
-않는다. strict 스키마는 모든 필드를 필수로 요구해서 기본값을 쓰지 않는다. 값이 없어도 되는 필드는
-`T | None`으로 둔다.
+않는다. tool은 결과를 화면용 값으로 바꾸는 변환(`present`)을 고를 수 있다. strict 스키마는
+모든 필드를 필수로 요구해서 기본값을 쓰지 않는다. 값이 없어도 되는 필드는 `T | None`으로 둔다.
 """
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -57,6 +57,9 @@ class Tool:
     handler: Callable[[ToolContext, Any], Awaitable[str | dict[str, Any] | list[Any]]]
     status_label: str  # 이용자에게 보이는 진행 문구
     record_fields: tuple[str, ...] = ()  # 실행 기록에 남겨도 되는 입력 필드
+    # 화면용 변환: (검증한 입력, 실행 결과) → 화면에 보일 값 또는 None. DB·외부를 부르지 않는다.
+    # 실행기는 값의 뜻을 모르고, 검사를 통과한 답과 함께만 결과 사건으로 낸다. 기록에 남지 않는다
+    present: Callable[[Any, Any], Any | None] | None = None
 
     def __post_init__(self) -> None:
         _require_all_fields(self.name, self.input_model)

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import ToolResult
 from app.agent.models import AgentStep
-from app.agent.runner import AnswerEvent, run
+from app.agent.runner import AnswerEvent, ResultEvent, run
 from app.features.children.analytics import admin_extension
 from app.features.children.tools import children_extension
 from app.library.admin_agent import build_admin_profiles
@@ -265,3 +265,29 @@ def test_profiles_have_curation_tool() -> None:
     """[agent/librarian] 큐레이션 tool: 두 운영 방식의 프로필 모두 가진다"""
     for mode in LoanMode:
         assert GET_CURATIONS in librarian(mode).tools
+
+
+# --- 결과 사건 ---
+
+
+async def test_draft_result_event(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/admin] 초안 결과 사건 / 큐레이션 초안"""
+    ids = await _books(session, library_a.id)
+    llm = FakeLlm([draft(ids), answer()])
+    events = await _run_admin(session, llm, library_a.id)
+    [value] = [e.value for e in events if isinstance(e, ResultEvent)]
+    body = json.loads(_results(llm)[0].content)
+    assert value.model_dump(mode="json") == {
+        "kind": "draft",
+        "draft": "curation",
+        "id": body["curation_id"],
+    }
+
+
+async def test_failed_draft_has_no_result_event(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/admin] 초안 결과 사건 / 초안이 저장되지 않음"""
+    ids = await _books(session, library_a.id, 2)
+    llm = FakeLlm([draft(ids), answer("못 올렸어요")])
+    events = await _run_admin(session, llm, library_a.id)
+    assert _results(llm)[0].is_error
+    assert not any(isinstance(e, ResultEvent) for e in events)

@@ -23,6 +23,7 @@ from app.library.models.curation import (
 )
 from app.library.recommendation.cards import shelf_of
 from app.library.recommendation.search import get_candidates
+from app.library.schemas.admin_results import DraftLink
 from app.library.schemas.curation import CurationWrite
 from app.library.services import curations as svc
 from app.library.tools import NO_SHELF, search_result
@@ -83,6 +84,11 @@ async def _draft(ctx: ToolContext, data: DraftCurationInput) -> dict[str, Any]:
     }
 
 
+def present_draft(data: DraftCurationInput, output: dict[str, Any]) -> DraftLink:
+    """화면용: 초안의 종류와 id만. 제목·소개·이유·안내 문구는 싣지 않는다."""
+    return DraftLink(draft="curation", id=output["curation_id"])
+
+
 DRAFT_CURATION = Tool(
     "draft_curation",
     "주제 큐레이션 초안을 만들어 승인 대기로 올린다. 승인·게시는 하지 않는다. 책은 먼저 "
@@ -91,6 +97,7 @@ DRAFT_CURATION = Tool(
     _draft,
     "큐레이션 초안을 만들고 있어요",
     record_fields=("library_book_ids",),
+    present=present_draft,
 )
 
 

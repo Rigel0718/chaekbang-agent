@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import ToolResult
 from app.agent.models import AgentStep
-from app.agent.runner import run
+from app.agent.runner import ResultEvent, run
 from app.core import clock
 from app.features.children.analytics import admin_extension
 from app.library.admin_agent import build_admin_profiles
@@ -278,3 +278,21 @@ async def test_canary_member_values_never_reach_llm_or_records(
     listed = await admin_client.get("/overdue-notices/today")
     for value in CANARY.values():
         assert value in listed.text
+
+
+# --- 결과 사건 ---
+
+
+async def test_draft_result_event(session: AsyncSession, library_a: Tenant) -> None:
+    """[agent/admin] 초안 결과 사건 / 안내문 틀 초안"""
+    who = await _member(session, library_a.id)
+    await _overdue(session, library_a.id, who, "공룡")
+    llm = FakeLlm([draft(), answer()])
+    events = await _run_admin(session, llm, library_a.id)
+    [value] = [e.value for e in events if isinstance(e, ResultEvent)]
+    body = json.loads(_results(llm)[0].content)
+    assert value.model_dump(mode="json") == {
+        "kind": "draft",
+        "draft": "template",
+        "id": body["template_id"],
+    }

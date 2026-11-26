@@ -1,14 +1,51 @@
-// 운영 대화: 답 문장만 글자로 보인다(표·차트는 24b). 사건은 session, status, answer, done이다.
+// 운영 대화: 답 문장과 그 아래 표·[초안 보기]를 글자로 보인다. 사건은 session, status, result, answer,
+// done이다. result는 모아 두었다가 answer가 온 뒤에만 그리고, answer가 없으면 버린다.
 import { api } from "../shared/api.js";
-import { el } from "../shared/dom.js";
+import { button, el } from "../shared/dom.js";
 import { readEvents } from "../shared/sse.js";
 
 const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const WAITING = "운영 에이전트가 살펴보는 중…";
 const UNSUPPORTED_NOTE = "지금은 못 하는 분석이에요(기록해 둡니다).";
 const SESSION_ENDED = "대화가 끝나 새 대화로 시작해요. 보낸 문장은 입력칸에 되돌려 놨어요.";
+// 초안 결과의 종류 → 승인 목록의 묶음
+const DRAFT_KINDS = { curation: "curations", template: "templates", purchase: "purchases" };
 
-// ui: { thread, form, input, send, newChat, onDone(), onUnauthorized() }
+function isNumberColumn(rows, index) {
+  return rows.some((row) => typeof row[index] === "number") && rows.every((row) => row[index] === null || typeof row[index] === "number");
+}
+
+// 막대 길이는 그 열의 가장 큰 값을 100%로 맞춘다
+function barCell(value, max) {
+  const bar = el("span", { className: "bar" });
+  bar.style.width = `${(value / max) * 100}%`;
+  const track = el("span", { className: "bar-track", children: [bar] });
+  return el("td", { className: "num", children: [el("div", { className: "bar-cell", children: [track, el("span", { text: String(value) })] })] });
+}
+
+function tableBlock(result) {
+  const { columns, rows } = result;
+  const numeric = columns.map((_, i) => isNumberColumn(rows, i));
+  const barAt = result.bar_column;
+  const max = barAt === null ? 0 : Math.max(0, ...rows.map((row) => row[barAt] ?? 0));
+  const head = el("tr", { children: columns.map((name, i) => el("th", { className: numeric[i] ? "num" : "", text: name })) });
+  const body = rows.map((row) =>
+    el("tr", {
+      children: row.map((value, i) => {
+        if (i === barAt && max > 0 && typeof value === "number") return barCell(value, max);
+        return el("td", { className: numeric[i] ? "num" : "", text: value === null ? "-" : String(value) });
+      }),
+    }),
+  );
+  const table = el("table", { children: [el("thead", { children: [head] }), el("tbody", { children: body })] });
+  const block = el("div", { className: "result", children: [el("p", { className: "result-title", text: result.title })] });
+  if (result.caption) block.append(el("p", { className: "result-caption", text: result.caption }));
+  block.append(el("div", { className: "result-table", children: [table] }));
+  if (result.truncated) block.append(el("p", { className: "result-more", text: `전체 ${result.total}건 중 ${rows.length}건` }));
+  return block;
+}
+
+// ui: { thread, form, input, send, newChat, onDone(), onOpenDraft(kind, id), onUnauthorized() }
 export function createChat(ui) {
   let sessionId = null;
   let busy = false;
@@ -17,6 +54,17 @@ export function createChat(ui) {
   function add(node) {
     ui.thread.append(node);
     node.scrollIntoView({ block: "nearest" });
+  }
+
+  // 표는 받은 순서대로, 그다음 [초안 보기]. 모르는 kind는 건너뛴다
+  function showResults(reply, results) {
+    for (const result of results) {
+      if (result.kind === "table") reply.append(tableBlock(result));
+    }
+    const drafts = results.filter((result) => result.kind === "draft" && result.draft in DRAFT_KINDS);
+    if (drafts.length === 0) return;
+    const buttons = drafts.map((result) => button("초안 보기", () => ui.onOpenDraft(DRAFT_KINDS[result.draft], result.id)));
+    reply.append(el("div", { className: "draft-actions", children: buttons }));
   }
 
   function setBusy(value) {
@@ -36,6 +84,7 @@ export function createChat(ui) {
     controller = new AbortController();
     let answered = false;
     let finished = false;
+    const results = [];
     try {
       const response = await api.adminOpenMessages(
         sessionId ? { session_id: sessionId, message: text } : { message: text },
@@ -44,11 +93,14 @@ export function createChat(ui) {
       for await (const event of readEvents(response)) {
         if (event.name === "session") sessionId = event.data.session_id;
         else if (event.name === "status") status.textContent = event.data.text;
+        else if (event.name === "result") results.push(event.data);
         else if (event.name === "answer") {
           answered = true;
           status.remove();
           reply.append(el("div", { className: "bubble bubble-admin", text: event.data.message }));
           if (event.data.unsupported) reply.append(el("p", { className: "reply-note", text: UNSUPPORTED_NOTE }));
+          showResults(reply, results);
+          reply.scrollIntoView({ block: "nearest" });
         } else if (event.name === "done") finished = true;
       }
       status.remove();

@@ -6,6 +6,7 @@ import { button, el, when, won } from "../shared/dom.js";
 const REJECT_LIMIT = 200; // 서버 반려 사유 상한과 같다
 const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const BUSY = "처리하는 중…";
+const NOT_FOUND = "그 초안을 찾지 못했어요.";
 
 const STATUS_LABELS = {
   draft: "초안",
@@ -115,10 +116,11 @@ function cell(label, text) {
   return el("td", { text, attrs: { "data-label": label } });
 }
 
-// ui: { root, enabledKinds(), pendingButton, allButton, onChanged(), onUnauthorized() }
+// ui: { root, note, enabledKinds(), pendingButton, allButton, onChanged(), onUnauthorized() }
 export function createApprovals(ui) {
   let view = "pending";
   let open = null; // { kind, id }
+  let target = null; // 운영 대화의 [초안 보기]로 다음에 펼칠 초안 { kind, id }
 
   function listOf(kind) {
     return ui.root.querySelector(`#list-${kind}`);
@@ -142,7 +144,7 @@ export function createApprovals(ui) {
 
   function renderRow(kind, row) {
     const info = KINDS[kind].line(row);
-    const item = el("li", { className: "row" });
+    const item = el("li", { className: "row", attrs: { "data-id": String(row.id) } });
     const head = el("button", {
       className: "row-head",
       attrs: { type: "button", "aria-expanded": String(open && open.kind === kind && open.id === row.id) },
@@ -249,9 +251,32 @@ export function createApprovals(ui) {
   }
 
   async function load() {
+    const wanted = target;
+    target = null;
+    ui.note.textContent = "";
     ui.pendingButton.setAttribute("aria-pressed", String(view === "pending"));
     ui.allButton.setAttribute("aria-pressed", String(view === "all"));
     await Promise.all(ui.enabledKinds().map(loadKind));
+    if (wanted) await showTarget(wanted);
+  }
+
+  // 승인 대기에 없으면 전체 보기로 한 번 더 찾고, 그래도 없으면 알린다
+  async function showTarget(wanted) {
+    const item = listOf(wanted.kind).querySelector(`[data-id="${wanted.id}"]`);
+    if (item) return item.scrollIntoView({ block: "start" });
+    if (view === "pending") {
+      view = "all";
+      target = wanted;
+      return load();
+    }
+    open = null;
+    ui.note.textContent = NOT_FOUND;
+  }
+
+  function reveal(kind, id) {
+    view = "pending";
+    open = { kind, id };
+    target = { kind, id };
   }
 
   ui.pendingButton.addEventListener("click", () => {
@@ -265,5 +290,5 @@ export function createApprovals(ui) {
     load();
   });
 
-  return { show: load };
+  return { show: load, reveal };
 }

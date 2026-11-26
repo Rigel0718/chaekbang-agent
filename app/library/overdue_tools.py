@@ -16,6 +16,7 @@ from app.agent.tools import Tool, ToolContext, ToolInput
 from app.core.errors import InvalidRequestError
 from app.library.models.overdue_notice import BODY_LIMIT
 from app.library.overdue_template import PLACEHOLDERS, REQUIRED
+from app.library.schemas.admin_results import DraftLink
 from app.library.schemas.overdue_notice import OverdueLoanItem, OverdueLoanList, TemplateWrite
 from app.library.services import overdue_notices as svc
 
@@ -82,6 +83,11 @@ async def _draft(ctx: ToolContext, data: DraftOverdueNoticeInput) -> dict[str, A
     }
 
 
+def present_draft(data: DraftOverdueNoticeInput, output: dict[str, Any]) -> DraftLink:
+    """화면용: 틀의 종류와 id만. 틀 문장과 안내 문구는 싣지 않는다."""
+    return DraftLink(draft="template", id=output["template_id"])
+
+
 LIST_OVERDUE_LOANS = Tool(
     "list_overdue_loans",
     "지금 연체 중인 대출(반납 예정일이 지났고 반납하지 않음)을 본다. 책마다 서명, 등록번호, 반납 "
@@ -99,4 +105,5 @@ DRAFT_OVERDUE_NOTICE = Tool(
     DraftOverdueNoticeInput,
     _draft,
     "연체 안내문 틀을 만들고 있어요",
+    present=present_draft,
 )
