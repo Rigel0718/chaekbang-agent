@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
+from app.core.errors import InvalidRequestError
 from app.core.schemas import Page, Pagination
 from app.library.deps import AdminStaff, CurrentStaff, Session
 from app.library.models.catalog import Holding, HoldingStatus
@@ -9,6 +10,8 @@ from app.library.schemas.catalog import HoldingCreate, HoldingRead, HoldingUpdat
 from app.library.services import holdings
 
 router = APIRouter(prefix="/holdings", tags=["holdings"])
+
+MAX_QUERY_LENGTH = 100  # /catalog의 질의 상한과 같다
 
 
 def _view(holding: Holding) -> HoldingRead:
@@ -36,7 +39,18 @@ async def list_holdings(
     library_book_id: int | None = None,
     status: HoldingStatus | None = None,
     incomplete: Annotated[bool, Query(description="true면 빠진 정보가 있는 사본만")] = False,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_QUERY_LENGTH,
+            description="등록번호(같음)나 서명·저자(포함)로 찾는다. status가 없으면 제적도 넣는다",
+        ),
+    ] = None,
 ):
+    if q is not None:
+        q = q.strip()
+        if not q:
+            raise InvalidRequestError("찾을 글자를 넣으세요")
     rows, total = await holdings.list_holdings(
         session,
         staff.library_id,
@@ -45,6 +59,7 @@ async def list_holdings(
         library_book_id=library_book_id,
         status=status,
         incomplete=incomplete,
+        q=q,
     )
     return Page[HoldingRead](
         items=[_view(h) for h in rows], total=total, limit=page.limit, offset=page.offset

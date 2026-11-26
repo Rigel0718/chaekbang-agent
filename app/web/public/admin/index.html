@@ -19,6 +19,9 @@
     <button type="button" class="tab" data-tab="requests" id="tab-requests">희망도서</button>
     <button type="button" class="tab" data-tab="overdue" id="tab-overdue" hidden>오늘의 연체</button>
     <button type="button" class="tab" data-tab="imports" id="tab-imports" hidden>장서 가져오기</button>
+    <button type="button" class="tab" data-tab="collection" id="tab-collection" hidden>장서</button>
+    <button type="button" class="tab" data-tab="members" id="tab-members">회원</button>
+    <button type="button" class="tab" data-tab="closures" id="tab-closures">휴관일</button>
   </nav>
 
   <main class="admin-main">
@@ -65,6 +68,75 @@
       <div id="import-summary"></div>
       <h2>지난 가져오기</h2>
       <ul class="list" id="list-imports"></ul>
+    </section>
+
+    <section id="panel-collection" class="panel" data-panel="collection" hidden>
+      <div class="toolbar">
+        <form id="collection-form" class="search-form" autocomplete="off">
+          <input id="collection-q" type="text" maxlength="100" placeholder="서명·저자·등록번호" aria-label="서명, 저자, 등록번호" autocomplete="off">
+          <button type="submit" class="primary">찾기</button>
+          <button type="button" id="collection-all" class="btn" hidden>전체 보기</button>
+        </form>
+        <button type="button" id="register-open" class="btn">책 등록</button>
+      </div>
+      <form id="register-form" class="entry-form" autocomplete="off" novalidate hidden>
+        <label>ISBN <input id="register-isbn" type="text" maxlength="20" autocomplete="off"></label>
+        <p id="register-found" class="entry-wide muted" hidden></p>
+        <label id="register-title-field">서명 <input id="register-title" type="text" autocomplete="off"></label>
+        <label id="register-author-field">저자 <input id="register-author" type="text" autocomplete="off"></label>
+        <label>등록번호 <input id="register-accession" type="text" autocomplete="off"></label>
+        <label>청구기호 <input id="register-call" type="text" autocomplete="off"></label>
+        <label>입수 구분
+          <select id="register-acquisition">
+            <option value="purchased">매입</option>
+            <option value="donated">기증</option>
+          </select>
+        </label>
+        <label id="register-price-field">구입가 <input id="register-price" type="number" min="0" step="1" inputmode="numeric" autocomplete="off"></label>
+        <label id="register-donor-field" hidden>기증처 <input id="register-donor" type="text" autocomplete="off"></label>
+        <div class="entry-wide detail-actions">
+          <button type="submit" id="register-submit" class="primary">등록</button>
+          <button type="button" id="register-close" class="btn">닫기</button>
+        </div>
+        <p id="register-error" class="entry-wide error-line" role="alert"></p>
+      </form>
+      <p id="collection-error" class="error-line" role="alert"></p>
+      <div id="collection-table" class="table-wrap"></div>
+      <button type="button" id="collection-more" class="btn" hidden>더 보기</button>
+    </section>
+
+    <section id="panel-members" class="panel" data-panel="members" hidden>
+      <div class="toolbar">
+        <form id="member-search" class="search-form" autocomplete="off">
+          <input id="member-q" type="text" maxlength="100" placeholder="이름·회원번호" aria-label="이름, 회원번호" autocomplete="off">
+          <button type="submit" class="primary">찾기</button>
+        </form>
+        <button type="button" id="member-open" class="btn">회원 등록</button>
+      </div>
+      <form id="member-form" class="entry-form" autocomplete="off" novalidate hidden>
+        <label>회원번호 <input id="member-number" type="text" autocomplete="off"></label>
+        <label>이름 <input id="member-name" type="text" autocomplete="off"></label>
+        <label>휴대폰 번호 <input id="member-phone" type="tel" autocomplete="off"></label>
+        <div class="entry-wide detail-actions">
+          <button type="submit" id="member-submit" class="primary">등록</button>
+          <button type="button" id="member-close" class="btn">닫기</button>
+        </div>
+        <p id="member-form-error" class="entry-wide error-line" role="alert"></p>
+      </form>
+      <p id="member-error" class="error-line" role="alert"></p>
+      <div id="member-table" class="table-wrap"></div>
+      <button type="button" id="member-more" class="btn" hidden>더 보기</button>
+    </section>
+
+    <section id="panel-closures" class="panel" data-panel="closures" hidden>
+      <h2>임시 휴관일</h2>
+      <form id="closure-form" class="search-form" autocomplete="off">
+        <input id="closure-date" type="date" aria-label="휴관 날짜" required autocomplete="off">
+        <input id="closure-reason" type="text" maxlength="100" placeholder="사유" aria-label="휴관 사유" autocomplete="off">
+        <button type="submit" id="closure-submit" class="primary">더하기</button>
+      </form>
+      <p id="closure-error" class="error-line" role="alert"></p>
+      <div id="closure-table" class="table-wrap"></div>
     </section>
   </main>
   <script type="module" src="./main.js"></script>

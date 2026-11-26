@@ -4,6 +4,7 @@
 // 빌리기와 희망도서는 회원 로그인이 필요하다: 로그인 전이면 로그인 모드로 열고, 성공하면 이어서 한다.
 // (담기는 로그인 전에는 버튼이 없어 이어서 할 일이 없다.)
 import { api } from "../shared/api.js";
+import { attachPhoneInput } from "../shared/phone.js";
 
 const MODES = {
   login: { group: "login", submit: "로그인", fields: ["phone"] },
@@ -179,6 +180,7 @@ export function createActions(ui) {
     }
   }
 
+  attachPhoneInput(ui.inputs.phone);
   ui.loanButton.addEventListener("click", () => open("borrow"));
   ui.requestButton.addEventListener("click", () => open("request"));
   ui.closeButton.addEventListener("click", close);

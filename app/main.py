@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.core.access_log import install_access_log_filter
 from app.core.db import get_engine, get_sessionmaker
 from app.core.errors import (
     AuthenticationError,
@@ -47,6 +48,9 @@ from app.library.api.purchase_requests import close_list_prices
 from app.library.hooks import register_hook, register_related_scope
 from app.library.librarian import build_librarian_profiles
 from app.library.services.chat import purge_forever
+
+# 접속 기록에는 경로만 남긴다(주소의 회원 이름·검색어를 남기지 않는다).
+install_access_log_filter()
 
 # 기관 개별 기능을 조립한다. 기능을 빼려면 이 줄들과 라우터를 지우면 된다.
 register_hook(ChildrenHook())
