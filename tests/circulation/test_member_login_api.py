@@ -17,7 +17,7 @@ from tests.helpers import add_member, add_staff_session, login_member
 
 PHONE = "01012345678"
 UNKNOWN = "01099998888"
-REQUIRED = "회원 로그인이 필요합니다"
+REQUIRED = "회원 로그인을 해 주세요."
 HEADER = "X-Member-Token"
 
 
@@ -93,7 +93,7 @@ async def test_login_failure_is_one_answer(
     """[circulation/member-login] 로그인 실패는 한 가지로 답한다 / 없는 번호, 형식이 틀린 번호"""
     res = await _login(kiosk_client, phone)
     assert res.status_code == 404
-    assert res.json()["detail"] == "번호를 확인해 주세요"
+    assert res.json()["detail"] == "번호를 확인해 주세요."
     if phone.strip():
         assert phone not in res.text
     assert await _session_count(session) == 0

@@ -205,3 +205,25 @@ def jamo_starts(value: str) -> list[str]:
 def jamo_starts_sql(expr: ColumnElement) -> ColumnElement:
     """`jamo_starts`와 같은 규칙의 SQL 식. NULL은 NULL이다."""
     return getattr(func, JAMO_STARTS_FUNCTION)(expr)
+
+
+_RIEUL = 8  # 종성 ㄹ의 번호(JONGSEONG)
+_PARTICLES = {"을/를", "이/가", "은/는", "과/와", "으로/로"}
+
+
+def with_particle(word: str, pair: str) -> str:
+    """앞말의 받침을 보고 조사를 붙인다.
+
+    `pair`는 "받침 있을 때/없을 때"다(을/를, 이/가, 은/는, 과/와, 으로/로).
+
+    화면에 나오는 문구에 "을(를)" 같은 겸용 조사를 쓰지 않으려고 둔다. "으로/로"는 받침이 ㄹ이어도
+    "로"다(`휴관일로`). 마지막 글자가 한글 음절이 아니면 받침 없는 쪽을 쓴다.
+    """
+    if pair not in _PARTICLES:
+        raise ValueError(f"모르는 조사: {pair}")
+    with_final, without_final = pair.split("/")
+    code = ord(word[-1]) - _SYLLABLE_BASE if word else -1
+    final = code % 28 if 0 <= code < _SYLLABLE_COUNT else 0
+    if pair == "으로/로" and final == _RIEUL:
+        final = 0
+    return word + (with_final if final else without_final)

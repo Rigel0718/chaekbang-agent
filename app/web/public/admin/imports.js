@@ -1,23 +1,21 @@
 // 장서 가져오기 탭(외부 대출 기관): 파일 올리기 → 미리 보기 요약과 확인할 행 → 적용(또는 삭제). 탭에 들어올 때마다
 // 열어 둔 것을 지우고 지난 기록을 다시 읽는다. 파일 내용은 화면이 읽지 않고 서버로 보내기만 한다.
 // 변수 이름 record는 가져오기 기록(HoldingImportRead), row는 그 행(HoldingImportRow)에만 쓴다(테스트가 본다).
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el, when } from "../shared/dom.js";
 
 const RECORD_LIMIT = 20;
 const PAGE = 20;
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
-const APPLY_CONFIRM = "이 파일을 장서에 적용할까요?";
-const DELETE_CONFIRM = "이 미리 보기를 지울까요? 장서는 바뀌지 않아요.";
-const MASS_WITHDRAW_CONFIRM =
-  "파일에서 빠진 사본이 절반 이상이에요. 파일이 맞으면 확인을 눌러 주세요. 빠진 사본은 제적돼요.";
+const APPLY_CONFIRM = "이 파일대로 책 목록을 바꿀까요?";
+const DELETE_CONFIRM = "이 미리 보기를 삭제할까요? 책 목록은 바뀌지 않아요.";
+const MASS_WITHDRAW_CONFIRM = "빠진 책을 모두 제적할까요? 파일에서 빠진 책이 절반 이상이에요.";
 // 대량 제적 409를 다른 409와 가르는 낱말. 서버 문구에 이 낱말이 있다(테스트가 본다).
 const MASS_WITHDRAW_MARK = "confirm_withdraw";
 
 // 서버의 표준 열 이름(`app/library/importing/columns.py`의 LABELS)과 같다.
 const FIELD_LABELS = {
   accession_number: "등록번호",
-  title: "서명",
+  title: "도서명",
   author: "저자",
   isbn: "ISBN",
   publisher: "출판사",
@@ -39,7 +37,7 @@ const FLAG_LABELS = {
   purchased_without_price: "매입인데 가격 없음",
 };
 const STATUS_LABELS = { preview: "미리 보기", applied: "적용함" };
-const ROW_COLUMNS = ["행", "등록번호", "서명", "저자", "사유"];
+const ROW_COLUMNS = ["행", "등록번호", "도서명", "저자", "사유"];
 
 // ui: { form, file, submit, columns, error, summary, list, onUnauthorized() }
 export function createImports(ui) {
@@ -141,8 +139,8 @@ export function createImports(ui) {
     );
     const withdrawn =
       record.status === "applied"
-        ? `파일에 없어 제적한 사본 ${summary.missing_count}권`
-        : `파일에서 빠진 사본 ${summary.missing_count}권(적용하면 제적)`;
+        ? `파일에 없어 제적한 책 ${summary.missing_count}권`
+        : `파일에서 빠진 책 ${summary.missing_count}권(적용하면 제적)`;
     box.append(el("p", { text: withdrawn }));
     const mapped = Object.entries(record.column_mapping)
       .map(([field, header]) => `${FIELD_LABELS[field] || field} ← ${header}`)

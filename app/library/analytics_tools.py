@@ -92,12 +92,13 @@ def _book_filter(data: ToolInput, axes: Sequence[AnalysisAxis]) -> BookFilter:
 
 GROUP_HEADERS = {FIELD: "분야", STATUS: "상태", ACQUISITION: "입수 구분"}
 OTHER_GROUP = "구분"  # 기관 개별 기능의 축. 이름을 부르지 않는다
-COLLECTION_COLUMNS = ("사본", "서명")
+# 열 이름은 화면 말이다: 권수(사본 수), 종수(서명 수), 도서명(서명)
+COLLECTION_COLUMNS = ("권수", "종수")
 LOAN_COLUMNS = ("대출",)
-LOAN_FIELD_COLUMNS = ("대출", "사본", "권당 대출")
-RANKING_COLUMNS = ("순위", "서명", "저자", "대출")
-HOLDING_COLUMNS = ("서명", "저자", "등록번호", "청구기호")
-UNBORROWED_COLUMNS = ("서명", "저자", "권수")
+LOAN_FIELD_COLUMNS = ("대출", "권수", "권당 대출")
+RANKING_COLUMNS = ("순위", "도서명", "저자", "대출")
+HOLDING_COLUMNS = ("도서명", "저자", "등록번호", "청구기호")
+UNBORROWED_COLUMNS = ("도서명", "저자", "권수")
 
 
 def _group_header(group_by: str) -> str:

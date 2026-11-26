@@ -22,6 +22,6 @@ async def update_library(session: AsyncSession, library_id: int, data: LibraryUp
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise ConflictError("이미 쓰는 기관 이름입니다") from exc
+        raise ConflictError("이미 쓰는 도서관 이름이에요.") from exc
     await session.refresh(library)
     return library

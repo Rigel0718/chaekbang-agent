@@ -61,9 +61,9 @@ def test_unsupported(name: str, content: bytes) -> None:
 def test_size_and_row_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     """[catalog/holdings-import] 파일 형식 (크기·행 수 상한)"""
     monkeypatch.setattr(reader, "MAX_BYTES", 10)
-    with pytest.raises(ImportFileError, match="너무 큽니다"):
+    with pytest.raises(ImportFileError, match="너무 커요"):
         read_table("a.csv", b"x" * 11)
     monkeypatch.setattr(reader, "MAX_BYTES", 1000)
     monkeypatch.setattr(reader, "MAX_ROWS", 2)
-    with pytest.raises(ImportFileError, match="행이 너무 많습니다"):
+    with pytest.raises(ImportFileError, match="행이 너무 많아요"):
         read_table("a.csv", b"a\nb\nc\n")

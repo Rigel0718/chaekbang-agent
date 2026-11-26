@@ -34,13 +34,13 @@ class StaffContext:
         return self.role == StaffRole.ADMIN
 
 
-MEMBER_REQUIRED = "회원 로그인이 필요합니다"
+MEMBER_REQUIRED = "회원 로그인을 해 주세요."
 
 
 def _unauthorized() -> HTTPException:
     return HTTPException(
         status.HTTP_401_UNAUTHORIZED,
-        "로그인이 필요합니다",
+        "로그인해 주세요.",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -82,7 +82,7 @@ CurrentStaff = Annotated[StaffContext, Depends(current_staff)]
 
 async def require_admin(staff: CurrentStaff) -> StaffContext:
     if not staff.is_admin:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "관리자만 할 수 있습니다")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "관리자만 할 수 있어요.")
     return staff
 
 

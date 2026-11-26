@@ -35,11 +35,11 @@ from app.library.models.overdue_notice import OverdueNoticeTemplate
 from app.library.privacy import mask_personal
 from app.library.schemas.overdue_notice import NoticeLine, NoticeList, TemplateWrite
 
-LABEL = "연체 안내문 틀"
-EXTERNAL_LOANS = "이 도서관의 대출은 기존 대출 프로그램에서 관리해서 연체 안내를 만들 수 없습니다"
-NO_TEMPLATE = "확정된 연체 안내문 틀이 없습니다. 틀을 만들어 승인해 주세요"
+LABEL = "연체 안내 양식"
+EXTERNAL_LOANS = "이 도서관의 대출은 기존 대출 프로그램에서 관리해서 연체 안내를 만들 수 없어요."
+NO_TEMPLATE = "승인한 연체 안내 양식이 없어요."
 PERSONAL_IN_BODY = (
-    "틀에 전화번호·이메일·회원번호 같은 개인정보가 있습니다. 회원 값은 자리표시로만 쓰세요"
+    "양식에 전화번호·이메일·회원번호 같은 개인정보가 있어요. 회원 값은 자리표시로만 써 주세요."
 )
 
 

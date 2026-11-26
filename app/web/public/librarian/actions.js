@@ -3,7 +3,7 @@
 // 칸을 닫거나 화면을 비우면 지운다(공용 PC). 서버가 준 문구는 글자로만 넣는다.
 // 빌리기와 희망도서는 회원 로그인이 필요하다: 로그인 전이면 로그인 모드로 열고, 성공하면 이어서 한다.
 // (담기는 로그인 전에는 버튼이 없어 이어서 할 일이 없다.)
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { attachPhoneInput } from "../shared/phone.js";
 
 const MODES = {
@@ -25,7 +25,6 @@ const LOGIN_FIRST = new Set(["request"]);
 const LOGIN_AGAIN = "로그인이 끝났어요. 다시 로그인해 주세요.";
 const MISSING = "빈칸을 채워 주세요.";
 const INVALID = "입력한 값을 확인해 주세요.";
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const REQUESTED = "신청했어요. 도서관에서 확인할게요.";
 
 // "2026-12-06" → "12월 6일"

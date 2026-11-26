@@ -1,9 +1,8 @@
 // 희망도서 탭: 처리 전 신청 목록(회원번호 포함). 탭에 들어올 때마다 목록을 비우고 서버에서 다시 읽는다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el, when } from "../shared/dom.js";
 
 const PAGE = 20;
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 
 // ui: { list, more, onUnauthorized() }
 export function createRequests(ui) {
@@ -11,8 +10,8 @@ export function createRequests(ui) {
 
   function row(request) {
     const item = el("li", { className: "row member-row" });
-    const close = button("닫기", async () => {
-      if (!confirm("처리했다고 닫을까요? 닫으면 이 목록에서 사라져요.")) return;
+    const close = button("처리 완료", async () => {
+      if (!confirm("처리 완료로 둘까요? 이 목록에서 사라져요.")) return;
       close.disabled = true;
       try {
         await api.closeBookRequest(request.id);

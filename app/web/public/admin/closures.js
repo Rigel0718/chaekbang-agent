@@ -1,11 +1,10 @@
 // 휴관일 탭: 오늘부터 1년의 임시 휴관일 목록, 더하기, 지우기. 변수 이름 closure는 ClosureRead에만 쓴다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el } from "../shared/dom.js";
 
 const DAYS = 365;
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const INVALID_INPUT = "입력한 값을 확인해 주세요.";
-const DELETE_CONFIRM = "이 휴관일을 지울까요?";
+const DELETE_CONFIRM = "이 휴관일을 삭제할까요?";
 const COLUMNS = ["날짜", "사유", ""];
 
 // 브라우저의 오늘을 YYYY-MM-DD로. 관리자 PC가 기관에 있다고 본다(design 결정 4).

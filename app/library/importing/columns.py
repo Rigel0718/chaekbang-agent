@@ -16,7 +16,7 @@ REQUIRED = ("accession_number", "title", "author")
 
 LABELS = {
     "accession_number": "등록번호",
-    "title": "서명",
+    "title": "도서명",
     "author": "저자",
     "isbn": "ISBN",
     "publisher": "출판사",
@@ -95,7 +95,7 @@ def find_header(table: list[list[Any]], overrides: dict[str, str] | None = None)
     overrides = overrides or {}
     unknown = sorted(set(overrides) - set(SYNONYMS))
     if unknown:
-        raise ImportFileError(f"모르는 표준 열입니다: {', '.join(unknown)}")
+        raise ImportFileError(f"모르는 표준 열이에요: {', '.join(unknown)}")
 
     best: tuple[int, int, dict[str, int], dict[str, str]] | None = None
     for index, row in enumerate(table[:HEADER_SEARCH_ROWS]):
@@ -112,5 +112,5 @@ def find_header(table: list[list[Any]], overrides: dict[str, str] | None = None)
     source_row = table[best[1]] if best else next((r for r in table if any(r)), [])
     headers = [str(cell).strip() for cell in source_row if cell not in (None, "")]
     raise ImportFileError(
-        f"필수 열을 찾지 못했습니다: {', '.join(missing)}", missing=missing, headers=headers
+        f"필수 열을 찾지 못했어요: {', '.join(missing)}", missing=missing, headers=headers
     )

@@ -24,7 +24,7 @@ from app.library.models.catalog import (
 )
 from app.library.schemas.catalog import LibraryBookCreate, LibraryBookUpdate
 
-LABEL = "도서"
+LABEL = "책"
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class LibraryBookCounts:
 
 
 def _duplicate_isbn(isbn: str) -> ConflictError:
-    return ConflictError(f"이미 등록된 ISBN입니다: {isbn}")
+    return ConflictError(f"이미 등록된 ISBN이에요: {isbn}")
 
 
 async def _ensure_isbn_free(
@@ -174,7 +174,7 @@ async def update_library_book(
     changes = data.changes()
     isbn_changed = "isbn" in changes and changes["isbn"] != library_book.isbn
     if library_book.book_id is not None and set(changes) & set(BIBLIOGRAPHIC_FIELDS):
-        raise ConflictError("공식 서지에 연결된 도서는 ISBN만 고칠 수 있습니다")
+        raise ConflictError("공식 서지에 연결된 책은 ISBN만 수정할 수 있어요.")
     if "isbn" in changes:
         new_isbn = changes["isbn"]
         if new_isbn is None and library_book.isbn is not None:
@@ -187,7 +187,7 @@ async def update_library_book(
                 )
             )
             if has_purchased:
-                raise ConflictError("매입·납품 사본이 있는 도서는 ISBN을 비울 수 없습니다")
+                raise ConflictError("매입·납품한 책은 ISBN을 비울 수 없어요.")
         elif new_isbn is not None:
             await _ensure_isbn_free(session, library_id, new_isbn, except_id=library_book_id)
     for field, value in changes.items():
@@ -203,6 +203,6 @@ async def delete_library_book(session: AsyncSession, library_id: int, library_bo
     """제적 사본을 포함해 사본이 있으면 삭제를 거부한다."""
     library_book = await get_library_book(session, library_id, library_book_id)
     if await session.scalar(select(exists().where(Holding.library_book_id == library_book_id))):
-        raise ConflictError("소장 사본이 있는 도서는 삭제할 수 없습니다")
+        raise ConflictError("등록한 권이 있는 책은 삭제할 수 없어요.")
     await session.delete(library_book)
     await session.commit()

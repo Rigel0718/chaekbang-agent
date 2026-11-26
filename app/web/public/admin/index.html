@@ -14,12 +14,12 @@
   </header>
 
   <nav class="tabs" aria-label="관리 화면">
-    <button type="button" class="tab" data-tab="chat" id="tab-chat">운영 대화</button>
+    <button type="button" class="tab" data-tab="chat" id="tab-chat">AI 도우미</button>
     <button type="button" class="tab" data-tab="approvals" id="tab-approvals">승인 목록 <span id="pending-count" class="badge" hidden></span></button>
     <button type="button" class="tab" data-tab="requests" id="tab-requests">희망도서</button>
     <button type="button" class="tab" data-tab="overdue" id="tab-overdue" hidden>오늘의 연체</button>
-    <button type="button" class="tab" data-tab="imports" id="tab-imports" hidden>장서 가져오기</button>
-    <button type="button" class="tab" data-tab="collection" id="tab-collection" hidden>장서</button>
+    <button type="button" class="tab" data-tab="imports" id="tab-imports" hidden>책 가져오기</button>
+    <button type="button" class="tab" data-tab="collection" id="tab-collection" hidden>책 목록</button>
     <button type="button" class="tab" data-tab="members" id="tab-members">회원</button>
     <button type="button" class="tab" data-tab="closures" id="tab-closures">휴관일</button>
   </nav>
@@ -28,7 +28,7 @@
     <section id="panel-chat" class="panel" data-panel="chat" hidden>
       <div id="chat-thread" class="thread" aria-live="polite"></div>
       <form id="chat-form" class="chat-form" autocomplete="off">
-        <input id="chat-input" type="text" maxlength="500" placeholder="예: 이번 달 대출이 많은 분야 알려줘" aria-label="운영 에이전트에게 질문" autocomplete="off">
+        <input id="chat-input" type="text" maxlength="500" placeholder="예: 이번 달 대출이 많은 분야 알려줘" aria-label="AI 도우미에게 질문" autocomplete="off">
         <button type="submit" id="chat-send" class="primary">보내기</button>
         <button type="button" id="chat-new" class="btn">새 대화</button>
       </form>
@@ -41,7 +41,7 @@
       </div>
       <p id="approvals-note" class="error-line" role="alert"></p>
       <section class="group" data-kind="curations"><h2>큐레이션</h2><ul class="list" id="list-curations"></ul></section>
-      <section class="group" data-kind="templates" id="group-templates" hidden><h2>연체 안내문 틀</h2><ul class="list" id="list-templates"></ul></section>
+      <section class="group" data-kind="templates" id="group-templates" hidden><h2>연체 안내 양식</h2><ul class="list" id="list-templates"></ul></section>
       <section class="group" data-kind="purchases"><h2>구매 요청서</h2><ul class="list" id="list-purchases"></ul></section>
     </section>
 
@@ -58,9 +58,9 @@
     </section>
 
     <section id="panel-imports" class="panel" data-panel="imports" hidden>
-      <h2>장서 파일 올리기</h2>
+      <h2>책 목록 파일 올리기</h2>
       <form id="import-form" class="import-form">
-        <input id="import-file" type="file" accept=".xlsx,.xls,.csv,.txt" aria-label="장서 파일(xlsx, CSV)" required>
+        <input id="import-file" type="file" accept=".xlsx,.xls,.csv,.txt" aria-label="책 목록 파일(xlsx, CSV)" required>
         <button type="submit" id="import-submit" class="primary">올리기</button>
       </form>
       <div id="import-columns" class="import-columns"></div>
@@ -73,7 +73,7 @@
     <section id="panel-collection" class="panel" data-panel="collection" hidden>
       <div class="toolbar">
         <form id="collection-form" class="search-form" autocomplete="off">
-          <input id="collection-q" type="text" maxlength="100" placeholder="서명·저자·등록번호" aria-label="서명, 저자, 등록번호" autocomplete="off">
+          <input id="collection-q" type="text" maxlength="100" placeholder="도서명·저자·등록번호" aria-label="도서명, 저자, 등록번호" autocomplete="off">
           <button type="submit" class="primary">찾기</button>
           <button type="button" id="collection-all" class="btn" hidden>전체 보기</button>
         </form>
@@ -82,7 +82,7 @@
       <form id="register-form" class="entry-form" autocomplete="off" novalidate hidden>
         <label>ISBN <input id="register-isbn" type="text" maxlength="20" autocomplete="off"></label>
         <p id="register-found" class="entry-wide muted" hidden></p>
-        <label id="register-title-field">서명 <input id="register-title" type="text" autocomplete="off"></label>
+        <label id="register-title-field">도서명 <input id="register-title" type="text" autocomplete="off"></label>
         <label id="register-author-field">저자 <input id="register-author" type="text" autocomplete="off"></label>
         <label>등록번호 <input id="register-accession" type="text" autocomplete="off"></label>
         <label>청구기호 <input id="register-call" type="text" autocomplete="off"></label>
@@ -133,7 +133,7 @@
       <form id="closure-form" class="search-form" autocomplete="off">
         <input id="closure-date" type="date" aria-label="휴관 날짜" required autocomplete="off">
         <input id="closure-reason" type="text" maxlength="100" placeholder="사유" aria-label="휴관 사유" autocomplete="off">
-        <button type="submit" id="closure-submit" class="primary">더하기</button>
+        <button type="submit" id="closure-submit" class="primary">등록</button>
       </form>
       <p id="closure-error" class="error-line" role="alert"></p>
       <div id="closure-table" class="table-wrap"></div>

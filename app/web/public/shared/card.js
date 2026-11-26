@@ -2,7 +2,7 @@
 // 책 값은 book 변수의 속성으로만 읽는다(필드 계약 테스트가 이 형태를 모은다).
 // 서버 값은 textContent로만 넣는다. 주소는 safeUrl을 거친다.
 
-const SIMILAR_EMPTY = "비슷한 책을 찾지 못했어요.";
+const SIMILAR_EMPTY = "비슷한 책이 없어요.";
 const SIMILAR_FAILED = "비슷한 책을 불러오지 못했어요.";
 
 export function basketLabel(inBasket) {

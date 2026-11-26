@@ -14,11 +14,11 @@ LABEL = "회원"
 
 
 def _duplicate(member_number: str) -> ConflictError:
-    return ConflictError(f"이미 쓰는 회원번호입니다: {member_number}")
+    return ConflictError(f"이미 쓰는 회원번호예요: {member_number}")
 
 
 def _duplicate_phone() -> ConflictError:
-    return ConflictError("이미 쓰는 전화번호입니다")  # 받은 번호를 메시지에 넣지 않는다
+    return ConflictError("이미 쓰는 전화번호예요.")  # 받은 번호를 메시지에 넣지 않는다
 
 
 async def _phone_taken(
@@ -107,7 +107,7 @@ async def delete_member(session: AsyncSession, library_id: int, member_id: int) 
         )
     )
     if has_active:
-        raise ConflictError("반납하지 않은 대출이 있는 회원은 삭제할 수 없습니다")
+        raise ConflictError("반납하지 않은 책이 있는 회원은 삭제할 수 없어요.")
     await session.execute(
         update(Loan)
         .where(Loan.library_id == library_id, Loan.member_id == member_id)

@@ -19,6 +19,7 @@ from app.core.text import (
     korean_order,
     match_key,
     strip_edition,
+    with_particle,
 )
 
 
@@ -284,3 +285,36 @@ async def test_korean_order_latin_case(session: AsyncSession) -> None:
 async def test_korean_order_digits_as_text(session: AsyncSession) -> None:
     """[platform/text-normalization] 서명 정렬 순서 / 숫자는 글자 순서"""
     assert await _korean_sorted(session, ["가나다 2", "가나다 10"]) == ["가나다 10", "가나다 2"]
+
+
+@pytest.mark.parametrize(
+    ("word", "pair", "expected"),
+    [
+        ("큐레이션", "을/를", "큐레이션을"),
+        ("구매 요청서", "을/를", "구매 요청서를"),
+        ("휴관일", "이/가", "휴관일이"),
+        ("구매 요청서", "이/가", "구매 요청서가"),
+        ("구매 요청서", "은/는", "구매 요청서는"),
+        ("큐레이션", "은/는", "큐레이션은"),
+        ("휴관일", "으로/로", "휴관일로"),
+        ("기록", "으로/로", "기록으로"),
+        ("요청서", "으로/로", "요청서로"),
+        ("책", "과/와", "책과"),
+        ("회원", "과/와", "회원과"),
+        ("도서", "과/와", "도서와"),
+    ],
+)
+def test_with_particle(word: str, pair: str, expected: str) -> None:
+    """web-ui "화면에 나오는 서버 문구" - 조사 고르기: 받침에 맞게, 받침 ㄹ에는 "로"."""
+    assert with_particle(word, pair) == expected
+
+
+def test_with_particle_non_hangul_end() -> None:
+    """한글 음절이 아닌 끝 글자는 받침 없는 쪽을 쓴다."""
+    assert with_particle("ISBN", "을/를") == "ISBN를"
+    assert with_particle("", "이/가") == "가"
+
+
+def test_with_particle_unknown_pair() -> None:
+    with pytest.raises(ValueError):
+        with_particle("책", "의/에")

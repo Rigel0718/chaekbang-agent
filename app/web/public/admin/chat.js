@@ -1,12 +1,11 @@
 // 운영 대화: 답 문장과 그 아래 표·[초안 보기]를 글자로 보인다. 사건은 session, status, result, answer,
 // done이다. result는 모아 두었다가 answer가 온 뒤에만 그리고, answer가 없으면 버린다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el } from "../shared/dom.js";
 import { readEvents } from "../shared/sse.js";
 
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
-const WAITING = "운영 에이전트가 살펴보는 중…";
-const UNSUPPORTED_NOTE = "지금은 못 하는 분석이에요(기록해 둡니다).";
+const WAITING = "살펴보는 중…";
+const UNSUPPORTED_NOTE = "지금은 못 하는 분석이에요.";
 const SESSION_ENDED = "대화가 끝나 새 대화로 시작해요. 보낸 문장은 입력칸에 되돌려 놨어요.";
 // 초안 결과의 종류 → 승인 목록의 묶음
 const DRAFT_KINDS = { curation: "curations", template: "templates", purchase: "purchases" };

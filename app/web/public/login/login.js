@@ -1,12 +1,11 @@
 // 로그인 화면. 응답의 역할로 행선지를 정하고 토큰은 그 역할의 키에 저장한다.
-import { api, setToken, useScreen } from "../shared/api.js";
+import { api, setToken, useScreen, GENERIC_ERROR } from "../shared/api.js";
 
 // 역할 → 화면. 이 표에 없는 역할은 이동하지 않는다.
 const DESTINATIONS = {
   kiosk: "/ui/librarian/",
   admin: "/ui/admin/",
 };
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const UNKNOWN_ROLE = "이 계정은 화면을 쓸 수 없어요.";
 
 const form = document.getElementById("login-form");

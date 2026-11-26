@@ -34,7 +34,7 @@ REASON_LIMIT = 120
 MAX_RECOMMENDATIONS = 5
 
 FALLBACK_MESSAGE = "지금은 답을 드리기 어려워요. 잠시 뒤에 다시 물어봐 주세요."
-REPAIRED_MESSAGE = "요청에 맞는 소장 도서를 골랐어요. 아래 책을 확인해 보세요."
+REPAIRED_MESSAGE = "요청에 맞는 책을 골랐어요. 아래 책을 확인해 보세요."
 
 
 class Recommendation(ToolInput):

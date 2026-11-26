@@ -16,7 +16,7 @@ from app.core.security import hash_token, new_token
 from app.library.models.circulation import Member, MemberSession
 from app.library.schemas.circulation import normalize_phone
 
-UNKNOWN_PHONE = "번호를 확인해 주세요"
+UNKNOWN_PHONE = "번호를 확인해 주세요."
 _KEEP_EXPIRED = timedelta(days=1)  # 끝난 세션 행은 하루 뒤 로그인 때 정리한다
 
 

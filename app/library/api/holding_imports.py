@@ -24,7 +24,7 @@ def _overrides(raw: str | None) -> dict[str, str] | None:
     except (ValueError, ValidationError) as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            'column_mapping은 {"author": "책임표시"} 형식의 JSON이어야 합니다',
+            'column_mapping은 {"author": "책임표시"} 형식의 JSON이어야 해요.',
         ) from exc
 
 

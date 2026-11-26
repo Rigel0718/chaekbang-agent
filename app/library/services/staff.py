@@ -24,7 +24,7 @@ async def list_staff(
 
 
 async def create_staff(session: AsyncSession, library_id: int, data: StaffCreate) -> StaffUser:
-    duplicate = ConflictError(f"이미 쓰는 로그인 아이디입니다: {data.login_id}")
+    duplicate = ConflictError(f"이미 쓰는 로그인 아이디예요: {data.login_id}")
     if await session.scalar(select(StaffUser.id).where(StaffUser.login_id == data.login_id)):
         raise duplicate
     user = StaffUser(
@@ -57,7 +57,7 @@ async def update_staff(
     if staff_id == actor_id and (
         changes.get("is_active") is False or changes.get("role") == StaffRole.KIOSK
     ):
-        raise ConflictError("자기 계정은 사용 중지하거나 키오스크로 바꿀 수 없습니다")
+        raise ConflictError("자기 계정은 사용 중지하거나 키오스크로 바꿀 수 없어요.")
 
     password = changes.pop("password", None)
     for field, value in changes.items():

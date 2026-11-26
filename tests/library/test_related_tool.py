@@ -56,7 +56,7 @@ async def test_book_of_other_library(
     await run_librarian(session, llm, library_a.id)
     result = _result(llm)
     assert result.is_error
-    assert "찾을 수 없습니다" in result.content
+    assert "찾을 수 없어요." in result.content
 
 
 async def test_empty_input_uses_session_books(

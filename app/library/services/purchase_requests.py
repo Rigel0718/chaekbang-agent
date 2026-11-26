@@ -39,8 +39,8 @@ from app.library.schemas.purchase_request import (
 )
 
 LABEL = "구매 요청서"
-PRICE_UNAVAILABLE = "정가 조회를 지금 쓸 수 없습니다. 잠시 뒤 다시 시도해 주세요"
-CHANGED_WHILE_PRICING = "가격을 조회하는 동안 요청서가 바뀌었습니다. 다시 승인해 주세요"
+PRICE_UNAVAILABLE = "지금 정가를 조회할 수 없어요. 잠시 뒤 다시 해 주세요."
+CHANGED_WHILE_PRICING = "가격을 조회하는 동안 요청서가 바뀌었어요. 다시 승인해 주세요."
 
 
 @dataclass(frozen=True)
@@ -293,7 +293,7 @@ async def approve_request(
     priced = price_items(lines, prices)
     if priced.missing_isbns:
         raise ConflictError(
-            f"정가를 찾지 못한 항목이 있어 승인할 수 없습니다: {', '.join(priced.missing_isbns)}"
+            f"정가를 찾지 못한 항목이 있어 승인할 수 없어요: {', '.join(priced.missing_isbns)}"
         )
 
     now = clock.now()

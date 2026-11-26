@@ -187,6 +187,7 @@ async def test_duplicate_same_member(
     assert (await _post(kiosk_client)).status_code == 201
     res = await _post(kiosk_client, title="작별 하지 않는다!")
     assert res.status_code == 409
+    assert res.json()["detail"] == "이미 신청한 책이에요."
     assert len(await _rows(session, library_a.id)) == 1
 
 
@@ -221,6 +222,7 @@ async def test_held_isbn_rejected(
     await add_holding(session, library_a.id, book["id"], "EM0001")
     res = await _post(kiosk_client, isbn=VALID_ISBN)
     assert res.status_code == 409
+    assert res.json()["detail"] == "이미 도서관에 있는 책이에요."
     assert len(await _rows(session, library_a.id)) == 0
 
 

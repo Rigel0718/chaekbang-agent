@@ -60,9 +60,12 @@ const KINDS = {
   429: "limit",
 };
 
+// 연결 오류와 알 수 없는 실패의 문구는 이것 하나다. 화면들이 가져다 쓴다.
+export const GENERIC_ERROR = "잠시 뒤 다시 해 주세요.";
+
 export class ApiError extends Error {
   constructor(status, detail, body = null) {
-    super(detail || `요청에 실패했어요 (${status})`);
+    super(typeof detail === "string" && detail ? detail : GENERIC_ERROR);
     this.status = status;
     this.kind = KINDS[status] || "other";
     // 409·429의 서버 문구는 대화에서 그대로 보인다. 입력칸(actions.js)은 404 문구도 보인다.
