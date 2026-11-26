@@ -31,6 +31,7 @@ from app.library.models.purchase_request import (
     TITLE_LIMIT,
     ReasonKind,
 )
+from app.library.schemas.admin_results import DraftLink
 from app.library.schemas.purchase_request import PurchaseRequestWrite
 from app.library.services import purchase_candidates as candidates_svc
 from app.library.services import purchase_requests as svc
@@ -125,6 +126,11 @@ async def _draft(ctx: ToolContext, data: DraftPurchaseInput) -> dict[str, Any]:
     }
 
 
+def present_draft(data: DraftPurchaseInput, output: dict[str, Any]) -> DraftLink:
+    """화면용: 요청서의 종류와 id만. 항목과 안내 문구는 싣지 않는다."""
+    return DraftLink(draft="purchase", id=output["purchase_request_id"])
+
+
 LIST_PURCHASE_CANDIDATES = Tool(
     "list_purchase_candidates",
     "보충 구매 후보를 본다. wishes는 처리 전 희망도서(ISBN별, request_count는 신청 건수), "
@@ -146,4 +152,5 @@ DRAFT_PURCHASE_REQUEST = Tool(
     _draft,
     "구매 요청서 초안을 만들고 있어요",
     record_fields=("items",),
+    present=present_draft,
 )

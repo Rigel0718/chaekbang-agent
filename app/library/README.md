@@ -49,7 +49,8 @@
 | `analytics/` | 분석 빌더: 분야 결정 `fields`(KDC 주류 + 분류 없음), 기간 `periods`(프리셋·월 숫자), 분석 축 `axes`(`AnalysisAxis`), 책 범위와 묶기 `scope`(`book_facts`, `BookFilter`) |
 | `services/analytics.py` | 분석 service 넷: 장서 현황 `collection_status`, 상태별 사본 `holdings_by_status`, 대출 통계 `loan_stats`, 안 빌린 책 `unborrowed_books`. REST는 아직 없고 tool이 부른다 |
 | `schemas/analytics.py` | 분석 결과 스키마. 필드는 허용 목록 테스트(`tests/library/test_admin_agent.py`)가 고정한다 |
-| `analytics_tools.py` | 운영 에이전트의 분석 tool 넷. 등록된 축으로 입력 모델을 조립 때 만든다 |
+| `analytics_tools.py` | 운영 에이전트의 분석 tool 넷. 등록된 축으로 입력 모델을 조립 때 만든다. 화면용 변환 `present_*`(묶음·순위·목록 표) |
+| `schemas/admin_results.py` | 운영 에이전트의 결과 사건(SSE `result`) 모양: 표 `TableResult`, 초안 링크 `DraftLink`. 프로필을 import하는 `schemas/admin_agent.py`와 나눠 순환 import를 피한다 |
 | `admin_agent.py` | 운영 에이전트: 답 구조(`message`, `unsupported`), 프롬프트, 운영 방식별 프로필(`build_admin_profiles`), `AdminExtension` |
 | `services/admin_chat.py`, `api/admin_agent.py` | 관리자 대화 `POST /admin-agent/messages`, `DELETE /admin-agent/sessions/{id}`(키오스크 403) |
 | `approval.py` | 공통 승인 틀: 상태 `ApprovalStatus`, 종류별 전이 표 `TransitionTable`(`PUBLISHING`·`CONFIRMING`), 조건부 갱신 `transition`, 실행 상태 `mark_executed`, 승인 칸 `ApprovalMixin` |
@@ -186,6 +187,7 @@
 - **개인정보**: 분석은 `members`와 `holdings.donor`를 읽지 않는다. 연체는 건수만 낸다. 분석 tool 입력은 enum과 정수라 모두 실행 기록에 남긴다. 답의 `unsupported`는 최종 답의 기록 필드로 실행 행에 남고, 질문 문장은 새로 저장하지 않는다.
 - **운영 방식**: 외부 대출 기관 프로필에는 대출 통계·안 빌린 책 tool이 없다(대출 행이 없다). 사본의 대출 중 상태는 장서 현황의 상태 묶기로 답한다.
 - 최종 검사는 없다. 답의 숫자가 tool 결과에 있는지는 평가(`evals/admin_agent`)로 잰다.
+- **결과 사건**(관리자 화면의 표·초안 링크): 분석 tool 넷과 초안 tool 셋이 화면용 변환(`Tool.present`)을 고른다. 변환은 그 tool 파일에 두고 입력과 지금 분석 결과 모델만 읽는다(DB를 읽지 않는다). 장서·대출은 묶었을 때만 표이고(그룹 표는 막대 열), 상태별 사본·안 빌린 책은 목록 표, 초안은 종류와 id뿐이다. 연체 목록·구매 후보·검색 결과는 내지 않는다. 표의 칸은 일반 값이라 tool마다 열 이름 허용 목록과 심은 회원 값 테스트(`tests/library/test_admin_results_privacy.py`)가 지킨다. 열을 더하면 그 목록을 고친다. 결과는 SSE `result`로만 나가고 `chat_messages`·실행 기록·로그에 남지 않는다. 프롬프트는 표를 모른다(v4).
 - 세션은 AI 사서와 같은 테이블이고 종류(`kind`)로 나눈다. 다른 종류의 세션 id는 404다. 만료는 30분, 일일 상한은 200으로 AI 사서와 따로다.
 
 ## 승인 흐름

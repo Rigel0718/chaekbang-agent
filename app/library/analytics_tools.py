@@ -6,20 +6,35 @@
 
 입력은 모두 실행 기록에 남긴다(enum과 정수라 이용자 문장이 섞이지 않는다). 평가는 이 기록으로
 tool 선택을 판정한다. 결과는 service 스키마를 그대로 JSON으로 낸다.
+
+화면용 변환(`present_*`)은 그 입력과 결과(지금 분석 결과 모델)만 읽어 표(`TableResult`)를 만든다.
+DB를 읽지 않는다. 묶지 않은 장서·대출은 표를 내지 않는다(답 문장에 있다). 열 이름은 허용 목록
+테스트(`tests/library/test_admin_results_privacy.py`)가 고정한다.
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import Field, create_model
 
 from app.agent.tools import Tool, ToolContext, ToolInput
+from app.core.config import get_settings
 from app.library.analytics.axes import AnalysisAxis
 from app.library.analytics.fields import Field as BookField
-from app.library.analytics.periods import PeriodPreset
-from app.library.analytics.scope import ACQUISITION, FIELD, STATUS, BookFilter
+from app.library.analytics.periods import Period, PeriodPreset
+from app.library.analytics.scope import ACQUISITION, FIELD, STATUS, STATUS_LABELS, BookFilter
 from app.library.models.catalog import HoldingStatus
-from app.library.schemas.analytics import LIMIT_MAX, TOP_N_MAX
+from app.library.schemas.admin_results import TableResult
+from app.library.schemas.analytics import (
+    LIMIT_MAX,
+    TOP_N_MAX,
+    CollectionStatus,
+    HoldingList,
+    LoanStats,
+    UnborrowedBooks,
+)
 from app.library.services import analytics
 
 GET_COLLECTION_STATUS = "get_collection_status"
@@ -73,6 +88,138 @@ def _book_filter(data: ToolInput, axes: Sequence[AnalysisAxis]) -> BookFilter:
     return BookFilter(fields=tuple(data.fields or ()), axes=chosen)
 
 
+# --- 화면용 변환 ---
+
+GROUP_HEADERS = {FIELD: "분야", STATUS: "상태", ACQUISITION: "입수 구분"}
+OTHER_GROUP = "구분"  # 기관 개별 기능의 축. 이름을 부르지 않는다
+COLLECTION_COLUMNS = ("사본", "서명")
+LOAN_COLUMNS = ("대출",)
+LOAN_FIELD_COLUMNS = ("대출", "사본", "권당 대출")
+RANKING_COLUMNS = ("순위", "서명", "저자", "대출")
+HOLDING_COLUMNS = ("서명", "저자", "등록번호", "청구기호")
+UNBORROWED_COLUMNS = ("서명", "저자", "권수")
+
+
+def _group_header(group_by: str) -> str:
+    return GROUP_HEADERS.get(group_by, OTHER_GROUP)
+
+
+def _period_text(period: Period) -> str:
+    return f"{period.label}, 진행 중" if period.in_progress else period.label
+
+
+def _filter_text(data: Any, axes: Sequence[AnalysisAxis]) -> str | None:
+    names = [str(f) for f in (data.fields or ())]
+    for axis in axes:
+        value = getattr(data, axis.name)
+        if value is not None:
+            names.append(axis.labels[value])
+    return f"{', '.join(names)} 기준" if names else None
+
+
+def _synced_text(times: Sequence[datetime | None]) -> str | None:
+    known = [t for t in times if t is not None]
+    if not known:
+        return None
+    day = max(known).astimezone(ZoneInfo(get_settings().library_timezone))
+    return f"{day.month}월 {day.day}일 가져온 파일 기준"
+
+
+def _caption(*parts: str | None) -> str | None:
+    shown = [p for p in parts if p]
+    return " · ".join(shown) if shown else None
+
+
+def present_collection(axes: Sequence[AnalysisAxis]):
+    def present(data: Any, output: dict[str, Any]) -> TableResult | None:
+        result = CollectionStatus.model_validate(output)
+        if result.group_by is None:
+            return None
+        header = _group_header(result.group_by)
+        return TableResult(
+            title=f"{header}별 장서",
+            caption=_caption(_filter_text(data, axes)),
+            columns=[header, *COLLECTION_COLUMNS],
+            rows=[[g.label, g.copies, g.titles] for g in result.groups],
+            bar_column=1,
+            total=None,
+            truncated=False,
+        )
+
+    return present
+
+
+def present_loans(axes: Sequence[AnalysisAxis]):
+    def present(data: Any, output: dict[str, Any]) -> TableResult | None:
+        result = LoanStats.model_validate(output)
+        caption = _caption(_period_text(result.period), _filter_text(data, axes))
+        if result.group_by is None:
+            return None
+        if result.ranking is not None:
+            ranking = result.ranking
+            return TableResult(
+                title="많이 빌린 책",
+                caption=caption,
+                columns=list(RANKING_COLUMNS),
+                rows=[[i, b.title, b.author, b.loans] for i, b in enumerate(ranking.items, 1)],
+                bar_column=None,
+                total=ranking.total if ranking.truncated else None,
+                truncated=ranking.truncated,
+            )
+        header = _group_header(result.group_by)
+        by_field = result.group_by == FIELD
+        return TableResult(
+            title=f"{header}별 대출",
+            caption=caption,
+            columns=[header, *(LOAN_FIELD_COLUMNS if by_field else LOAN_COLUMNS)],
+            rows=[
+                [g.label, g.loans, g.copies, g.loans_per_copy] if by_field else [g.label, g.loans]
+                for g in result.groups
+            ],
+            bar_column=1,
+            total=None,
+            truncated=False,
+        )
+
+    return present
+
+
+def present_holdings(axes: Sequence[AnalysisAxis]):
+    def present(data: Any, output: dict[str, Any]) -> TableResult:
+        result = HoldingList.model_validate(output)
+        synced = _synced_text([item.last_synced_at for item in result.items])
+        return TableResult(
+            title=f"{STATUS_LABELS[result.status]} 사본",
+            caption=_caption(_filter_text(data, axes), synced),
+            columns=list(HOLDING_COLUMNS),
+            rows=[
+                [item.title, item.author, item.accession_number, item.call_number]
+                for item in result.items
+            ],
+            bar_column=None,
+            total=result.total if result.truncated else None,
+            truncated=result.truncated,
+        )
+
+    return present
+
+
+def present_unborrowed(axes: Sequence[AnalysisAxis]):
+    def present(data: Any, output: dict[str, Any]) -> TableResult:
+        result = UnborrowedBooks.model_validate(output)
+        return TableResult(
+            title="안 빌린 책",
+            caption=_caption(_period_text(result.period), _filter_text(data, axes)),
+            columns=list(UNBORROWED_COLUMNS),
+            rows=[[item.title, item.author, item.copies] for item in result.items],
+            bar_column=None,
+            total=result.total if result.truncated else None,
+            truncated=result.truncated,
+        )
+
+    return present
+
+
 def _collection_tool(axes: Sequence[AnalysisAxis]) -> Tool:
     keys = (FIELD, STATUS, ACQUISITION, *[a.name for a in axes])
     model = _model(
@@ -106,6 +253,7 @@ def _collection_tool(axes: Sequence[AnalysisAxis]) -> Tool:
         handler,
         "장서 현황을 세고 있어요",
         record_fields=tuple(model.model_fields),
+        present=present_collection(axes),
     )
 
 
@@ -139,6 +287,7 @@ def _holdings_tool(axes: Sequence[AnalysisAxis]) -> Tool:
         handler,
         "사본 목록을 찾고 있어요",
         record_fields=tuple(model.model_fields),
+        present=present_holdings(axes),
     )
 
 
@@ -188,6 +337,7 @@ def _loan_stats_tool(axes: Sequence[AnalysisAxis]) -> Tool:
         handler,
         "대출 기록을 세고 있어요",
         record_fields=tuple(model.model_fields),
+        present=present_loans(axes),
     )
 
 
@@ -221,6 +371,7 @@ def _unborrowed_tool(axes: Sequence[AnalysisAxis]) -> Tool:
         handler,
         "안 빌린 책을 찾고 있어요",
         record_fields=tuple(model.model_fields),
+        present=present_unborrowed(axes),
     )
 
 

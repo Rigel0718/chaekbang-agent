@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from fastapi.routing import APIRoute
@@ -11,6 +12,7 @@ from app.core.config import get_settings
 from app.library.api.catalog import MAX_QUERY_LENGTH
 from app.library.importing import rows as import_rows
 from app.library.importing.columns import LABELS
+from app.library.schemas.admin_results import DraftKind, DraftLink, TableResult
 from app.library.schemas.catalog import BookSummary, RelatedBook
 from app.library.schemas.holding_imports import HoldingImportRead, HoldingImportRow
 from app.library.schemas.librarian import BookCard
@@ -634,6 +636,62 @@ def test_admin_chat_request_body_keys():
     keys |= set(re.findall(r": \{ (\w+): text \}", code))
     assert keys == {"session_id", "message"}
     assert "member_number" not in code
+
+
+def test_admin_chat_draws_results_after_answer():
+    """[web-ui] 운영 대화의 표 / 사건 처리: result는 모으기만 하고 answer에서 그리며,
+    table과 draft 종류만 처리한다."""
+    code = _admin_code("chat.js")
+    assert 'else if (event.name === "result") results.push(event.data);' in code
+    answer = code[code.index('event.name === "answer"') : code.index('event.name === "done"')]
+    assert "showResults(reply, results);" in answer
+    assert code.count("showResults(") == 2  # 정의 하나와 answer 갈래의 호출 하나
+    kinds = set(re.findall(r'result\.kind === "(\w+)"', code))
+    assert kinds == {
+        TableResult.model_fields["kind"].default,
+        DraftLink.model_fields["kind"].default,
+    }
+
+
+def test_admin_chat_result_table_reads_schema_fields():
+    """[web-ui] 운영 대화의 표 / 사건 처리: 읽는 result 필드가 결과 모양에 있고, 잘리면 전체 수와
+    보인 수를 보인다."""
+    code = _admin_code("chat.js")
+    read = set(re.findall(r"\bresult\.(\w+)", code))
+    read |= set(re.findall(r"const \{ ([\w, ]+) \} = result;", code)[0].split(", "))
+    assert read <= set(TableResult.model_fields) | set(DraftLink.model_fields)
+    assert "if (result.truncated)" in code and "${result.total}건 중 ${rows.length}건" in code
+
+
+def test_admin_draft_kinds_match_server_and_approval_groups():
+    """[web-ui] 초안 보기 / 종류 이름 맞춤: 서버의 초안 종류 셋이 승인 목록 묶음 하나씩으로 간다."""
+    code = _admin_code("chat.js")
+    body = re.search(r"const DRAFT_KINDS = \{([^}]*)\};", code).group(1)
+    pairs = dict(re.findall(r'(\w+): "(\w+)"', body))
+    assert set(pairs) == set(get_args(DraftKind))
+    approvals = _admin_code("approvals.js")
+    groups = approvals[approvals.index("const KINDS = {") :].split("\n};")[0]
+    assert set(pairs.values()) == set(re.findall(r"(?m)^  (\w+): \{", groups))
+    html = ADMIN_INDEX.read_text(encoding="utf-8")
+    for group in pairs.values():
+        assert f'id="list-{group}"' in html, group
+
+
+def test_admin_open_draft_button_and_reveal():
+    """[web-ui] 초안 보기: [초안 보기]는 승인 목록의 reveal을 거쳐 탭을 바꾸고, 대기에 없으면 전체
+    보기로 찾은 뒤 없으면 알린다."""
+    chat = _admin_code("chat.js")
+    assert 'button("초안 보기", () => ui.onOpenDraft(' in chat
+    main = _admin_code("main.js")
+    assert "onOpenDraft: openDraft" in main
+    assert "tabs.approvals.reveal(kind, id);" in main and 'location.hash = "approvals"' in main
+    approvals = _admin_code("approvals.js")
+    assert "return { show: load, reveal };" in approvals
+    show = approvals[approvals.index("async function showTarget") :].split("\n  }")[0]
+    assert show.index('view = "all"') < show.index("ui.note.textContent = NOT_FOUND")
+    assert "scrollIntoView" in show
+    html = ADMIN_INDEX.read_text(encoding="utf-8")
+    assert 'id="approvals-note"' in html
 
 
 def test_admin_member_values_only_in_member_tabs():

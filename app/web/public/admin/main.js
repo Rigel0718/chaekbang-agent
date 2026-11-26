@@ -52,6 +52,13 @@ async function refreshPendingCount() {
   }
 }
 
+// 운영 대화의 [초안 보기]: 승인 목록 탭에서 그 초안을 펼친다. 운영 대화 내용은 숨긴 채 남는다
+function openDraft(kind, id) {
+  tabs.approvals.reveal(kind, id);
+  if (current === "approvals") tabs.approvals.show();
+  else location.hash = "approvals";
+}
+
 await loadLibrary();
 
 const tabs = {
@@ -62,10 +69,12 @@ const tabs = {
     send: $("chat-send"),
     newChat: $("chat-new"),
     onDone: refreshPendingCount,
+    onOpenDraft: openDraft,
     onUnauthorized,
   }),
   approvals: createApprovals({
     root: $("panel-approvals"),
+    note: $("approvals-note"),
     enabledKinds: () => (overdueEnabled ? ["curations", "templates", "purchases"] : ["curations", "purchases"]),
     pendingButton: $("view-pending"),
     allButton: $("view-all"),

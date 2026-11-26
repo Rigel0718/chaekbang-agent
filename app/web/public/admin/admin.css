@@ -21,6 +21,19 @@ h2 { font-size: 1.05em; margin: 18px 0 8px; }
 .reply-status { color: var(--muted); font-size: 0.9em; margin: 0; }
 .reply-note { color: var(--warn); font-size: 0.85em; margin: 4px 0 0; }
 .reply-error, .error-line { color: var(--warn); margin: 6px 0 0; }
+/* 운영 대화의 결과 표: 넓으면 그 표만 가로로 스크롤한다 */
+.result { margin-top: 10px; max-width: 100%; }
+.result-title { margin: 0; font-weight: 600; }
+.result-caption, .result-more { margin: 2px 0 0; color: var(--muted); font-size: 0.85em; }
+.result-table { overflow-x: auto; margin-top: 6px; }
+.result-table table { border-collapse: collapse; font-size: 0.9em; background: var(--surface); }
+.result-table th, .result-table td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; white-space: nowrap; }
+.result-table .num { text-align: right; }
+.bar-cell { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.bar-track { flex: 0 0 140px; height: 10px; }
+.bar { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.draft-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
 .chat-form { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .chat-form input { flex: 1 1 260px; min-height: 44px; font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; }
 

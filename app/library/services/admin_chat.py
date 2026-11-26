@@ -2,9 +2,11 @@
 (`services/chat.py`)의 함수를 그대로 쓰고, 세션 종류만 `admin`이다.
 
 확인(`prepare_admin_turn`)은 응답을 시작하기 전에 끝낸다(404, 409, 429). 그 뒤
-(`stream_admin_turn`)는 SSE 사건 `session`, `status`, `answer`, `done`이다. 답에는 문장과 못 하는
-분석의 종류(`unsupported`)가 있고, 찾은 책·카드·노출 기록은 없다. `chat_messages`에는 가린 질문과
-최종 답 문장만 둔다. 못 하는 분석의 종류는 실행 행에 남는다(최종 답의 기록 필드).
+(`stream_admin_turn`)는 SSE 사건 `session`, `status`, `result`(0개 이상), `answer`, `done`이다.
+답에는 문장과 못 하는 분석의 종류(`unsupported`)가 있고, 찾은 책·카드·노출 기록은 없다.
+`result`는 tool이 고른 화면용 값(표·초안 링크, `schemas/admin_results.py`)이고 실행기가 답 바로
+앞에 낸다. `chat_messages`에는 가린 질문과 최종 답 문장만 두고 `result`는 남기지 않는다. 못 하는
+분석의 종류는 실행 행에 남는다(최종 답의 기록 필드).
 """
 
 import asyncio
@@ -17,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import LlmClient
 from app.agent.profile import Profile
-from app.agent.runner import AnswerEvent, DoneEvent, StatusEvent, run
+from app.agent.runner import AnswerEvent, DoneEvent, ResultEvent, StatusEvent, run
 from app.central.embedding import Embedder
 from app.library.models.chat import ChatMessage, ChatRole, SessionKind
 from app.library.privacy import mask_personal
@@ -103,6 +105,8 @@ async def stream_admin_turn(
         async for event in events:
             if isinstance(event, StatusEvent):
                 yield ServerEvent("status", {"text": event.text})
+            elif isinstance(event, ResultEvent):
+                yield ServerEvent("result", event.value.model_dump(mode="json"))
             elif isinstance(event, AnswerEvent):
                 answer = event.answer
             elif isinstance(event, DoneEvent):

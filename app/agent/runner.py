@@ -50,6 +50,13 @@ class StatusEvent:
 
 
 @dataclass(frozen=True)
+class ResultEvent:
+    """tool이 고른 화면용 값(`Tool.present`의 반환). 검사를 통과한 답 바로 앞에만 나온다."""
+
+    value: Any
+
+
+@dataclass(frozen=True)
 class AnswerEvent:
     answer: Any
 
@@ -60,7 +67,8 @@ class DoneEvent:
     status: RunStatus
 
 
-RunEvent = StatusEvent | AnswerEvent | DoneEvent
+RunEvent = StatusEvent | ResultEvent | AnswerEvent | DoneEvent
+SHOWN_STATUSES = (RunStatus.COMPLETED, RunStatus.REPAIRED)  # 결과 사건을 내는 끝
 
 
 def _elapsed_ms(started: float) -> int:
@@ -104,6 +112,7 @@ class _Execution:
         self.messages: list[Message] = [*history, UserMessage(user_text)]
         self.user_texts = tuple(m.text for m in self.messages if isinstance(m, UserMessage))
         self.tool_names: list[str] = []
+        self.shown: list[Any] = []  # 화면용 값. 기록에 넘기지 않는다
         self.seq = 0
         self.input_tokens = 0
         self.cached_input_tokens = 0
@@ -161,8 +170,14 @@ class _Execution:
         self.finished = True
 
     async def end(self, answer: Any, status: RunStatus) -> AsyncIterator[RunEvent]:
-        """기록을 끝낸 뒤 내보낸다. 소비자가 답만 받고 멈춰도 중단으로 남지 않는다."""
+        """기록을 끝낸 뒤 내보낸다. 소비자가 답만 받고 멈춰도 중단으로 남지 않는다.
+
+        화면용 값은 검사를 통과한 답이나 정리한 답일 때만 답 바로 앞에 호출 순서대로 낸다.
+        """
         await self.finish(status, answer)
+        if status in SHOWN_STATUSES:
+            for value in self.shown:
+                yield ResultEvent(value)
         yield AnswerEvent(answer)
         yield DoneEvent(self.run_id, status)
 
@@ -212,6 +227,10 @@ class _Execution:
             await self.step(StepKind.TOOL, started, name=tool.name, is_error=True, detail=detail)
             raise
         await self.step(StepKind.TOOL, started, name=tool.name, detail=detail)
+        if tool.present is not None:
+            value = tool.present(data, output)
+            if value is not None:
+                self.shown.append(value)
         return ToolResult(call.id, _content(output))
 
     async def run_calls(self, calls: Sequence[ToolCall]) -> AsyncIterator[RunEvent]:
