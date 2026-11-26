@@ -1,6 +1,7 @@
 """[circulation/members] 회원 REST API와 기관 데이터 분리."""
 
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import clock
@@ -18,13 +19,25 @@ from tests.helpers import (
 
 async def test_create_member(admin_client: AsyncClient) -> None:
     """[circulation/members] 회원 등록과 최소 정보 / 정상 등록"""
-    res = await admin_client.post("/members", json={"member_number": "M0001", "name": "김이용"})
+    res = await admin_client.post(
+        "/members", json={"member_number": "M0001", "name": "김이용", "phone": "01012345678"}
+    )
     assert res.status_code == 201
     body = res.json()
     assert (body["member_number"], body["name"]) == ("M0001", "김이용")
-    # 최소 정보: 회원번호, 이름, 선택 전화번호 외의 개인정보 필드가 없다
+    # 최소 정보: 회원번호, 이름, 전화번호 외의 개인정보 필드가 없다
     assert set(body) == {"id", "member_number", "name", "phone", "created_at"}
-    assert body["phone"] is None
+    assert body["phone"] == "01012345678"
+
+
+async def test_missing_phone(admin_client: AsyncClient) -> None:
+    """[circulation/members] 회원 등록과 최소 정보 / 전화번호 누락"""
+    bodies = [{"member_number": "M1", "name": "김이용"}]
+    bodies += [{"member_number": "M1", "name": "김이용", "phone": v} for v in ("", " ", None)]
+    for body in bodies:
+        res = await admin_client.post("/members", json=body)
+        assert res.status_code == 422, body
+    assert (await admin_client.get("/members")).json()["total"] == 0
 
 
 async def test_missing_name(admin_client: AsyncClient) -> None:
@@ -34,8 +47,10 @@ async def test_missing_name(admin_client: AsyncClient) -> None:
 
 async def test_duplicate_number(admin_client: AsyncClient) -> None:
     """[circulation/members] 회원번호 유일성 / 같은 기관에서 중복"""
-    await admin_client.post("/members", json={"member_number": "M0001", "name": "김이용"})
-    res = await admin_client.post("/members", json={"member_number": "M0001", "name": "박이용"})
+    first = {"member_number": "M0001", "name": "김이용", "phone": "01011112222"}
+    assert (await admin_client.post("/members", json=first)).status_code == 201
+    second = {"member_number": "M0001", "name": "박이용", "phone": "01033334444"}
+    res = await admin_client.post("/members", json=second)
     assert res.status_code == 409
 
 
@@ -43,7 +58,7 @@ async def test_same_number_other_library(
     admin_client: AsyncClient, admin_client_b: AsyncClient
 ) -> None:
     """[circulation/members] 회원번호 유일성 / 다른 기관의 같은 번호"""
-    payload = {"member_number": "M0001", "name": "김이용"}
+    payload = {"member_number": "M0001", "name": "김이용", "phone": "01012345678"}
     assert (await admin_client.post("/members", json=payload)).status_code == 201
     assert (await admin_client_b.post("/members", json=payload)).status_code == 201
 
@@ -176,7 +191,13 @@ async def test_body_library_id_ignored(
 ) -> None:
     """[library/libraries] 기관 데이터 분리 / 요청 본문의 library_id 무시"""
     res = await admin_client.post(
-        "/members", json={"member_number": "M9", "name": "김이용", "library_id": library_b.id}
+        "/members",
+        json={
+            "member_number": "M9",
+            "name": "김이용",
+            "phone": "01012345678",
+            "library_id": library_b.id,
+        },
     )
     assert res.status_code == 201
     assert (await fetch(session, "members", res.json()["id"]))["library_id"] == library_a.id
@@ -212,10 +233,6 @@ async def test_create_member_with_phone(admin_client: AsyncClient) -> None:
         "/members", json={"member_number": "M0003", "name": "박이용", "phone": "02 123.4567"}
     )
     assert spaced.json()["phone"] == "021234567"
-    blank = await admin_client.post(
-        "/members", json={"member_number": "M0004", "name": "최이용", "phone": " "}
-    )
-    assert blank.json()["phone"] is None
 
 
 async def test_phone_format_rejected(admin_client: AsyncClient) -> None:
@@ -249,14 +266,26 @@ async def test_update_and_clear_phone(admin_client: AsyncClient) -> None:
     ).json()
     changed = await admin_client.patch(f"/members/{member['id']}", json={"phone": "010-9999-0000"})
     assert changed.json()["phone"] == "01099990000"
-    cleared = await admin_client.patch(f"/members/{member['id']}", json={"phone": None})
-    assert cleared.status_code == 200
-    assert cleared.json()["phone"] is None
-    assert cleared.json()["name"] == "김하나"
+    for value in (None, "", " "):
+        cleared = await admin_client.patch(f"/members/{member['id']}", json={"phone": value})
+        assert cleared.status_code == 422, value
     untouched = await admin_client.patch(f"/members/{member['id']}", json={"name": "김둘"})
-    assert untouched.json()["phone"] is None
+    assert untouched.json()["phone"] == "01099990000"
     bad = await admin_client.patch(f"/members/{member['id']}", json={"phone": "12"})
     assert bad.status_code == 422
+    assert (await admin_client.get(f"/members/{member['id']}")).json()["phone"] == "01099990000"
+
+
+async def test_rename_existing_member_without_phone(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[circulation/members] 회원 조회·수정·삭제 / 번호 없는 기존 회원의 이름 고치기"""
+    member = await add_member(session, library_a.id, "M0001", "김옛날")  # 규칙 전에 번호 없이 등록
+    res = await admin_client.patch(f"/members/{member['id']}", json={"name": "김바뀜"})
+    assert res.status_code == 200
+    assert (res.json()["name"], res.json()["phone"]) == ("김바뀜", None)
+    added = await admin_client.patch(f"/members/{member['id']}", json={"phone": "010-5555-6666"})
+    assert added.json()["phone"] == "01055556666"
 
 
 async def test_kiosk_cannot_create_member_with_phone(kiosk_client: AsyncClient) -> None:
@@ -306,7 +335,12 @@ async def test_same_phone_other_library(
     assert (await _create(admin_client_b, "M0001", "01012345678")).status_code == 201
 
 
-async def test_many_members_without_phone(admin_client: AsyncClient) -> None:
-    """[circulation/members] 전화번호 유일성 / 번호 없는 회원 여럿"""
+async def test_many_members_without_phone(session: AsyncSession, library_a: Tenant) -> None:
+    """[circulation/members] 전화번호 유일성 / 번호 없는 회원 여럿 (직접 저장)"""
     for number in ("M0001", "M0002", "M0003"):
-        assert (await _create(admin_client, number)).status_code == 201
+        await add_member(session, library_a.id, number)
+    count = await session.scalar(
+        text("select count(*) from members where library_id = :id and phone is null"),
+        {"id": library_a.id},
+    )
+    assert count == 3

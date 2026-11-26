@@ -119,6 +119,15 @@ function importFilter(filter) {
   return `${name}=${encodeURIComponent(value)}`;
 }
 
+// 목록 요청의 질의 문자열. 값이 비면 뺀다.
+function listQuery(values) {
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries(values)) {
+    if (value !== "" && value !== null && value !== undefined) params.set(name, value);
+  }
+  return params.toString();
+}
+
 const APPROVAL_BASES = {
   curations: "/curations",
   templates: "/overdue-notice-templates",
@@ -207,6 +216,23 @@ export const api = {
   importApply: (id) => request(`/holding-imports/${id}/apply`, { method: "POST" }).then((r) => r.json()),
   importApplyConfirmed: (id) =>
     request(`/holding-imports/${id}/apply?confirm_withdraw=true`, { method: "POST" }).then((r) => r.json()),
+  // 장서(자체 대출 기관): 사본 찾기·상태 바꾸기, 책 등록. 반납은 위 returnBook을 같이 쓴다.
+  holdings: (q, offset, limit) => request(`/holdings?${listQuery({ q, offset, limit })}`).then((r) => r.json()),
+  holdingGet: (id) => request(`/holdings/${id}`).then((r) => r.json()),
+  updateHolding: (id, status) =>
+    request(`/holdings/${id}`, { method: "PATCH", body: { status } }).then((r) => r.json()),
+  createHolding: (body) => request("/holdings", { method: "POST", body }).then((r) => r.json()),
+  libraryBooksByIsbn: (isbn) => request(`/library-books?${listQuery({ isbn })}`).then((r) => r.json()),
+  createLibraryBook: (body) => request("/library-books", { method: "POST", body }).then((r) => r.json()),
+  // 회원(관리자). 찾기 글자는 주소에 실리지만 서버 접속 기록에는 남지 않는다.
+  members: (q, offset, limit) => request(`/members?${listQuery({ q, offset, limit })}`).then((r) => r.json()),
+  createMember: (body) => request("/members", { method: "POST", body }).then((r) => r.json()),
+  updateMember: (id, body) => request(`/members/${id}`, { method: "PATCH", body }).then((r) => r.json()),
+  deleteMember: (id) => request(`/members/${id}`, { method: "DELETE" }),
+  // 임시 휴관일
+  closures: (from, to) => request(`/library/closures?${listQuery({ from, to })}`).then((r) => r.json()),
+  addClosure: (body) => request("/library/closures", { method: "POST", body }).then((r) => r.json()),
+  deleteClosure: (id) => request(`/library/closures/${id}`, { method: "DELETE" }),
 };
 
 // 열 때 이 화면의 토큰으로 역할을 확인한다. 토큰이 없거나 401이거나 역할이 다르면 이 화면의 토큰만 지우고

@@ -7,6 +7,8 @@ from app.core import clock
 from tests.conftest import Tenant
 from tests.helpers import (
     VALID_ISBN_2,
+    VALID_ISBN_3,
+    add_book,
     add_holding,
     add_library_book,
     add_loan,
@@ -541,3 +543,166 @@ async def test_donated_not_marked(
     )
     body = (await admin_client.get(f"/holdings/{holding['id']}")).json()
     assert body["missing_fields"] == []
+
+
+# --- 사본 조회: 찾기 글자 q ---
+
+
+async def test_list_newest_first(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 최근 등록순"""
+    book = await add_library_book(session, library_a.id)
+    for accession in ("A-2", "A-1", "A-3"):
+        res = await admin_client.post("/holdings", json=_donated(book["id"], accession))
+        assert res.status_code == 201
+    listed = (await admin_client.get("/holdings")).json()["items"]
+    assert [h["accession_number"] for h in listed] == ["A-3", "A-1", "A-2"]
+
+
+def _ids(res) -> list[int]:
+    assert res.status_code == 200, res.text
+    return [h["id"] for h in res.json()["items"]]
+
+
+async def test_search_by_accession_number_comes_first(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 등록번호로 찾기"""
+    # 서명에 같은 글자가 든 사본이 가나다순으로 앞서도 등록번호가 같은 사본이 먼저다.
+    named = await add_library_book(session, library_a.id, title="가 EM0012 모음")
+    target_book = await add_library_book(session, library_a.id, VALID_ISBN_2, title="하늘 책")
+    await add_holding(session, library_a.id, named["id"], "EM0001")
+    target = await add_holding(session, library_a.id, target_book["id"], "EM0012")
+    ids = _ids(await admin_client.get("/holdings", params={"q": "EM0012"}))
+    assert ids[0] == target["id"]
+    assert len(ids) == 2
+
+
+async def test_search_by_title_part(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 서명 일부로 찾기"""
+    book = await add_library_book(session, library_a.id, title="만복이네 떡집")
+    other = await add_library_book(session, library_a.id, VALID_ISBN_2, title="구름빵")
+    first = await add_holding(session, library_a.id, book["id"], "A-1")
+    second = await add_holding(session, library_a.id, book["id"], "A-2")
+    await add_holding(session, library_a.id, other["id"], "A-3")
+    res = await admin_client.get("/holdings", params={"q": "떡집"})
+    assert _ids(res) == [first["id"], second["id"]]
+    assert res.json()["total"] == 2
+
+
+async def test_search_by_official_title(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 공식 서지 값으로 찾기"""
+    official = await add_book(session, title="만복이네 떡집")
+    book = await add_library_book(
+        session, library_a.id, title="만복이 떡집", book_id=official["id"]
+    )
+    holding = await add_holding(session, library_a.id, book["id"], "A-1")
+    res = await admin_client.get("/holdings", params={"q": "만복이네"})
+    assert _ids(res) == [holding["id"]]
+    assert res.json()["items"][0]["title"] == "만복이네 떡집"
+    # 기관 값으로 쳐도 찾는다.
+    assert _ids(await admin_client.get("/holdings", params={"q": "만복이 떡"})) == [holding["id"]]
+
+
+async def test_search_by_author(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 저자로 찾기"""
+    book = await add_library_book(session, library_a.id, author="김리리 글")
+    other = await add_library_book(session, library_a.id, VALID_ISBN_2, author="백희나")
+    holding = await add_holding(session, library_a.id, book["id"], "A-1")
+    await add_holding(session, library_a.id, other["id"], "A-2")
+    assert _ids(await admin_client.get("/holdings", params={"q": "김리리"})) == [holding["id"]]
+
+
+async def _five_states(session: AsyncSession, library_id: int) -> dict[str, int]:
+    book = await add_library_book(session, library_id, title="다섯 상태 책")
+    ids = {}
+    for i, state in enumerate(("available", "on_loan", "lost", "damaged", "withdrawn")):
+        ids[state] = (await add_holding(session, library_id, book["id"], f"S-{i}", status=state))[
+            "id"
+        ]
+    return ids
+
+
+async def test_search_includes_every_status(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 찾기는 모든 상태"""
+    ids = await _five_states(session, library_a.id)
+    res = await admin_client.get("/holdings", params={"q": "다섯 상태"})
+    assert sorted(_ids(res)) == sorted(ids.values())
+    assert res.json()["total"] == 5
+
+
+async def test_search_with_status(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 찾기와 상태를 함께"""
+    ids = await _five_states(session, library_a.id)
+    res = await admin_client.get("/holdings", params={"q": "다섯 상태", "status": "lost"})
+    assert _ids(res) == [ids["lost"]]
+
+
+async def test_search_wildcards_are_literal(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 와일드카드 글자"""
+    book = await add_library_book(session, library_a.id, title="보통 책")
+    await add_holding(session, library_a.id, book["id"], "A_1")
+    for q in ("%", "_"):
+        assert _ids(await admin_client.get("/holdings", params={"q": q})) == []
+    marked = await add_library_book(session, library_a.id, VALID_ISBN_2, title="100% 과학")
+    holding = await add_holding(session, library_a.id, marked["id"], "A-2")
+    assert _ids(await admin_client.get("/holdings", params={"q": "%"})) == [holding["id"]]
+
+
+async def test_search_blank_or_long_query(admin_client: AsyncClient) -> None:
+    """[catalog/holdings] 사본 조회 / 빈 찾기 글자"""
+    assert (await admin_client.get("/holdings", params={"q": "  "})).status_code == 422
+    assert (await admin_client.get("/holdings", params={"q": "가" * 101})).status_code == 422
+
+
+async def test_search_trims_query(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 등록번호로 찾기 (앞뒤 공백은 지운다)"""
+    book = await add_library_book(session, library_a.id)
+    holding = await add_holding(session, library_a.id, book["id"], "EM0012")
+    assert _ids(await admin_client.get("/holdings", params={"q": " EM0012 "})) == [holding["id"]]
+
+
+async def test_search_orders_by_title(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 서명 일부로 찾기 (서명 가나다순, 등록번호 순)"""
+    later = await add_library_book(session, library_a.id, title="하늘 이야기")
+    earlier = await add_library_book(session, library_a.id, VALID_ISBN_2, title="가을 이야기")
+    a = await add_holding(session, library_a.id, later["id"], "A-1")
+    b = await add_holding(session, library_a.id, earlier["id"], "A-3")
+    c = await add_holding(session, library_a.id, earlier["id"], "A-2")
+    assert _ids(await admin_client.get("/holdings", params={"q": "이야기"})) == [
+        c["id"],
+        b["id"],
+        a["id"],
+    ]
+
+
+async def test_search_stays_in_library(
+    admin_client: AsyncClient, session: AsyncSession, library_a: Tenant, library_b: Tenant
+) -> None:
+    """[catalog/holdings] 사본 조회 / 찾기의 기관 분리"""
+    mine = await add_library_book(session, library_a.id, VALID_ISBN_3, title="해님 달님")
+    await add_holding(session, library_a.id, mine["id"], "EM0001")
+    official = await add_book(session, VALID_ISBN_2, title="구름빵")
+    theirs = await add_library_book(session, library_b.id, VALID_ISBN_2, book_id=official["id"])
+    await add_holding(session, library_b.id, theirs["id"], "EM0999")
+    for q in ("구름빵", "EM0999"):
+        res = await admin_client.get("/holdings", params={"q": q})
+        assert _ids(res) == []
+        assert res.json()["total"] == 0

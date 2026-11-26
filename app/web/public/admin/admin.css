@@ -71,6 +71,25 @@ table.items th, table.items td { border-bottom: 1px solid var(--line); padding: 
 .record-preview .status-badge { color: var(--warn); border: 1px solid var(--warn); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
 .row.is-open { border: 2px solid var(--accent); }
 
+/* 장서·회원·휴관일: 찾기 줄, 입력칸, 표. 좁은 창에서는 표만 가로로 스크롤한다. */
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.toolbar .search-form { flex: 1 1 320px; }
+.search-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.search-form input { flex: 1 1 180px; min-width: 0; }
+.search-form input, .entry-form input, .entry-form select, .grid input, .grid select { min-height: 44px; font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.entry-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.entry-form label { display: grid; gap: 4px; font-size: 0.9em; color: var(--muted); }
+.entry-form label input, .entry-form label select { color: var(--text); width: 100%; }
+.entry-form[hidden], .entry-form [hidden] { display: none; }
+.entry-form p { margin: 0; }
+.entry-wide { grid-column: 1 / -1; }
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+table.grid { width: 100%; border-collapse: collapse; font-size: 0.9em; background: var(--surface); }
+table.grid th, table.grid td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: middle; white-space: nowrap; }
+table.grid input { min-width: 140px; }
+.cell-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.loan-state { margin-right: 8px; }
+
 @media (max-width: 720px) {
   .admin-main { padding: 12px; }
   table.items thead { display: none; }

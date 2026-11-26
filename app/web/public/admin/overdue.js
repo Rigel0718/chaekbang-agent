@@ -1,6 +1,7 @@
 // 오늘의 연체 탭: 승인한 틀로 채운 안내 문안 목록(회원 값 포함). 탭에 들어올 때마다 비우고 서버에서 다시 읽는다.
 import { api } from "../shared/api.js";
 import { el } from "../shared/dom.js";
+import { formatPhone } from "../shared/phone.js";
 
 const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const NO_TEMPLATE_HELP = "운영 대화에서 연체 안내문 틀을 만들어 승인해 주세요.";
@@ -11,7 +12,7 @@ export function createOverdue(ui) {
     const item = el("li", { className: "row member-row" });
     const lines = [
       `${notice.title} (등록번호 ${notice.accession_number})`,
-      `회원번호 ${notice.member_number} · ${notice.name}${notice.phone ? ` · ${notice.phone}` : ""}`,
+      `회원번호 ${notice.member_number} · ${notice.name}${notice.phone ? ` · ${formatPhone(notice.phone)}` : ""}`,
       `반납 예정일 ${notice.due_on} · 연체 ${notice.overdue_days}일`,
     ];
     item.append(...lines.map((text, index) => el("p", { className: index === 0 ? "line row-title" : "line row-meta", text })));

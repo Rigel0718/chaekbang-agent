@@ -24,3 +24,6 @@ evals/admin_agent/data/
 
 # 장서 가져오기 화면 확인용 견본 (scripts/make_import_samples.py)
 import-samples/
+
+# 화면 확인용 값 목록(change마다 만든다)
+check-samples/

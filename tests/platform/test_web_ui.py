@@ -1,6 +1,9 @@
 """[platform/web-ui] 화면 서빙과 화면 코드의 계약. 화면 동작은 design의 브라우저 확인이 본다."""
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import get_args
 
@@ -12,8 +15,17 @@ from app.core.config import get_settings
 from app.library.api.catalog import MAX_QUERY_LENGTH
 from app.library.importing import rows as import_rows
 from app.library.importing.columns import LABELS
+from app.library.models.catalog import HoldingStatus
 from app.library.schemas.admin_results import DraftKind, DraftLink, TableResult
-from app.library.schemas.catalog import BookSummary, RelatedBook
+from app.library.schemas.catalog import (
+    BookSummary,
+    HoldingCreate,
+    HoldingRead,
+    LibraryBookCreate,
+    RelatedBook,
+)
+from app.library.schemas.circulation import MemberCreate, MemberRead, MemberUpdate
+from app.library.schemas.guide import ClosureCreate, ClosureRead
 from app.library.schemas.holding_imports import HoldingImportRead, HoldingImportRow
 from app.library.schemas.librarian import BookCard
 from app.main import app
@@ -138,6 +150,13 @@ ALLOWED_CALLS = {
     "/librarian/sessions/{id}": {"DELETE"},
     "/library": {"GET"},
     "/library/guide": {"GET"},
+    "/library/closures": {"GET", "POST"},
+    "/library/closures/{id}": {"DELETE"},
+    "/holdings": {"GET", "POST"},
+    "/holdings/{id}": {"GET", "PATCH"},
+    "/library-books": {"GET", "POST"},
+    "/members": {"GET", "POST"},
+    "/members/{id}": {"PATCH", "DELETE"},
     "/basket": {"GET", "DELETE"},
     "/basket/{id}": {"PUT", "DELETE"},
     "/loans": {"POST"},
@@ -265,8 +284,8 @@ def test_member_token_header_only_in_loan_request_logout():
 
 
 def test_member_number_nowhere_but_admin_readers():
-    """[web-ui] 회원 토큰의 행선지: `member_number`는 관리자 목록 두 파일 말고는 어디에도 없다."""
-    readers = {PUBLIC / "admin" / "requests.js", PUBLIC / "admin" / "overdue.js"}
+    """[web-ui] 회원 토큰의 행선지: `member_number`는 관리자 회원 값 파일 말고는 어디에도 없다."""
+    readers = {PUBLIC / "admin" / name for name in ("requests.js", "overdue.js", "members.js")}
     for path in _js_files():
         if path not in readers:
             assert "member_number" not in _code(path), path
@@ -592,17 +611,25 @@ def test_admin_screen_requires_admin_role():
 
 
 ADMIN_MODE_SHOWS = {
-    "internal": ('$("tab-overdue").hidden = false;', '$("group-templates").hidden = false;'),
+    "internal": (
+        '$("tab-overdue").hidden = false;',
+        '$("group-templates").hidden = false;',
+        '$("tab-collection").hidden = false;',
+    ),
     "external": ('$("tab-imports").hidden = false;',),
 }
 
 
 def test_admin_mode_tabs_start_hidden():
-    """[web-ui] 처음 그린 화면(관리자): 연체 탭·틀 묶음·장서 가져오기 탭은 숨김으로 시작한다."""
+    """[web-ui] 처음 그린 화면(관리자): 연체 탭·틀 묶음·장서 가져오기·장서 탭은 숨김으로 시작하고
+    회원·휴관일 탭은 숨기지 않는다."""
     html = ADMIN_INDEX.read_text(encoding="utf-8")
-    for element_id in ("tab-overdue", "group-templates", "tab-imports"):
+    for element_id in ("tab-overdue", "group-templates", "tab-imports", "tab-collection"):
         tag = re.search(rf"<\w+\b[^>]*\bid=\"{element_id}\"[^>]*>", html)
         assert tag and re.search(r"\bhidden\b", tag.group(0)), element_id
+    for element_id in ("tab-members", "tab-closures"):
+        tag = re.search(rf"<\w+\b[^>]*\bid=\"{element_id}\"[^>]*>", html)
+        assert tag and not re.search(r"\bhidden\b", tag.group(0)), element_id
 
 
 def test_admin_mode_tabs_shown_in_one_place():
@@ -625,6 +652,7 @@ def test_admin_hidden_tab_hash_opens_chat():
     block = code[code.index("function tabName()") :].split("\n}")[0]
     assert 'if (name === "overdue" && !overdueEnabled) return DEFAULT_TAB;' in block
     assert 'if (name === "imports" && !importsEnabled) return DEFAULT_TAB;' in block
+    assert 'if (name === "collection" && !collectionEnabled) return DEFAULT_TAB;' in block
     assert 'const DEFAULT_TAB = "chat";' in code
 
 
@@ -695,8 +723,8 @@ def test_admin_open_draft_button_and_reveal():
 
 
 def test_admin_member_values_only_in_member_tabs():
-    """[web-ui] 회원 값을 읽는 곳: member_number·phone은 두 목록 파일에서만, 입장마다 재조회."""
-    allowed = {"requests.js", "overdue.js"}
+    """[web-ui] 회원 값을 읽는 곳: member_number·phone은 목록 둘과 회원 탭에서만, 다시 읽음."""
+    allowed = {"requests.js", "overdue.js", "members.js"}
     for path in ADMIN.glob("*.js"):
         code = _code(path)
         found = re.search(r"\.(member_number|phone)\b", code)
@@ -708,6 +736,9 @@ def test_admin_member_values_only_in_member_tabs():
         assert "replaceChildren()" in shown.split(loader)[0] or "clear();" in shown.split(loader)[0]
         assert loader in shown
         assert "hide" not in code.replace("hidden", "")
+    members = _admin_code("members.js")
+    shown = members[members.index("show() {") :]
+    assert "replaceChildren()" in shown.split("reload();")[0] and "reload();" in shown
     assert "tabs[current].hide()" not in _admin_code("main.js")
 
 
@@ -727,7 +758,9 @@ def test_admin_approval_actions_guarded():
     assert "REJECT_LIMIT = 200" in code
     api_text = API_JS.read_text(encoding="utf-8")
     assert api_text.count('method: "PUT"') == 1  # 고치기 없음: PUT은 담은 책 담기뿐
-    assert api_text.count('method: "PATCH"') == 1  # 희망도서 닫기뿐
+    # PATCH는 희망도서 닫기, 사본 상태, 회원 고치기뿐(승인 목록의 초안은 고치지 않는다)
+    patching = {name for name, src in _api_entries().items() if 'method: "PATCH"' in src}
+    assert patching == {"closeBookRequest", "updateHolding", "updateMember"}
     # 상태별 동작: 게시 내리기는 큐레이션의 게시 상태에서만
     assert 'kind === "curations" && row.status === "published"' in code
     assert 'row.status === "pending_approval"' in code
@@ -921,3 +954,224 @@ def test_import_delete_button_only_on_preview():
     assert 'button("삭제"' in block
     assert code.index("confirm(DELETE_CONFIRM)") < code.index("api.importDelete(id)")
     assert code.count("api.importDelete(") == 1
+
+
+# 장서 화면
+
+
+def _function(code: str, name: str) -> str:
+    """스크립트의 함수 하나(두 칸 들여쓴 블록)의 소스."""
+    start = code.index(f"function {name}(")
+    return code[start:].split("\n  }\n")[0]
+
+
+def _object_keys(source: str) -> set[str]:
+    """`payload = { a, b: c }`와 `payload.d = ...`로 만든 본문의 키."""
+    keys: set[str] = set()
+    for body in re.findall(r"payload = \{([^{}]*)\}", source):
+        keys |= {part.split(":")[0].strip() for part in body.split(",") if part.strip()}
+    keys |= set(re.findall(r"\bpayload\.(\w+) =", source))
+    return keys
+
+
+def test_collection_search_sends_only_query_and_page():
+    """[web-ui] 장서 화면의 사본 찾기 / 찾기 요청: q, limit, offset만 보내고 status는 없다."""
+    entry = _api_entries()["holdings"]
+    assert "listQuery({ q, offset, limit })" in entry and "status" not in entry
+    code = _admin_code("collection.js")
+    assert "api.holdings(lastQuery, offset, PAGE)" in code
+
+
+def test_collection_first_list_and_show_all():
+    """[web-ui] 장서 화면의 사본 찾기 / 처음 목록과 전체 보기: 들어오면 목록을 읽고, [전체 보기]는
+    찾은 동안에만 있으며 처음 목록으로 돌아간다."""
+    code = _admin_code("collection.js")
+    search = _function(code, "search")
+    assert "ui.all.hidden = !text;" in search and "    load();" in search
+    assert 'search("");' in code[code.index('ui.all.addEventListener("click"') :]
+    assert "search(lastQuery);" in code[code.index("show() {") :]
+    tag = re.search(r'<button\b[^>]*\bid="collection-all"[^>]*>', ADMIN_INDEX.read_text("utf-8"))
+    assert tag and re.search(r"\bhidden\b", tag.group(0))
+
+
+def test_collection_reads_only_holding_fields():
+    """[web-ui] 장서 화면의 사본 찾기 / 읽는 필드: holding.·updated. 필드는 HoldingRead에 있다."""
+    used = set(re.findall(r"\bholding\.(\w+)", _admin_code("collection.js")))
+    assert used and used <= set(HoldingRead.model_fields), used - set(HoldingRead.model_fields)
+
+
+def test_collection_status_options_match_server():
+    """[web-ui] 장서 화면의 상태 바꾸기 / 고를 수 있는 상태: 서버 상태에서 on_loan을 뺀 넷이다."""
+    block = _admin_code("collection.js")
+    block = block[block.index("const STATUS_OPTIONS = {") :].split("};")[0]
+    options = set(re.findall(r"(?m)^  (\w+):", block))
+    assert options == {status.value for status in HoldingStatus} - {HoldingStatus.ON_LOAN.value}
+
+
+def test_collection_confirms_only_withdraw_before_patch():
+    """[web-ui] 장서 화면의 상태 바꾸기 / 제적만 한 번 더 묻기: 취소하면 요청하지 않는다."""
+    change = _function(_admin_code("collection.js"), "changeStatus")
+    assert change.count("confirm(") == 1
+    ask = 'if (next === "withdrawn" && !confirm(WITHDRAW_CONFIRM)) {'
+    assert change.index(ask) < change.index("api.updateHolding(")
+    assert "return;" in change[change.index(ask) : change.index("api.updateHolding(")]
+    returning = _function(_admin_code("collection.js"), "returnHolding")
+    assert returning.index("confirm(RETURN_CONFIRM)") < returning.index("api.returnBook(")
+    assert returning.index("api.returnBook(") < returning.index("api.holdingGet(")
+
+
+def test_collection_register_checks_isbn_and_reuses_book():
+    """[web-ui] 장서 화면의 책 등록 / 이미 있는 책, 사본 등록이 실패한 뒤 다시 누르기."""
+    code = _admin_code("collection.js")
+    register = _function(code, "register")
+    find = register.index("await findByIsbn(isbn)")
+    create = register.index("await createBook(")
+    copy = register.index("api.createHolding(")
+    assert find < create < copy
+    assert "if (!owned && isbn) {" in register[:find]
+    assert "if (!owned) {" in register[find:create]
+    # 만든 책은 칸의 상태로 남아 다시 누르면 사본만 보낸다. 닫거나 새로 열 때만 버린다.
+    assert "setBook(created);" in register[create:copy]
+    assert "setBook(null);" in _function(code, "resetEntry")
+    assert "api.libraryBooksByIsbn(isbn)" in _function(code, "findByIsbn")
+    assert 'error.kind !== "conflict"' in _function(code, "createBook")
+
+
+def test_collection_register_body_keys_exist_in_schemas():
+    """[web-ui] 장서 화면의 책 등록 / 보내는 값: 키는 요청 스키마에 있다."""
+    code = _admin_code("collection.js")
+    book_keys = _object_keys(_function(code, "createBook"))
+    assert book_keys == {"title", "author", "isbn"}
+    assert book_keys <= set(LibraryBookCreate.model_fields)
+    holding_keys = _object_keys(_function(code, "holdingBody"))
+    holding_keys |= {"library_book_id"}
+    assert "library_book_id: owned.id" in _function(code, "register")
+    assert holding_keys == {
+        "library_book_id",
+        "accession_number",
+        "acquisition_type",
+        "call_number",
+        "purchase_price",
+        "donor",
+    }
+    assert holding_keys <= set(HoldingCreate.model_fields)
+
+
+# 회원 화면
+
+
+def test_member_screen_body_keys_exist_in_schemas():
+    """[web-ui] 회원 화면 / 보내는 값: 등록은 MemberCreate, 고치기는 MemberUpdate의 키만."""
+    code = _admin_code("members.js")
+    created = _object_keys(_function(code, "create"))
+    assert created == {"member_number", "name", "phone"}
+    assert created <= set(MemberCreate.model_fields)
+    updated = _object_keys(_function(code, "saveRow"))
+    assert updated == {"name", "phone"} and updated <= set(MemberUpdate.model_fields)
+    assert "api.updateMember(member.id, payload)" in code
+    used = set(re.findall(r"\bmember\.(\w+)", code))
+    assert used <= set(MemberRead.model_fields)
+
+
+def test_member_phone_is_required():
+    """[web-ui] 회원 화면 / 번호는 필수."""
+    code = _admin_code("members.js")
+    create = _function(code, "create")
+    guard = create.index("if (!memberNumber || !name || !phone) {")
+    assert guard < create.index("api.createMember(")
+    save = _function(code, "saveRow")
+    refuse = save.index("if (member.phone && !phone.value.trim()) {")
+    assert refuse < save.index("api.updateMember(")
+    assert "null" not in save
+
+
+# 휴대폰 번호의 하이픈
+
+PHONE_JS = PUBLIC / "shared" / "phone.js"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node가 없으면 건너뜀")
+def test_phone_format_examples():
+    """[web-ui] 휴대폰 번호의 하이픈 / 보이는 꼴."""
+    inputs = ["01012345678", "0101234567", "021234567", "0212345678", "0311234567", "12"]
+    script = (
+        f'import {{ formatPhone }} from "{PHONE_JS.as_uri()}";'
+        f"console.log(JSON.stringify({json.dumps(inputs)}.map(formatPhone)));"
+    )
+    done = subprocess.run(
+        ["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True
+    )
+    assert json.loads(done.stdout) == [
+        "010-1234-5678",
+        "010-123-4567",
+        "02-123-4567",
+        "02-1234-5678",
+        "031-123-4567",
+        "12",
+    ]
+
+
+def test_phone_rule_lives_in_one_place():
+    """[web-ui] 휴대폰 번호의 하이픈 / 한 곳의 규칙."""
+    uses = {
+        PUBLIC / "admin" / "members.js": ("formatPhone(member.phone)", "attachPhoneInput("),
+        PUBLIC / "admin" / "overdue.js": ("formatPhone(notice.phone)",),
+        PUBLIC / "librarian" / "actions.js": ("attachPhoneInput(ui.inputs.phone);",),
+    }
+    for path, calls in uses.items():
+        code = _code(path)
+        assert 'from "../shared/phone.js";' in code, path
+        for call in calls:
+            assert call in code, (path, call)
+    # 번호 칸의 길이는 하이픈을 넣은 11자리다
+    tag = re.search(r'<input\b[^>]*\bid="in-phone"[^>]*>', INDEX.read_text("utf-8")).group(0)
+    assert 'maxlength="13"' in tag
+
+
+def test_member_delete_confirms_first():
+    """[web-ui] 회원 화면 / 삭제는 확인 뒤: 취소하면 요청하지 않는다."""
+    remove = _function(_admin_code("members.js"), "remove")
+    assert remove.index("if (!confirm(DELETE_CONFIRM)) return;") < remove.index("api.deleteMember(")
+    assert _admin_code("members.js").count("api.deleteMember(") == 1
+
+
+def test_member_inputs_disable_autocomplete():
+    """[web-ui] 회원 화면 / 입력칸: 모두 autocomplete="off"다."""
+    html = ADMIN_INDEX.read_text(encoding="utf-8")
+    panel = html[html.index('id="panel-members"') :].split("</section>")[0]
+    inputs = re.findall(r"<input\b[^>]*>", panel)
+    assert len(inputs) == 4
+    assert all('autocomplete="off"' in tag for tag in inputs), inputs
+    # 고치기 입력칸은 스크립트가 만든다
+    assert 'autocomplete: "off"' in _function(_admin_code("members.js"), "textInput")
+
+
+# 휴관일 화면
+
+
+def test_closure_list_asks_one_year():
+    """[web-ui] 휴관일 화면 / 읽는 기간: from과 to를 보내고 to는 from부터 365일 뒤다."""
+    assert "listQuery({ from, to })" in _api_entries()["closures"]
+    code = _admin_code("closures.js")
+    assert "const DAYS = 365;" in code
+    load = _function(code, "load")
+    assert "const from = isoDate(today);" in load
+    assert "today.getDate() + DAYS" in load
+    assert "api.closures(from, to)" in load
+    remove = _function(code, "removeClosure")
+    assert remove.index("confirm(DELETE_CONFIRM)") < remove.index("api.deleteClosure(")
+    used = set(re.findall(r"\bclosure\.(\w+)", code))
+    assert used <= set(ClosureRead.model_fields)
+
+
+def test_closure_reason_length_matches_schema():
+    """[web-ui] 휴관일 화면 / 사유 길이: 입력칸의 최대 길이가 서버 상한과 같다."""
+    limit = next(
+        item.max_length
+        for item in get_args(get_args(ClosureCreate.model_fields["reason"].annotation)[0])[1:]
+        for item in getattr(item, "metadata", [item])
+        if hasattr(item, "max_length")
+    )
+    html = ADMIN_INDEX.read_text(encoding="utf-8")
+    tag = re.search(r"<input\b[^>]*\bid=\"closure-reason\"[^>]*>", html).group(0)
+    assert f'maxlength="{limit}"' in tag

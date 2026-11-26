@@ -1,11 +1,13 @@
 """소장 사본 service. 모든 함수는 로그인한 기관(library_id) 범위 안에서만 동작한다."""
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.central.models import Book
 from app.core.errors import ConflictError, InvalidRequestError
 from app.core.tenancy import get_owned
+from app.core.text import korean_order
 from app.library.models.catalog import (
     AcquisitionType,
     Holding,
@@ -92,15 +94,31 @@ async def list_holdings(
     library_book_id: int | None = None,
     status: HoldingStatus | None = None,
     incomplete: bool = False,
+    q: str | None = None,
 ) -> tuple[list[Holding], int]:
-    """status를 주지 않으면 제적 사본을 뺀다. incomplete=True면 빠진 정보가 있는 사본만."""
+    """status를 주지 않으면 제적 사본을 뺀다. incomplete=True면 빠진 정보가 있는 사본만.
+
+    q가 있으면 등록번호가 q와 같거나, 기관 값·공식 서지 서명·저자에 q가 든 사본만이다
+    (대소문자 무시, `%`·`_`는 글자 그대로). 분실·제적 사본을 되돌리려고 찾는 것이라 q만 있으면
+    제적도 넣는다. 등록번호가 같은 사본 → 표시 서명 가나다순 → 등록번호 순이다.
+    """
     where = [Holding.library_id == library_id]
     if library_book_id is not None:
         where.append(Holding.library_book_id == library_book_id)
     if status is not None:
         where.append(Holding.status == status)
-    else:
+    elif q is None:
         where.append(Holding.status != HoldingStatus.WITHDRAWN)
+    if q is not None:
+        where.append(
+            or_(
+                Holding.accession_number == q,
+                LibraryBook.title.icontains(q, autoescape=True),
+                LibraryBook.author.icontains(q, autoescape=True),
+                Book.title.icontains(q, autoescape=True),
+                Book.author.icontains(q, autoescape=True),
+            )
+        )
     if incomplete:
         where.append(Holding.acquisition_type == AcquisitionType.PURCHASED)
         where.append(
@@ -109,13 +127,24 @@ async def list_holdings(
                 Holding.library_book.has(LibraryBook.isbn.is_(None)),
             )
         )
-    total = await session.scalar(select(func.count()).select_from(Holding).where(*where))
+    # q가 없으면 최근에 등록한 사본부터(관리자 화면 [장서]의 처음 목록)
+    order = [Holding.created_at.desc(), Holding.id.desc()]
+    if q is not None:
+        shown_title = func.coalesce(Book.title, LibraryBook.title)
+        exact_first = case((Holding.accession_number == q, 0), else_=1)
+        order = [exact_first, korean_order(shown_title), Holding.accession_number, Holding.id]
+
+    def scoped(query):
+        # q는 도서 값을 읽으므로 기관 도서와 공식 서지를 붙인다. 기관 도서는 같은 기관 것만 있다.
+        if q is None:
+            return query
+        return query.join(LibraryBook, LibraryBook.id == Holding.library_book_id).outerjoin(
+            Book, Book.id == LibraryBook.book_id
+        )
+
+    total = await session.scalar(scoped(select(func.count()).select_from(Holding)).where(*where))
     rows = await session.scalars(
-        select(Holding)
-        .where(*where)
-        .order_by(Holding.accession_number, Holding.id)
-        .limit(limit)
-        .offset(offset)
+        scoped(select(Holding)).where(*where).order_by(*order).limit(limit).offset(offset)
     )
     return list(rows), total or 0
 

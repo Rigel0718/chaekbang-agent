@@ -25,21 +25,25 @@ def normalize_phone(value: object) -> object:
 
 
 Phone = Annotated[str | None, BeforeValidator(normalize_phone)]
+# 새 회원의 번호는 필수다(키오스크 회원 로그인의 열쇠). 빈 값은 None이 되어 422다.
+RequiredPhone = Annotated[str, BeforeValidator(normalize_phone)]
 
 
 class MemberCreate(BaseModel):
-    """회원 정보는 회원번호, 이름, 선택 전화번호만 받는다. library_id가 있어도 쓰지 않는다."""
+    """회원 정보는 회원번호, 이름, 전화번호(모두 필수)만 받는다. library_id가 있어도 쓰지 않는다."""
 
     member_number: NonEmpty
     name: NonEmpty
-    phone: Phone = None
+    phone: RequiredPhone
 
 
 class MemberUpdate(PatchModel):
-    NOT_NULL_FIELDS = ("name",)
+    """번호는 바꿀 수만 있고 지울 수 없다. 번호 없는 기존 회원은 번호 없이 이름만 고친다."""
+
+    NOT_NULL_FIELDS = ("name", "phone")
 
     name: NonEmpty | None = None
-    phone: Phone = None  # null을 주면 지운다
+    phone: Phone = None
 
 
 class MemberRead(ReadModel):

@@ -2,7 +2,10 @@
 import { api, goLogin, requireRole } from "../shared/api.js";
 import { createApprovals } from "./approvals.js";
 import { createChat } from "./chat.js";
+import { createClosures } from "./closures.js";
+import { createCollection } from "./collection.js";
 import { createImports } from "./imports.js";
+import { createMembers } from "./members.js";
 import { createOverdue } from "./overdue.js";
 import { createRequests } from "./requests.js";
 
@@ -19,9 +22,10 @@ function onUnauthorized() {
   goLogin();
 }
 
-// 연체 안내는 자체 대출 기관만, 장서 가져오기는 외부 대출 기관만 쓴다. 운영 방식은 여기서 한 번 읽는다.
-// 기관 정보를 못 읽으면 둘 다 숨긴 채 둔다(서버 409가 방어선).
+// 연체 안내와 장서는 자체 대출 기관만, 장서 가져오기는 외부 대출 기관만 쓴다. 운영 방식은 여기서 한 번 읽는다.
+// 기관 정보를 못 읽으면 모두 숨긴 채 둔다(서버 409가 방어선). 회원·휴관일은 두 방식 모두 보인다.
 let overdueEnabled = false;
+let collectionEnabled = false;
 let importsEnabled = false;
 async function loadLibrary() {
   try {
@@ -30,6 +34,8 @@ async function loadLibrary() {
       overdueEnabled = true;
       $("tab-overdue").hidden = false;
       $("group-templates").hidden = false;
+      collectionEnabled = true;
+      $("tab-collection").hidden = false;
     } else if (mode === "external") {
       importsEnabled = true;
       $("tab-imports").hidden = false;
@@ -101,6 +107,58 @@ const tabs = {
     list: $("list-imports"),
     onUnauthorized,
   }),
+  collection: createCollection({
+    searchForm: $("collection-form"),
+    q: $("collection-q"),
+    all: $("collection-all"),
+    error: $("collection-error"),
+    table: $("collection-table"),
+    more: $("collection-more"),
+    open: $("register-open"),
+    form: $("register-form"),
+    isbn: $("register-isbn"),
+    found: $("register-found"),
+    titleField: $("register-title-field"),
+    title: $("register-title"),
+    authorField: $("register-author-field"),
+    author: $("register-author"),
+    accession: $("register-accession"),
+    call: $("register-call"),
+    acquisition: $("register-acquisition"),
+    priceField: $("register-price-field"),
+    price: $("register-price"),
+    donorField: $("register-donor-field"),
+    donor: $("register-donor"),
+    submit: $("register-submit"),
+    close: $("register-close"),
+    formError: $("register-error"),
+    onUnauthorized,
+  }),
+  members: createMembers({
+    searchForm: $("member-search"),
+    q: $("member-q"),
+    error: $("member-error"),
+    table: $("member-table"),
+    more: $("member-more"),
+    open: $("member-open"),
+    form: $("member-form"),
+    number: $("member-number"),
+    name: $("member-name"),
+    phone: $("member-phone"),
+    submit: $("member-submit"),
+    close: $("member-close"),
+    formError: $("member-form-error"),
+    onUnauthorized,
+  }),
+  closures: createClosures({
+    form: $("closure-form"),
+    date: $("closure-date"),
+    reason: $("closure-reason"),
+    submit: $("closure-submit"),
+    error: $("closure-error"),
+    table: $("closure-table"),
+    onUnauthorized,
+  }),
 };
 
 let current = null;
@@ -110,6 +168,7 @@ function tabName() {
   if (!(name in tabs)) return DEFAULT_TAB;
   if (name === "overdue" && !overdueEnabled) return DEFAULT_TAB;
   if (name === "imports" && !importsEnabled) return DEFAULT_TAB;
+  if (name === "collection" && !collectionEnabled) return DEFAULT_TAB;
   return name;
 }
 
