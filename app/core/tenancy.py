@@ -4,6 +4,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.core.text import with_particle
+
+
+def not_found_message(label: str) -> str:
+    """없는 대상의 404 문구. 화면에 그대로 나오므로 id를 넣지 않는다(`label`은 화면 말)."""
+    return f"{with_particle(label, '을/를')} 찾을 수 없어요."
 
 
 async def get_owned[M](
@@ -14,5 +20,5 @@ async def get_owned[M](
         select(model).where(model.id == id, model.library_id == library_id)  # type: ignore[attr-defined]
     )
     if row is None:
-        raise NotFoundError(f"{label}을(를) 찾을 수 없습니다: {id}")
+        raise NotFoundError(not_found_message(label))
     return row

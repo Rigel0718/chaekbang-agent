@@ -1,10 +1,9 @@
 // 오늘의 연체 탭: 승인한 틀로 채운 안내 문안 목록(회원 값 포함). 탭에 들어올 때마다 비우고 서버에서 다시 읽는다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { el } from "../shared/dom.js";
 import { formatPhone } from "../shared/phone.js";
 
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
-const NO_TEMPLATE_HELP = "운영 대화에서 연체 안내문 틀을 만들어 승인해 주세요.";
+const NO_TEMPLATE_HELP = "[AI 도우미]로 양식을 만들어 승인해 주세요.";
 
 // ui: { summary, list, onUnauthorized() }
 export function createOverdue(ui) {

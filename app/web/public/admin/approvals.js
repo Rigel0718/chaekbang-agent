@@ -1,10 +1,9 @@
 // 승인 목록: 큐레이션, 연체 안내문 틀, 구매 요청서. 보고 승인·반려(큐레이션은 내리기)만 한다.
 // 초안은 운영 대화로 만든다. 만들기·고치기 양식은 두지 않는다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el, when, won } from "../shared/dom.js";
 
 const REJECT_LIMIT = 200; // 서버 반려 사유 상한과 같다
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const BUSY = "처리하는 중…";
 const NOT_FOUND = "그 초안을 찾지 못했어요.";
 
@@ -20,10 +19,10 @@ const REASON_KINDS = { book_request: "희망도서", popular: "인기", field_ga
 const PRICE_SOURCES = { yes24_list_price: "YES24 정가" };
 
 const APPROVE_CONFIRM = {
-  curations: "승인하면 바로 게시돼 이용자가 볼 수 있어요. 승인할까요?",
-  templates: "승인하면 연체 안내에 쓰는 틀이 돼요. 승인할까요?",
+  curations: "승인할까요? 바로 게시돼 이용자가 볼 수 있어요.",
+  templates: "승인할까요? 이 양식으로 연체 안내를 만들어요.",
   purchases:
-    "승인하면 정가를 다시 조회해 금액을 기록하고, 같은 ISBN의 희망도서를 닫아요. 확정본은 고칠 수 없어요. 승인할까요?",
+    "승인할까요? 정가로 금액을 기록하고 같은 ISBN의 희망도서를 처리 완료로 둬요. 승인한 뒤에는 수정할 수 없어요.",
 };
 
 function statusLabel(row) {
@@ -49,7 +48,7 @@ const KINDS = {
     }),
     detail(row, box) {
       box.append(el("p", { text: row.body }));
-      if (row.in_use) box.append(el("p", { className: "muted", text: "지금 연체 안내에 쓰는 틀이에요." }));
+      if (row.in_use) box.append(el("p", { className: "muted", text: "지금 연체 안내에 쓰는 양식이에요." }));
     },
   },
   purchases: {
@@ -76,13 +75,13 @@ function purchaseDetail(row, box) {
       el("p", {
         text: `확정 금액 ${won(row.total_amount)} · ${when(row.priced_at)} 조회 · ${PRICE_SOURCES[row.price_source] || row.price_source}`,
       }),
-      el("p", { className: "muted", text: "확정본은 고칠 수 없어요." }),
+      el("p", { className: "muted", text: "승인한 뒤에는 수정할 수 없어요." }),
     );
   } else if (estimate) {
     if (estimate.unavailable) {
-      box.append(el("p", { className: "error-line", text: "지금 정가를 조회할 수 없어요. 잠시 뒤 다시 열어 보세요." }));
+      box.append(el("p", { className: "error-line", text: "지금 정가를 조회할 수 없어요. 잠시 뒤 다시 해 주세요." }));
     } else {
-      box.append(el("p", { text: `추정 총액 ${won(estimate.estimated_total)} · ${when(estimate.priced_at)} 조회(저장하지 않은 값)` }));
+      box.append(el("p", { text: `추정 총액 ${won(estimate.estimated_total)} · ${when(estimate.priced_at)} 조회` }));
       if (estimate.missing_price_count > 0) {
         box.append(
           el("p", {
@@ -94,13 +93,13 @@ function purchaseDetail(row, box) {
     }
   }
   const head = el("tr", {
-    children: ["ISBN", "서명", "저자", "권수", "근거", "단가", "금액"].map((name) => el("th", { text: name })),
+    children: ["ISBN", "도서명", "저자", "권수", "근거", "단가", "금액"].map((name) => el("th", { text: name })),
   });
   const body = row.items.map((item) =>
     el("tr", {
       children: [
         cell("ISBN", item.isbn),
-        cell("서명", item.title),
+        cell("도서명", item.title),
         cell("저자", item.author || "-"),
         cell("권수", String(item.quantity)),
         cell("근거", `${REASON_KINDS[item.reason_kind] || item.reason_kind}${item.reason ? ` · ${item.reason}` : ""}`),
@@ -132,7 +131,7 @@ export function createApprovals(ui) {
       const rows = await (view === "pending" ? api.approvalPending(kind) : api.approvalAll(kind));
       list.replaceChildren();
       if (rows.length === 0) {
-        list.append(el("li", { className: "empty-note", text: view === "pending" ? "승인 대기 중인 것이 없어요." : "아직 없어요." }));
+        list.append(el("li", { className: "empty-note", text: view === "pending" ? "승인할 초안이 없어요." : "초안이 없어요." }));
         return;
       }
       for (const row of rows) list.append(renderRow(kind, row));
@@ -200,8 +199,7 @@ export function createApprovals(ui) {
         for (const b of buttons) b.disabled = false;
         errorLine.className = "error-line";
         // 409·503은 서버 문구를 그대로 보이고 상태는 바뀌지 않은 채다
-        const shown = error.detail || GENERIC_ERROR;
-        errorLine.textContent = error.status === 503 ? `${shown} 잠시 뒤 다시 해 주세요.` : shown;
+        errorLine.textContent = error.detail || GENERIC_ERROR;
         return;
       }
       ui.onChanged();
@@ -221,7 +219,7 @@ export function createApprovals(ui) {
       box.append(actions, rejectBox);
     } else if (kind === "curations" && row.status === "published") {
       const unpublish = button("게시 내리기", () => {
-        if (confirm("게시를 내리면 이용자가 더 이상 볼 수 없어요. 내릴까요?")) run(() => api.unpublish(row.id));
+        if (confirm("게시를 내릴까요? 이용자가 더 이상 볼 수 없어요.")) run(() => api.unpublish(row.id));
       }, "btn danger");
       buttons.push(unpublish);
       actions.append(unpublish);
@@ -236,7 +234,7 @@ export function createApprovals(ui) {
     const input = el("input", {
       attrs: { type: "text", maxlength: String(REJECT_LIMIT), placeholder: "반려 사유(필수)", "aria-label": "반려 사유", autocomplete: "off" },
     });
-    const send = button("반려하기", () => {
+    const send = button("보내기", () => {
       const reason = input.value.trim();
       if (!reason) {
         input.setAttribute("placeholder", "사유를 적어 주세요");

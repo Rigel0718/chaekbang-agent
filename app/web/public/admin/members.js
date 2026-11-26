@@ -1,11 +1,10 @@
 // 회원 탭: 목록과 찾기, 등록, 이름·휴대폰 번호 고치기, 삭제. 회원 값은 화면 메모리에만 두고
 // 탭에 들어올 때마다 비우고 서버에서 다시 읽는다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el } from "../shared/dom.js";
 import { attachPhoneInput, formatPhone } from "../shared/phone.js";
 
 const PAGE = 20;
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const INVALID_INPUT = "입력한 값을 확인해 주세요.";
 const DELETE_CONFIRM = "이 회원을 삭제할까요?";
 const NEED_PHONE = "휴대폰 번호를 넣어 주세요.";
@@ -43,7 +42,7 @@ export function createMembers(ui) {
     const actions = el("div", {
       className: "cell-actions",
       children: [
-        button("고치기", () => row.replaceWith(editRow(member))),
+        button("수정", () => row.replaceWith(editRow(member))),
         button("삭제", () => remove(member), "btn danger"),
       ],
     });

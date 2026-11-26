@@ -48,7 +48,7 @@ async def test_collection_by_field(session: AsyncSession, library_a) -> None:
     table = await _present(session, library_a.id, GET_COLLECTION_STATUS, group_by="field")
     assert isinstance(table, TableResult)
     assert table.title == "분야별 장서"
-    assert table.columns == ["분야", "사본", "서명"]
+    assert table.columns == ["분야", "권수", "종수"]
     assert table.bar_column == 1
     rows = {row[0]: row[1:] for row in table.rows}
     assert rows["문학"] == [2, 1]
@@ -89,7 +89,7 @@ async def test_loans_by_field(session: AsyncSession, library_a) -> None:
         top_n=10,
     )
     assert table.title == "분야별 대출"
-    assert table.columns == ["분야", "대출", "사본", "권당 대출"]
+    assert table.columns == ["분야", "대출", "권수", "권당 대출"]
     assert table.bar_column == 1
     assert next(r for r in table.rows if r[0] == "자연과학") == ["자연과학", 3, 2, 1.5]
     assert table.caption == "2026년 11월 1일~19일, 진행 중"
@@ -130,7 +130,7 @@ async def test_top_books(session: AsyncSession, library_a) -> None:
         top_n=2,
     )
     assert table.title == "많이 빌린 책"
-    assert table.columns == ["순위", "서명", "저자", "대출"]
+    assert table.columns == ["순위", "도서명", "저자", "대출"]
     assert table.bar_column is None
     assert [row[0] for row in table.rows] == [1, 2]
     assert [row[1] for row in table.rows] == ["순위 책 2", "순위 책 1"]
@@ -157,7 +157,7 @@ async def test_lost_holdings(session: AsyncSession, library_a) -> None:
     await book(session, library_a.id, "lost", title="잃은 책", call_number="813-가")
     table = await _present(session, library_a.id, LIST_HOLDINGS_BY_STATUS, status="lost", limit=20)
     assert table.title == "분실 사본"
-    assert table.columns == ["서명", "저자", "등록번호", "청구기호"]
+    assert table.columns == ["도서명", "저자", "등록번호", "청구기호"]
     assert table.bar_column is None
     [row] = table.rows
     assert row[0] == "잃은 책" and row[2].startswith("AN") and row[3] == "813-가"
@@ -177,7 +177,7 @@ async def test_truncated_unborrowed(session: AsyncSession, library_a) -> None:
         limit=2,
     )
     assert table.title == "안 빌린 책"
-    assert table.columns == ["서명", "저자", "권수"]
+    assert table.columns == ["도서명", "저자", "권수"]
     assert len(table.rows) == 2
     assert (table.total, table.truncated) == (3, True)
     assert table.caption == "2026년 1월 1일~11월 19일, 진행 중"

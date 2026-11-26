@@ -73,6 +73,13 @@
 - 저자 키(`library_books.author_keys`)는 저자를 쓸 때 모델(`LibraryBook._set_author_keys`)이 함께 정한다. 등록, 수정, 가져오기가 모두 ORM이라 따로 부르지 않는다. Core `insert`로 기관 도서를 넣는 곳(시드)은 `app/core/contributors.py`의 `author_keys`로 값을 넣어야 하고, 빠뜨리면 DB가 거부한다(기본값 없음). Core `update`로 저자를 바꾸지 않는다(`tests/catalog/test_library_book_author_keys.py`가 소스를 검사한다).
 - 분류기호(`kdc`)는 쓸 때 KDC 숫자 문자열로 맞춘다(`813.7`). 읽을 수 없는 값은 공백만 정리해 둔다. 이미 저장된 행은 바꾸지 않는다.
 - 서명·저자 찾기 키(`title_jamo_starts`, `author_jamo_starts`)는 DB가 계산하는 생성 열이다. 코드에서 쓰지 않는다. 규칙은 `app/core/text.py`의 `jamo_starts`이고 SQL 함수 `ko_jamo_starts`와 같아야 한다.
+- 화면에 그대로 나오는 오류 문구(`NotFoundError`, `ConflictError` 등과 `HTTPException`의 글자)는 해요체 문장에 마침표로 쓴다.
+  - 내부 id, 영어 값(상태 값), 따옴표로 감싼 입력, "을(를)" 같은 겸용 조사는 넣지 않는다. 조사는 `app/core/text.py`의 `with_particle`로 고른다.
+  - 대상 이름(`LABEL`)은 화면 말로 쓴다("책", "연체 안내 양식").
+  - 사람이 넣은 값(등록번호, 회원번호, ISBN, 날짜)은 넣어도 되고, 휴대폰 번호는 넣지 않는다.
+  - 없는 대상의 404는 `get_owned`와 승인 흐름이 같은 문구(`not_found_message`)를 쓴다. 이 문구는 tool 오류로 LLM에도 간다.
+  - tool 결과로만 LLM에 가는 모듈(`*_tools.py`, `tools.py`, `analytics/`, `services/analytics.py`, `recommendation/`)의 문구는 이 규칙 밖이다.
+  - `tests/platform/test_ui_copy.py`가 소스를 검사한다. 화면에 나오지 않아 그대로 둔 문구는 그 파일의 `KEPT`에 이유와 함께 둔다.
 - 대화의 책 표시(`[고른 책: …]`, `[찾은 책: …]`)는 `chat_messages.note`에 두고 LLM에게는 안내(`Instruction`)로 보낸다. 이용자 문장에 섞으면 어린이 요청 판단이 서명의 낱말을 읽는다.
 
 ## 공식 서지 연결

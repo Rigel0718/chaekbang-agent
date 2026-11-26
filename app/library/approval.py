@@ -20,6 +20,8 @@ from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 from app.core.errors import ConflictError, NotFoundError
 from app.core.model_base import str_enum
+from app.core.tenancy import not_found_message
+from app.core.text import with_particle
 
 REASON_LIMIT = 200
 
@@ -92,26 +94,27 @@ class ApprovalMixin:
     rejected_reason: Mapped[str | None] = mapped_column(String(REASON_LIMIT))
 
 
-_ACTION_LABELS = {
-    Action.SUBMIT: "제출",
-    Action.APPROVE: "승인",
-    Action.REJECT: "반려",
-    Action.UNPUBLISH: "내리기",
+# 문구의 동사 꼴("~할 수 없어요"). 화면에 그대로 나온다.
+_ACTION_VERBS = {
+    Action.SUBMIT: "제출할",
+    Action.APPROVE: "승인할",
+    Action.REJECT: "반려할",
+    Action.UNPUBLISH: "내릴",
 }
 
 
 def _conflict(label: str, status: ApprovalStatus, action: Action) -> ConflictError:
+    subject = with_particle(label, "이/가")
     return ConflictError(
-        f"{label}이(가) {STATUS_LABELS[status]} 상태라 {_ACTION_LABELS[action]}할 수 없습니다"
+        f"{subject} {STATUS_LABELS[status]} 상태라 {_ACTION_VERBS[action]} 수 없어요."
     )
 
 
 def require_status(row: Any, status: ApprovalStatus, *, label: str, doing: str) -> None:
     """내용 수정·삭제 같은 상태 조건 확인. 맞지 않으면 409."""
     if row.status != status:
-        raise ConflictError(
-            f"{label}이(가) {STATUS_LABELS[row.status]} 상태라 {doing}할 수 없습니다"
-        )
+        subject = with_particle(label, "이/가")
+        raise ConflictError(f"{subject} {STATUS_LABELS[row.status]} 상태라 {doing} 수 없어요.")
 
 
 async def transition(
@@ -131,7 +134,7 @@ async def transition(
     """
     edges = table.edges()
     if action not in edges:
-        raise ConflictError(f"{label}은(는) {_ACTION_LABELS[action]}할 수 없습니다")
+        raise ConflictError(f"{with_particle(label, '은/는')} {_ACTION_VERBS[action]} 수 없어요.")
     source, target = edges[action]
     result = await session.execute(
         update(model)
@@ -146,7 +149,7 @@ async def transition(
         select(model.status).where(model.id == id, model.library_id == library_id)
     )
     if current is None:
-        raise NotFoundError(f"{label}을(를) 찾을 수 없습니다: {id}")
+        raise NotFoundError(not_found_message(label))
     raise _conflict(label, ApprovalStatus(current), action)
 
 

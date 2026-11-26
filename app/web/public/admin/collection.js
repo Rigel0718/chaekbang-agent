@@ -1,25 +1,24 @@
 // 장서 탭(자체 대출 기관): 서명·저자·등록번호로 사본 찾기, 상태 바꾸기, 반납, 책 등록.
 // 변수 이름 holding은 사본(HoldingRead)에만 쓴다(테스트가 본다). 탭에 들어올 때마다 지난 찾기를 다시 읽는다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { button, el } from "../shared/dom.js";
 
 const PAGE = 20;
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
 const INVALID_INPUT = "입력한 값을 확인해 주세요.";
-const NOT_FOUND = "찾은 사본이 없어요.";
-const EMPTY = "등록한 사본이 없어요.";
-const WITHDRAW_CONFIRM = "제적할까요? 추천과 소장 권수에서 빠져요.";
+const NOT_FOUND = "찾은 책이 없어요.";
+const EMPTY = "등록한 책이 없어요.";
+const WITHDRAW_CONFIRM = "제적할까요? 추천과 권수에서 빠져요.";
 const RETURN_CONFIRM = "이 책을 반납 처리할까요?";
 
 // 서버의 사본 상태. 대출 중은 대출·반납으로만 바뀌므로 고르기에 없다(테스트가 서버 값과 맞춘다).
 const STATUS_OPTIONS = {
-  available: "이용 가능",
+  available: "대출 가능",
   lost: "분실",
   damaged: "훼손",
   withdrawn: "제적",
 };
 const ON_LOAN = "on_loan";
-const COLUMNS = ["등록번호", "서명", "저자", "청구기호", "상태"];
+const COLUMNS = ["등록번호", "도서명", "저자", "청구기호", "상태"];
 
 function message(error) {
   if (error.detail) return error.detail;
@@ -232,7 +231,7 @@ export function createCollection(ui) {
       }
       if (!owned) {
         if (!title || !author) {
-          ui.formError.textContent = "서명과 저자를 넣어 주세요.";
+          ui.formError.textContent = "도서명과 저자를 넣어 주세요.";
           return;
         }
         const created = await createBook(isbn, title, author);

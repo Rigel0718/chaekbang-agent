@@ -104,6 +104,6 @@ DRAFT_OVERDUE_NOTICE = Tool(
     "회원별 문안은 승인 뒤 코드가 채운다.",
     DraftOverdueNoticeInput,
     _draft,
-    "연체 안내문 틀을 만들고 있어요",
+    "연체 안내 양식을 만들고 있어요",
     present=present_draft,
 )

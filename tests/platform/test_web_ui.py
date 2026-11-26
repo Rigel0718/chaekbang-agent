@@ -777,7 +777,7 @@ def test_admin_purchase_detail_shows_estimate_and_record():
         "조회 불가",
         "row.total_amount",
         "row.price_source",
-        "error.status === 503",
+        "error.detail || GENERIC_ERROR",  # 409·503은 서버 문구만
     ):
         assert needle in code, needle
 
@@ -890,7 +890,7 @@ def test_basket_mutations_wait_for_server():
     change = basket_js[basket_js.index("async function change(") :].split("\n  }\n")[0]
     assert change.index("await api.") < change.index("entries.set(") < change.index("catch")
     code = _code(LIBRARIAN_MAIN)
-    assert '"담은 책은 10권까지예요"' in code and '"잠시 뒤 다시 눌러 주세요"' in code
+    assert '"담은 책은 10권까지예요."' in code and "GENERIC_ERROR" in code
     # 401은 로그인 화면, 403은 회원 로그아웃과 로그인 칸
     handler = code[code.index("function basketError(") :].split("\n}\n")[0]
     assert "onUnauthorized()" in handler and "memberLost()" in handler

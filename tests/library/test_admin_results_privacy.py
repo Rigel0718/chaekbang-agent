@@ -37,10 +37,10 @@ GROUP_NAMES = {"분야", "상태", "입수 구분", "구분"}
 
 # tool마다 결과 표에 나올 수 있는 열. 회원·기증자 열은 넣지 않는다.
 ALLOWED_COLUMNS = {
-    GET_COLLECTION_STATUS: GROUP_NAMES | {"사본", "서명"},
-    GET_LOAN_STATS: GROUP_NAMES | {"대출", "사본", "권당 대출", "순위", "서명", "저자"},
-    LIST_HOLDINGS_BY_STATUS: {"서명", "저자", "등록번호", "청구기호"},
-    LIST_UNBORROWED_BOOKS: {"서명", "저자", "권수"},
+    GET_COLLECTION_STATUS: GROUP_NAMES | {"권수", "종수"},
+    GET_LOAN_STATS: GROUP_NAMES | {"대출", "권수", "권당 대출", "순위", "도서명", "저자"},
+    LIST_HOLDINGS_BY_STATUS: {"도서명", "저자", "등록번호", "청구기호"},
+    LIST_UNBORROWED_BOOKS: {"도서명", "저자", "권수"},
 }
 
 CANARY_NAME = "카나리아회원"

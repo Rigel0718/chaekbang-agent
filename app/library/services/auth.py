@@ -11,7 +11,7 @@ from app.core.errors import AuthenticationError
 from app.core.security import hash_token, new_token, verify_dummy, verify_password
 from app.library.models.library import Library, StaffRole, StaffSession, StaffUser
 
-INVALID_LOGIN = "아이디 또는 비밀번호가 올바르지 않습니다"
+INVALID_LOGIN = "아이디나 비밀번호를 확인해 주세요."
 
 
 def token_lifetime(role: StaffRole) -> timedelta:

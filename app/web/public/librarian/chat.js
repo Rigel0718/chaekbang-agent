@@ -1,14 +1,13 @@
 // 대화 한 턴의 흐름: 찾은 책 카드(found) → 진행 문구(status) → 답과 추천 카드(answer) → done.
 // 검색 카드 줄은 서버 세션에 남지 않는다. 사서의 문맥에 넣으려면 카드의 [이 책 물어보기]를 쓴다.
-import { api } from "../shared/api.js";
+import { api, GENERIC_ERROR } from "../shared/api.js";
 import { createCard } from "../shared/card.js";
 import { readEvents } from "../shared/sse.js";
 
-const GENERIC_ERROR = "잠시 뒤에 다시 시도해 주세요.";
-const WAITING = "사서가 살펴보는 중…";
+const WAITING = "살펴보는 중…";
 const BOOK_REQUEST_NOTE = "찾는 책이 없다면 희망도서를 신청해 주세요.";
 const BOOK_REQUEST_BUTTON = "희망도서 신청";
-const ASK_BUTTON = "사서에게 물어보기";
+const ASK_BUTTON = "AI 사서에게 묻기";
 const TOP_TITLE = "이 책을 찾으시나요?";
 const LOWER_WAITING = "관련된 책을 찾는 중…";
 // 두 단계 결과의 위 단에 보이는 책 수(찾기 결과의 앞쪽). 나머지는 자동완성의 "모두 찾기"로 본다.
@@ -147,7 +146,7 @@ export function createChat(ui) {
     try {
       const books = await api.search(query);
       if (books.length === 0) {
-        block.append(element("p", "results-note", "찾는 책이 없어요. 사서에게 물어보세요."));
+        block.append(element("p", "results-note", "찾은 책이 없어요."));
       } else {
         block.append(cards(books, "summary").strip);
       }

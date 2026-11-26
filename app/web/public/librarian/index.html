@@ -43,7 +43,7 @@
             <label id="label-accession">등록번호 <small>책 뒤 바코드 아래 번호</small>
               <input id="in-accession" type="text" maxlength="50" autocomplete="off" autocapitalize="off" spellcheck="false">
             </label>
-            <label id="label-title">서명
+            <label id="label-title">도서명
               <input id="in-title" type="text" maxlength="200" autocomplete="off" spellcheck="false">
             </label>
             <label id="label-author">저자 <small>모르면 비워 두세요</small>
@@ -58,7 +58,7 @@
         </section>
         <div id="empty" class="empty">
           <h1>찾는 책 제목이나 궁금한 것을 물어보세요</h1>
-          <p>책 이름을 입력하면 후보가 나오고, 문장으로 물어보면 사서가 도서관 책에서 골라 드려요.</p>
+          <p>책 제목을 입력하면 후보가 나오고, 문장으로 물어보면 AI 사서가 도서관 책에서 골라 드려요.</p>
         </div>
         <div id="thread" class="thread" aria-live="polite"></div>
         <form id="composer" class="composer" autocomplete="off">
@@ -73,7 +73,7 @@
 
       <aside id="basket" class="basket" aria-label="담은 책" hidden>
         <h2>담은 책</h2>
-        <p id="basket-empty" class="basket-empty">마음에 드는 책을 담아 두면 서가를 찾아갈 때 편해요.</p>
+        <p id="basket-empty" class="basket-empty">담은 책이 없어요.</p>
         <ul id="basket-list"></ul>
         <button type="button" id="basket-clear" class="btn basket-clear" hidden>모두 빼기</button>
       </aside>

@@ -50,7 +50,7 @@ async def list_holdings(
     if q is not None:
         q = q.strip()
         if not q:
-            raise InvalidRequestError("찾을 글자를 넣으세요")
+            raise InvalidRequestError("찾을 글자를 넣어 주세요.")
     rows, total = await holdings.list_holdings(
         session,
         staff.library_id,

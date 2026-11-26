@@ -17,7 +17,7 @@ from app.library.models.circulation import Loan
 from app.library.models.library import Library, LoanMode
 from app.library.services.guide import compute_due_date
 
-DESK_ONLY = "이 도서관의 대출·반납은 데스크에서 해 주세요"
+DESK_ONLY = "이 도서관의 대출·반납은 데스크에서 해 주세요."
 
 
 class LoanFilter(StrEnum):
@@ -42,7 +42,7 @@ async def _lock_holding(session: AsyncSession, library_id: int, accession_number
         .with_for_update(of=Holding)
     )
     if holding is None:
-        raise NotFoundError(f"등록번호에 해당하는 책이 없습니다: {accession_number}")
+        raise NotFoundError("그 등록번호의 책이 없어요.")
     return holding
 
 
@@ -53,7 +53,7 @@ async def create_loan(
     await _library_for_circulation(session, library_id)
     holding = await _lock_holding(session, library_id, accession_number)
     if holding.status != HoldingStatus.AVAILABLE:
-        raise ConflictError(f"지금 빌릴 수 없는 책입니다 (상태: {holding.status})")
+        raise ConflictError("지금 빌릴 수 없는 책이에요.")
 
     today = clock.today()
     # 안내와 같은 계산: 기본 대출 기간을 더하고, 휴관일이면 기관의 반납일 규칙을 따른다
@@ -72,7 +72,7 @@ async def create_loan(
     except IntegrityError as exc:
         # 같은 사본에 반납 안 된 대출이 동시에 생기는 경우 부분 UNIQUE 인덱스가 막는다.
         await session.rollback()
-        raise ConflictError("이미 대출 중인 책입니다") from exc
+        raise ConflictError("이미 대출 중인 책이에요.") from exc
     return await get_loan(session, library_id, loan.id)
 
 
@@ -90,7 +90,7 @@ async def return_loan(session: AsyncSession, library_id: int, accession_number: 
         .with_for_update(of=Loan)
     )
     if loan is None:
-        raise ConflictError("대출 중인 책이 아닙니다")
+        raise ConflictError("대출 중인 책이 아니에요.")
     loan.returned_on = clock.today()
     holding.status = HoldingStatus.AVAILABLE
     await session.commit()
@@ -102,7 +102,7 @@ async def get_loan(session: AsyncSession, library_id: int, loan_id: int) -> Loan
         select(Loan).where(Loan.id == loan_id, Loan.library_id == library_id)
     )
     if loan is None:
-        raise NotFoundError(f"대출을 찾을 수 없습니다: {loan_id}")
+        raise NotFoundError("대출 기록을 찾을 수 없어요.")
     await session.refresh(loan)
     return loan
 

@@ -256,7 +256,7 @@ async def add_closure(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise ConflictError(f"이미 등록한 휴관일입니다: {data.closed_on}") from exc
+        raise ConflictError(f"이미 등록한 휴관일이에요: {data.closed_on}") from exc
     await session.refresh(closure)
     return closure
 

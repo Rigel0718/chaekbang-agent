@@ -18,7 +18,7 @@ from app.core.text import compact, compact_sql, korean_order
 from app.library.models.catalog import Holding, HoldingStatus, LibraryBook
 from app.library.models.library import Library, LoanMode
 
-LABEL = "도서"
+LABEL = "책"
 SEARCH_LIMIT = 10
 RECOMMENDABLE_STATUSES = (HoldingStatus.AVAILABLE, HoldingStatus.ON_LOAN)
 

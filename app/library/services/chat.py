@@ -101,12 +101,12 @@ def kind_rules(kind: SessionKind) -> KindRules:
         return KindRules(
             settings.admin_session_idle_minutes,
             settings.admin_daily_run_limit,
-            "오늘 운영 에이전트 이용 한도에 이르렀습니다. 내일 다시 이용해 주세요",
+            "오늘 AI 도우미 이용 한도에 이르렀어요. 내일 다시 써 주세요.",
         )
     return KindRules(
         settings.librarian_session_idle_minutes,
         settings.librarian_daily_run_limit,
-        "오늘 AI 사서 이용 한도에 이르렀습니다. 내일 다시 이용해 주세요",
+        "오늘 AI 사서 이용 한도에 이르렀어요. 내일 다시 써 주세요.",
     )
 
 
@@ -169,7 +169,7 @@ async def _active_session(
         )
     )
     if chat is None:
-        raise NotFoundError("대화를 찾을 수 없습니다. 새 대화를 시작하세요")
+        raise NotFoundError("대화가 끝났어요. 새 대화를 시작해 주세요.")
     return chat
 
 
@@ -201,7 +201,7 @@ async def _claim(session: AsyncSession, library_id: int, session_id: uuid.UUID) 
     )
     if claimed is None:
         await session.rollback()
-        raise ConflictError("이전 질문에 답하는 중입니다. 답이 나온 뒤에 다시 보내 주세요")
+        raise ConflictError("이전 질문에 답하는 중이에요. 답이 나온 뒤에 다시 보내 주세요.")
 
 
 async def load_history(session: AsyncSession, library_id: int, session_id: uuid.UUID) -> History:
@@ -249,7 +249,7 @@ async def open_session(
     else:
         chat = await _active_session(session, library_id, session_id, kind)
         if await _turns(session, library_id, chat.id) >= get_settings().librarian_max_turns:
-            raise ConflictError("이 대화의 질문 수 한도에 이르렀습니다. 새 대화를 시작하세요")
+            raise ConflictError("이 대화의 질문 수 한도에 이르렀어요. 새 대화를 시작해 주세요.")
     await _claim(session, library_id, chat.id)
     return chat, loan_mode
 
@@ -424,7 +424,7 @@ async def end_session(
     )
     if not result.rowcount:
         await session.rollback()
-        raise NotFoundError("대화를 찾을 수 없습니다")
+        raise NotFoundError("대화를 찾을 수 없어요.")
     await session.commit()
 
 

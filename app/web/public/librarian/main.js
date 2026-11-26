@@ -1,5 +1,5 @@
 // 이용자 화면 조립. 열 때 키오스크 토큰으로 역할을 확인하고, 아니면 로그인 화면으로 간다(README).
-import { api, goLogin, requireRole } from "../shared/api.js";
+import { api, goLogin, requireRole, GENERIC_ERROR } from "../shared/api.js";
 import { createActions } from "./actions.js";
 import { createBasket } from "./basket.js";
 import { createChat } from "./chat.js";
@@ -8,8 +8,7 @@ import { CAP_MS, CAP_WARN_MS, IDLE_MS, IDLE_WARN_MS, createIdleTimer } from "./i
 import { MAX_QUERY, createSuggest } from "./suggest.js";
 
 const SESSION_ENDED_NOTICE = "대화가 끝나서 새로 시작해요.";
-const BASKET_FULL = "담은 책은 10권까지예요";
-const BASKET_RETRY = "잠시 뒤 다시 눌러 주세요";
+const BASKET_FULL = "담은 책은 10권까지예요.";
 
 // 키오스크 계정이 아니면 로그인 화면으로 가고, 이 아래는 실행되지 않는다
 await requireRole("kiosk");
@@ -81,7 +80,7 @@ function basketError(error) {
     actions.openLogin();
     return undefined;
   }
-  showNotice(error.kind === "conflict" ? BASKET_FULL : BASKET_RETRY);
+  showNotice(error.kind === "conflict" ? BASKET_FULL : GENERIC_ERROR);
   return undefined;
 }
 
@@ -140,8 +139,8 @@ function showWarning(info) {
   warningKeep.hidden = info.kind !== "idle";
   const render = () => {
     const left = Math.max(0, Math.ceil((info.deadline - Date.now()) / 1000));
-    if (info.kind === "cap") warningText.textContent = `${left}초 뒤 이용 시간이 끝나 로그아웃해요`;
-    else warningText.textContent = info.member ? `${left}초 뒤 로그아웃해요` : `${left}초 뒤 화면을 비워요`;
+    if (info.kind === "cap") warningText.textContent = `${left}초 뒤 이용 시간이 끝나 로그아웃해요.`;
+    else warningText.textContent = info.member ? `${left}초 뒤 로그아웃해요.` : `${left}초 뒤 화면을 비워요.`;
   };
   render();
   warning.hidden = false;

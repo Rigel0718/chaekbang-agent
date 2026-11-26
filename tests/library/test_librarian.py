@@ -95,7 +95,7 @@ async def test_detail_other_library(
     await run_librarian(session, llm, library_a.id)
     [result] = _tool_results(llm, 1)
     assert result.is_error
-    assert "찾을 수 없습니다" in result.content
+    assert "찾을 수 없어요." in result.content
     assert "비밀 소개" not in result.content
 
 

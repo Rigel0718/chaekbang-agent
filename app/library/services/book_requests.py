@@ -19,8 +19,8 @@ from app.library.recommendation.search import recommendable_ids
 from app.library.schemas.book_request import BookRequestCreate
 
 LABEL = "희망도서 신청"
-ALREADY_REQUESTED = "이미 신청한 책이에요"
-ALREADY_HELD = "이미 도서관에 있는 책이에요"
+ALREADY_REQUESTED = "이미 신청한 책이에요."
+ALREADY_HELD = "이미 도서관에 있는 책이에요."
 
 
 async def _is_held(session: AsyncSession, library_id: int, isbn: str) -> bool:
@@ -45,7 +45,7 @@ async def create_request(
     """member_id는 회원 세션이 정한 값이다(요청 본문 값이 아니다)."""
     title_key = match_key(data.title)
     if not title_key:
-        raise InvalidRequestError("서명에 글자나 숫자가 있어야 합니다")
+        raise InvalidRequestError("도서명에 글자나 숫자가 있어야 해요.")
     if data.isbn is not None and await _is_held(session, library_id, data.isbn):
         raise ConflictError(ALREADY_HELD)
     duplicate = await session.scalar(

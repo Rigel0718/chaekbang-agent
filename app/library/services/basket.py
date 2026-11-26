@@ -19,7 +19,7 @@ from app.library.recommendation.lookup import get_findable
 from app.library.recommendation.search import get_candidates
 from app.library.schemas.basket import BasketBook
 
-LIMIT_MESSAGE = "담은 책은 {limit}권까지예요"
+LIMIT_MESSAGE = "담은 책은 {limit}권까지예요."
 
 
 def _cutoff(now: datetime) -> datetime:

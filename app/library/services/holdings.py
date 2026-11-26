@@ -19,11 +19,11 @@ from app.library.models.circulation import Loan
 from app.library.schemas.catalog import HoldingCreate, HoldingUpdate, check_acquisition
 from app.library.services.library_books import get_library_book
 
-LABEL = "사본"
+LABEL = "책"
 
 
 def _duplicate(accession_number: str) -> ConflictError:
-    return ConflictError(f"이미 쓰는 등록번호입니다: {accession_number}")
+    return ConflictError(f"이미 쓰는 등록번호예요: {accession_number}")
 
 
 def _require_isbn_for_purchase(
@@ -31,7 +31,7 @@ def _require_isbn_for_purchase(
 ) -> None:
     if acquisition_type == AcquisitionType.PURCHASED and library_book.isbn is None:
         raise InvalidRequestError(
-            "매입·납품 사본은 ISBN이 있는 도서로만 등록할 수 있습니다. 도서의 ISBN을 먼저 채우세요"
+            "매입·납품한 책은 ISBN이 있어야 등록할 수 있어요. ISBN을 먼저 넣어 주세요."
         )
 
 
@@ -57,7 +57,7 @@ async def _commit(session: AsyncSession, accession_number: str) -> None:
 
 async def create_holding(session: AsyncSession, library_id: int, data: HoldingCreate) -> Holding:
     if data.status == HoldingStatus.ON_LOAN:
-        raise ConflictError("대출 중 상태는 대출로만 바뀝니다")
+        raise ConflictError("대출 중 상태는 빌리기·반납으로만 바뀌어요.")
     library_book = await get_library_book(session, library_id, data.library_book_id)
     _require_isbn_for_purchase(library_book, data.acquisition_type)
     await _ensure_accession_free(session, library_id, data.accession_number)
@@ -158,9 +158,9 @@ async def update_holding(
     new_status = changes.get("status")
     if new_status is not None and new_status != holding.status:
         if new_status == HoldingStatus.ON_LOAN:
-            raise ConflictError("대출 중 상태는 대출로만 바뀝니다")
+            raise ConflictError("대출 중 상태는 빌리기·반납으로만 바뀌어요.")
         if holding.status == HoldingStatus.ON_LOAN:
-            raise ConflictError("대출 중인 사본입니다. 반납을 먼저 처리하세요")
+            raise ConflictError("대출 중인 책이에요. 먼저 반납해 주세요.")
 
     acquisition_keys = {"acquisition_type", "purchase_price", "donor"}
     if acquisition_keys & changes.keys():
@@ -198,7 +198,7 @@ async def delete_holding(session: AsyncSession, library_id: int, holding_id: int
     holding = await get_owned(session, Holding, library_id, holding_id, label=LABEL)
     if await session.scalar(select(exists().where(Loan.holding_id == holding_id))):
         raise ConflictError(
-            "대출 기록이 있는 사본은 삭제할 수 없습니다. 상태를 분실·훼손으로 바꾸세요"
+            "대출 기록이 있는 책은 삭제할 수 없어요. 상태를 분실이나 훼손으로 바꿔 주세요."
         )
     await session.delete(holding)
     await session.commit()

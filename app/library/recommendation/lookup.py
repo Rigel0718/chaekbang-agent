@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.central.models import Book
 from app.core.errors import NotFoundError
+from app.core.tenancy import not_found_message
 from app.core.text import compact, compact_sql, jamo, jamo_starts, korean_order, strip_edition
 from app.library.models.catalog import LibraryBook
 from app.library.recommendation.search import LABEL, Candidate, _counts, get_candidates
@@ -231,7 +232,7 @@ async def get_findable(session: AsyncSession, library_id: int, library_book_id: 
     """고른 책 확인. 그 기관의 찾을 수 있는 책이 아니면 NotFoundError다."""
     candidate = (await get_candidates(session, library_id, [library_book_id])).get(library_book_id)
     if candidate is None or not candidate.recommendable:
-        raise NotFoundError(f"{LABEL}를 찾을 수 없습니다")
+        raise NotFoundError(not_found_message(LABEL))
     return candidate
 
 

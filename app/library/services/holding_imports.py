@@ -35,7 +35,7 @@ from app.library.models.library import Library, LoanMode
 from app.library.services.library_books import connect_official
 
 LABEL = "가져오기 기록"
-INTERNAL_LIBRARY = "장서 가져오기는 기존 대출 프로그램을 쓰는 기관만 할 수 있습니다"
+INTERNAL_LIBRARY = "책 가져오기는 기존 대출 프로그램을 쓰는 도서관만 할 수 있어요."
 
 
 class Outcome(StrEnum):
@@ -291,7 +291,7 @@ async def apply_import(
     record = await get_owned(session, HoldingImport, library_id, import_id, label=LABEL)
     await session.refresh(record)  # 기관 행을 잠근 뒤의 상태로 판단한다
     if record.status == ImportStatus.APPLIED:
-        raise ConflictError("이미 적용한 가져오기입니다")
+        raise ConflictError("이미 적용한 가져오기예요.")
 
     rows = record.rows
     snap = await _snapshot(session, library_id, rows)
@@ -322,7 +322,7 @@ async def apply_import(
     except IntegrityError as exc:
         # 같은 기관의 직접 등록이 같은 ISBN의 도서를 먼저 만든 경우다.
         await session.rollback()
-        raise ConflictError("다른 작업과 겹쳤습니다. 다시 적용해 주세요") from exc
+        raise ConflictError("다른 작업과 겹쳤어요. 다시 적용해 주세요.") from exc
     await session.refresh(record)
     return record
 
@@ -333,7 +333,7 @@ async def delete_preview(session: AsyncSession, library_id: int, import_id: int)
     record = await get_owned(session, HoldingImport, library_id, import_id, label=LABEL)
     await session.refresh(record)  # 기관 행을 잠근 뒤의 상태로 판단한다
     if record.status == ImportStatus.APPLIED:
-        raise ConflictError("적용한 가져오기는 지울 수 없습니다")
+        raise ConflictError("적용한 가져오기는 삭제할 수 없어요.")
     await session.delete(record)
     await session.commit()
 

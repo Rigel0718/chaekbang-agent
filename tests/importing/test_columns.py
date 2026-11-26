@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.library.importing.columns import find_header
+from app.library.importing.columns import LABELS, find_header
 from app.library.importing.errors import ImportFileError
 
 
@@ -63,3 +63,16 @@ def test_personal_columns_not_recognized(header: str) -> None:
     """[catalog/holdings-import] 인식하지 못한 열은 저장하지 않음 (개인정보 열은 표준 열이 아님)"""
     match = find_header([["등록번호", "서명", "저자", header]])
     assert 3 not in match.columns.values()
+
+
+def test_title_label_is_screen_word() -> None:
+    """[platform/web-ui] 화면 용어 / 가져오기 열 이름
+
+    서명 열의 이름은 "도서명"이고, 머리글 "서명"도 인식한다.
+    """
+    assert LABELS["title"] == "도서명"
+    assert find_header([["등록번호", "서명", "저자"]]).columns["title"] == 1
+    with pytest.raises(ImportFileError) as caught:
+        find_header([["등록번호", "비고", "저자"]])
+    assert caught.value.extra["missing"] == ["도서명"]
+    assert str(caught.value) == "필수 열을 찾지 못했어요: 도서명"

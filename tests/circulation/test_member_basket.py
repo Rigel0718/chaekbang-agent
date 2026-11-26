@@ -23,7 +23,7 @@ from tests.helpers import add_held_book, add_member, add_staff_session, login_me
 
 PHONE = "01012345678"
 PHONE_Y = "01022223333"
-REQUIRED = "회원 로그인이 필요합니다"
+REQUIRED = "회원 로그인을 해 주세요."
 HEADER = "X-Member-Token"
 
 
@@ -365,7 +365,7 @@ async def test_limit_ten(me: AsyncClient, session: AsyncSession, library_a: Tena
     ids = await _fill(me, session, library_a.id, 10)
     extra = await _book(session, library_a.id, isbn=None, title="열한 번째")
     res = await me.put(f"/basket/{extra['id']}")
-    assert res.status_code == 409 and "10권" in res.json()["detail"]
+    assert res.status_code == 409 and res.json()["detail"] == "담은 책은 10권까지예요."
     assert await _ids(me) == ids
     assert (await me.put(f"/basket/{ids[0]}")).status_code == 204
     await me.delete(f"/basket/{ids[0]}")
